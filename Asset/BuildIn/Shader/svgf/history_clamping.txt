@@ -1,0 +1,10 @@
+
+// TODO ReLAX用了一个history clamping将渐进长历史帧的数据clamp到短历史帧数据上
+// 总体思路在两页PPT里做了简单介绍
+// 对于历史帧数量不够的情况下会直接用短历史帧，用的数据也是由disocclusion fix填补出来的
+
+// 具体的实现代码里包括很多没有介绍到的细节，包括color acceleration，possibility for history reset等，
+// 不太清楚是怎么算的，不敢抄
+
+// PPT里Responsive Illumination(短历史帧)画图是在history clamping之前就循环了，实际上应该是之后？
+// 此外长历史帧在PPT里也是在variance estimation之前就循环了，区别于SVGF是在首轮atrous滤波之后循环

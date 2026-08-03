@@ -1,0 +1,46 @@
+#version 460
+#extension GL_EXT_ray_tracing : enable
+#extension GL_ARB_separate_shader_objects : enable
+#extension GL_GOOGLE_include_directive : enable
+
+#include "../common/common.glsl"
+
+layout(set = 1, binding = 0, rgba8) uniform image2D OUT_COLOR;
+
+layout(push_constant) uniform ray_trace_base_setting {
+	uint mode;
+} RAY_TRACE_BASE_SETTING;
+
+layout(location = 0) rayPayloadEXT vec3 HIT_VALUE;
+
+void main() 
+{
+	const vec2 pixelCenter = vec2(gl_LaunchIDEXT.xy) + vec2(0.5);
+	const vec2 inUV = pixelCenter / vec2(gl_LaunchSizeEXT.xy);
+	vec2 d = inUV * 2.0 - 1.0;
+
+	vec4 origin = CAMERA.pos;
+	//vec4 origin = CAMERA.invView * vec4(0,0,0,1);
+	vec4 target = CAMERA.invProj * vec4(d.x, d.y, 1, 1) ;
+	vec4 direction = CAMERA.invView * vec4(normalize(target.xyz), 0);
+
+	float tmin = MIN_RAY_TRACING_DISTANCE;
+	float tmax = MAX_RAY_TRACING_DISTANCE;
+
+    HIT_VALUE = vec3(0.0);
+
+	traceRayEXT(TLAS, 					// acceleration structure
+		gl_RayFlagsOpaqueEXT,       	// rayFlags, https://github.com/KhronosGroup/GLSL/blob/main/extensions/ext/GLSL_EXT_ray_tracing.txt#L122-L130
+		0xFF,           				// cullMask
+		0,              				// sbtRecordOffset
+		0,              				// sbtRecordStride
+		0,              				// missIndex
+		origin.xyz,     				// ray origin
+		tmin,           				// ray min range
+		direction.xyz,  				// ray direction
+		tmax,           				// ray max range
+		0               				// payload (location = 0)
+  	);
+
+	imageStore(OUT_COLOR, ivec2(gl_LaunchIDEXT.xy), vec4(HIT_VALUE, 0.0));
+}

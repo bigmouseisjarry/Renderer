@@ -1,0 +1,90 @@
+#version 460
+#extension GL_GOOGLE_include_directive : enable
+
+#include "../common/common.glsl"
+
+#include "common.glsl"
+
+#define THREAD_SIZE_X 16
+#define THREAD_SIZE_Y 16
+#define THREAD_SIZE_Z 1
+layout (local_size_x = THREAD_SIZE_X, 
+		local_size_y = THREAD_SIZE_Y, 
+		local_size_z = THREAD_SIZE_Z) in;
+void main() 
+{	
+    ivec2 pixel     = ivec2(gl_GlobalInvocationID.xy);
+    vec2 uv         = ScreenPixToUV(pixel); 
+
+    int historyIndex    = SETTING.round % 2;
+    int currentIndex    = (historyIndex + 1) % 2;
+
+    vec4 pPosition      = DepthToWorld(uv);
+    vec3 pNormal        = normalize(texelFetch(G_BUFFER_NORMAL_ROUGHNESS, pixel, 0).xyz);  
+    vec3 pColor         = imageLoad(CURRENT_COLOR_VARIANCE[historyIndex], pixel).xyz;
+    float pVariance     = imageLoad(CURRENT_COLOR_VARIANCE[historyIndex], pixel).a;
+    float pLuminance    = RGBtoLuminance(pColor);
+    //float pFilteredVariance = imageLoad(CURRENT_MOMENTS, pixel).a;    // TODO 到底是否需要预滤波？ReLAX里没做
+    float pFilteredVariance = imageLoad(CURRENT_COLOR_VARIANCE[historyIndex], pixel).a;
+
+    int step            = 1 << SETTING.round;
+    vec3 outColor       = vec3(0.0);
+    float outVariance   = 0.0;
+    float weights       = 0.0;
+
+    for (int offsetx = -1; offsetx <= 1; offsetx++)     // ReLAX是3x3
+    {
+        for (int offsety = -1; offsety <= 1; offsety++) 
+        {
+            ivec2 qPixel = pixel + ivec2(step * offsetx, step * offsety);
+            if (any(lessThan(qPixel, ivec2(0, 0))) || any(greaterThan(qPixel, ivec2(WINDOW_WIDTH - 1, WINDOW_HEIGHT - 1)))) continue;
+            if (FetchDepthTex(qPixel) == 1.0f) continue;
+            
+            vec2 qUV        = ScreenPixToUV(qPixel); 
+            {
+                vec4 qPosition      = DepthToWorld(qUV);
+                vec3 qNormal        = normalize(texelFetch(G_BUFFER_NORMAL_ROUGHNESS, qPixel, 0).xyz);
+                vec3 qColor         = imageLoad(CURRENT_COLOR_VARIANCE[historyIndex], qPixel).xyz;
+                float qVariance     = imageLoad(CURRENT_COLOR_VARIANCE[historyIndex], qPixel).a;
+                float qLuminance    = RGBtoLuminance(qColor);
+                
+                // 计算edge-stopping function
+                float wp    = GetPlaneDistanceWeight(pPosition.xyz, pNormal, qPosition.xyz);
+                float wn    = GetNormalWeight(pNormal, qNormal);
+                // float variance = 0.001;
+                // for (int y0 = -1; y0 <= 1; y0++) 
+                // {
+                //     for (int x0 = -1; x0 <= 1; x0++) 
+                //     {
+                //         variance += gaussKernel3x3[x0 + 3 * y0 + 4] / 16.0f * imageLoad(CURRENT_COLOR_VARIANCE[historyIndex], qPixel + ivec2(x0, y0)).a;
+                //     }
+                // }
+                float variance = pFilteredVariance;
+                float wl = GetLuminanceWeight(pLuminance, qLuminance, variance);        
+
+                float w = wp * wn * wl;
+                float weight = gaussKernel3x3[3 * (offsety + 1) + offsetx + 1] / 16.0f * w;    
+
+                outColor += weight * qColor;
+                outVariance += weight * weight * qVariance;
+                weights += weight;
+            }
+        }
+    }
+
+    vec4 outColorVariance;
+    if (weights > epsilon) 
+    {
+        outColorVariance.xyz = outColor / weights;
+        outColorVariance.a = outVariance / (weights * weights);
+    } 
+    else {
+        outColorVariance  = vec4(pColor, pVariance);
+    }
+    outColorVariance.xyz  = clamp(outColorVariance.xyz, vec3(0.0f), vec3(10.0f));
+    outColorVariance.a    = min(max(outColorVariance.a, 0.0f), 10.0f);
+
+    imageStore(CURRENT_COLOR_VARIANCE[currentIndex], pixel, outColorVariance);
+}
+
+

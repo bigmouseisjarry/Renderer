@@ -1,0 +1,71 @@
+#version 460
+#extension GL_ARB_separate_shader_objects : enable
+#extension GL_GOOGLE_include_directive : enable
+
+#include "../common/common.glsl"
+#include "common.glsl"
+
+#define THREAD_SIZE_X 16
+#define THREAD_SIZE_Y 16
+#define THREAD_SIZE_Z 1
+layout (local_size_x = THREAD_SIZE_X, 
+		local_size_y = THREAD_SIZE_Y, 
+		local_size_z = THREAD_SIZE_Z) in;
+void main() {
+
+    ivec2 pixel         = ivec2(gl_GlobalInvocationID.xy);
+
+    ivec2 tracePixel    = HALF_SIZE_SSSR ? 
+                            pixel / 2 :
+                            pixel;
+
+    vec2 uv             = ScreenPixToUV(pixel);
+
+    // vec4 reprojection   = texelFetch(REPROJECTION_RESULT, pixel, 0);
+    // vec2 prevUV         = reprojection.xy;
+    // bool valid          = reprojection.z > 0.0f ? true : false;
+    // ivec2 prevPixel 	= prevUV == uv ? pixel : ivec2(prevUV * vec2(WINDOW_WIDTH, WINDOW_HEIGHT));
+
+
+    vec4 reprojection   = texelFetch(REPROJECTION_RESULT, pixel, 0);
+    ivec2 prevPixel     = ivec2(reprojection.zw);
+    bool valid          = prevPixel.x > 0.0f ? true : false;	
+
+    vec3 screenColor        = (SETTING.reflectionOnly == 0) ? texture(sampler2D(IN_COLOR_PYRAMID, SAMPLER[0]), uv).xyz : vec3(0.0f); 
+    vec3 currentColor       = imageLoad(SSSR_RESOLVE, pixel).xyz; 
+    vec3 historyColor 		= RGBtoYCoCg(imageLoad(SSSR_HISTORY, prevPixel).xyz);
+
+    vec3 finalColor         = currentColor;
+    if(valid)
+    {
+        AdjacentTex3 adjTex;
+        adjTex.color[0][0]      = imageLoad(SSSR_RESOLVE, pixel + ivec2(-1, -1)).xyz;	
+        adjTex.color[0][1]      = imageLoad(SSSR_RESOLVE, pixel + ivec2(0, -1)).xyz;	
+        adjTex.color[0][2]      = imageLoad(SSSR_RESOLVE, pixel + ivec2(1, -1)).xyz;	
+        adjTex.color[1][0]      = imageLoad(SSSR_RESOLVE, pixel + ivec2(-1, 0)).xyz;	
+        adjTex.color[1][1]      = imageLoad(SSSR_RESOLVE, pixel + ivec2(0, 0)).xyz;	
+        adjTex.color[1][2]      = imageLoad(SSSR_RESOLVE, pixel + ivec2(1, 0)).xyz;	
+        adjTex.color[2][0]      = imageLoad(SSSR_RESOLVE, pixel + ivec2(-1, 1)).xyz;	
+        adjTex.color[2][1]      = imageLoad(SSSR_RESOLVE, pixel + ivec2(0, 1)).xyz;	
+        adjTex.color[2][2]      = imageLoad(SSSR_RESOLVE, pixel + ivec2(1, 1)).xyz;	
+        RGBtoYCoCg(adjTex);
+
+        vec3 cmin           = MinAdj3(adjTex);
+        vec3 cmax           = MaxAdj3(adjTex);
+
+        //historyColor = YCoCgtoRGB(clamp(historyColor, cmin, cmax));
+        historyColor = YCoCgtoRGB(ClampedColor(historyColor, adjTex));
+
+        // 混合输出////////////////////////////////////////////////////////////////////////////////////
+        float blendWeight   = saturate(SETTING.filterBlend);
+        finalColor          = Lerp(currentColor.xyz, historyColor.xyz, blendWeight);
+    }
+    screenColor += finalColor;
+
+    vec4 traceResult = imageLoad(SSSR_HIT_RESULT, ivec2(tracePixel.xy));
+    if(SETTING.visualizeHitUV != 0)     screenColor = vec3(traceResult.xy, 0.0f);
+    if(SETTING.visualizeHitMask != 0)   screenColor = vec3(traceResult.www);
+
+    imageStore(SSSR_HISTORY,    ivec2(pixel.xy), vec4(finalColor, 1.0));
+    imageStore(OUT_COLOR,       ivec2(pixel.xy), vec4(screenColor.xyz, 1.0));
+}

@@ -1,0 +1,256 @@
+#pragma once
+
+#include "Function/Render/RHI/RHIStructs.h"
+#include "RHIResource.h"
+
+#include <GLFW/glfw3.h>
+#include <array>
+#include <cstdint>
+#include <string>
+#include <vector>
+
+enum RHIBackendType
+{
+    BACKEND_VULKAN = 0,
+
+    BACKEND_MAX_ENUM,    //
+};
+
+struct RHIBackendInfo
+{
+    RHIBackendType type;
+
+    bool enableDebug;
+    bool enableRayTracing;
+
+};
+
+class RHIBackend    // DynamicRHI，主要做资源创建等与CommandList无关的工作   
+{                   // FDynamicRHI是对没有上下文的操作的平台无关抽象（例如各种资源的创建等
+private:
+    static RHIBackendRef backend;
+
+public:
+    static RHIBackendRef Init(const RHIBackendInfo& info);
+
+    static RHIBackendRef Get()      { return backend; }
+    
+    virtual void Tick();    // 更新资源计数，清理无引用且长时间未使用资源
+
+    virtual void Destroy();
+
+    //ImGui ////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+    virtual void InitImGui(GLFWwindow* window) = 0;
+
+    //基本资源 ////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+    virtual RHIQueueRef GetQueue(const RHIQueueInfo& info) = 0;
+
+    virtual RHISurfaceRef CreateSurface(GLFWwindow* window) = 0;
+
+    virtual RHISwapchainRef CreateSwapChain(const RHISwapchainInfo& info) = 0;
+
+    virtual RHICommandPoolRef CreateCommandPool(const RHICommandPoolInfo& info) = 0;
+
+    virtual RHICommandContextRef CreateCommandContext(RHICommandPoolRef pool) = 0;
+
+    //缓冲，纹理，着色器，加速结构 ////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+    virtual RHIBufferRef CreateBuffer(const RHIBufferInfo& info) = 0;
+
+    virtual RHITextureRef CreateTexture(const RHITextureInfo& info) = 0;
+
+    virtual RHITextureViewRef CreateTextureView(const RHITextureViewInfo& info) = 0;
+
+    virtual RHISamplerRef CreateSampler(const RHISamplerInfo& info) = 0;
+
+    virtual RHIShaderRef CreateShader(const RHIShaderInfo& info) = 0;
+
+    virtual RHIShaderBindingTableRef CreateShaderBindingTable(const RHIShaderBindingTableInfo& info) = 0;
+
+    virtual RHITopLevelAccelerationStructureRef CreateTopLevelAccelerationStructure(const RHITopLevelAccelerationStructureInfo& info) = 0;
+
+    virtual RHIBottomLevelAccelerationStructureRef CreateBottomLevelAccelerationStructure(const RHIBottomLevelAccelerationStructureInfo& info) = 0;
+
+    //根签名，描述符 ////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+    virtual RHIRootSignatureRef CreateRootSignature(const RHIRootSignatureInfo& info) = 0;
+
+    //管线状态 ////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+    // virtual RHIRenderingRef CreateRendering(const RHIRenderingInfo& info) = 0;
+
+    // 这里创建的每个后端图形api需要的开始渲染对象，比如Vlukan后端就是VkRenderingInfoKHR
+    // 后续可以将指针改成一个简单的uint64(由指针强转而来)句柄。
+    // virtual void* CreateRendering(const RHIRenderingInfo& info) = 0;
+
+    // TODO: 准备放弃
+    virtual RHIRenderPassRef CreateRenderPass(const RHIRenderPassInfo& info) = 0;
+
+    virtual RHIGraphicsPipelineRef CreateGraphicsPipeline(const RHIGraphicsPipelineInfo& info) = 0;
+
+    virtual RHIComputePipelineRef CreateComputePipeline(const RHIComputePipelineInfo& info) = 0;
+
+    virtual RHIRayTracingPipelineRef CreateRayTracingPipeline(const RHIRayTracingPipelineInfo& info) = 0;
+
+    //同步 ////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+    virtual RHIFenceRef CreateFence(bool signaled) = 0;
+
+    virtual RHISemaphoreRef CreateSemaphore() = 0;
+
+    //立即模式的命令接口 ////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+    virtual RHICommandListImmediateRef GetImmediateCommand() = 0;
+
+    
+protected:
+    RHIBackend() = delete;
+    RHIBackend(const RHIBackendInfo& info) : backendInfo(info) {}
+
+    void RegisterResource(RHIResourceRef resource) { resourceMap[resource->GetType()].push_back(resource); }     // 所有资源创建时应加入统一的资源管理
+
+    std::array<std::vector<RHIResourceRef>, RHI_RESOURCE_TYPE_MAX_CNT> resourceMap;
+
+    RHIBackendInfo backendInfo; 
+};
+
+
+// IRHICommandContext是对带有上下文的操作的平台无关抽象（例如光栅管线，有一系列的固定管线设置，着色器绑定等），
+// 由RHICommandList负责调用，由子类针对各api进行实现。实现上应该是存储了一整个静态的状态上下文，
+// 每次调用会改这个上下文，在需要时才进行所有指令的生成（例如dispatch compute shader时），避免无意义的重复改变状态
+
+// RHICommandContext，主要做命令录制的与CommandList相关的工作
+// UE的FVulkanCommandListContext带了一个FVulkanCommandBufferManager，包含一个pool
+// FVulkanDevice::InitGPU()中按线程数分配了一至多个CommandContext
+// RHICommandList可以直接new出来，但是还得靠FRHICommandListBase::SwitchPipeline找一个绑定的上下文: GDynamicRHI->RHIGetCommandContext，
+// 且在运行过程中保持对context的一对一的占用，直到FVulkanDynamicRHI::RHISubmitCommandLists才被释放（相当于只是给context做了个池化，实际上就是一对一）
+// context的不少指令似乎只是在修改context里缓存的状态，等到draw call调用时将全部缓存的状态转换为状态设置指令(例如PendingGfxState->PrepareForDraw(Cmd);)，降低不必要的转换指令录制和执行？
+
+
+// 简而言之，RHIRHICommandContext就是一个带有状态的命令录制器，当我们录制命令时，它会根据当前的状态来对命令进行优化。
+class RHICommandContext : public RHIResource     
+{
+public:
+    RHICommandContext(RHICommandPoolRef pool) 
+    : RHIResource(RHI_COMMAND_CONTEXT)
+    , pool(pool) 
+    {}
+
+    virtual void BeginCommand() = 0;
+
+	virtual void EndCommand() = 0;  // 结束录制
+
+    virtual void Execute(RHIFenceRef waitFence, RHISemaphoreRef waitSemaphore, RHISemaphoreRef signalSemaphore) = 0;     // 实际提交，如果延迟录制也该在对应线程调用该函数完成录制提交
+
+    // UE RHI彻底做了资源状态（如VkImageLayout）等的屏蔽封装
+    // 和BeginTransitions，FVulkanLayoutManager等有关
+    // 参考Sakura Engine还是做暴露吧
+    // resource state的屏蔽应该在RDG等层级处理，而不是RHI
+
+    virtual void TextureBarrier(const RHITextureBarrier& barrier) = 0;
+
+    virtual void BufferBarrier(const RHIBufferBarrier& barrier) = 0;
+
+    virtual void CopyTextureToBuffer(RHITextureRef src, TextureSubresourceLayers srcSubresource, RHIBufferRef dst, uint64_t dstOffset) = 0;
+
+    virtual void CopyBufferToTexture(RHIBufferRef src, uint64_t srcOffset, RHITextureRef dst, TextureSubresourceLayers dstSubresource) = 0;
+
+    virtual void CopyBuffer(RHIBufferRef src, uint64_t srcOffset, RHIBufferRef dst, uint64_t dstOffset, uint64_t size) = 0;
+
+    virtual void CopyTexture(RHITextureRef src, TextureSubresourceLayers srcSubresource, RHITextureRef dst, TextureSubresourceLayers dstSubresource) = 0;
+
+    virtual void GenerateMips(RHITextureRef src) = 0;
+
+    virtual void PushEvent(const std::string& name, Color3 color) = 0;   //Label?
+
+	virtual void PopEvent() = 0;
+
+    virtual void BeginRendering(const RHIRenderingInfo& rendering) = 0;
+
+    virtual void EndRendering() = 0;
+
+    // TODO：准备放弃
+    virtual void BeginRenderPass(RHIRenderPassRef renderPass) = 0;   //也可以运行时FindOrCreate相应的renderpass和framebuffer等，很多东西可以做中心化的查找表统一管理状态
+
+	virtual void EndRenderPass() = 0;
+
+    virtual void SetViewport(Offset2D min, Offset2D max) = 0;
+
+    virtual void SetScissor(Offset2D min, Offset2D max) = 0;
+
+    virtual void ClearScissors(const std::vector<ClearAttachment>& attachments, const std::vector<Rect2D>& scissors, uint32_t baseArrayLayer, uint32_t layerCount) = 0;
+
+    virtual void SetDepthBias(float constantBias, float slopeBias, float clampBias) = 0;
+
+    virtual void SetLineWidth(float width) = 0;
+
+    virtual void SetGraphicsPipeline(RHIGraphicsPipelineRef graphicsPipeline) = 0;
+
+    virtual void SetComputePipeline(RHIComputePipelineRef computePipeline) = 0;	
+
+    virtual void SetRayTracingPipeline(RHIRayTracingPipelineRef rayTracingPipeline) = 0;	
+
+    virtual void PushConstants(void* data, uint16_t size, ShaderFrequency frequency) = 0;
+
+    virtual void BindDescriptorSet(RHIDescriptorSetRef descriptor, uint32_t set) = 0;
+
+    virtual void BindVertexBuffer(RHIBufferRef vertexBuffer, uint32_t streamIndex, uint32_t offset) = 0;
+
+    virtual void BindIndexBuffer(RHIBufferRef indexBuffer, uint32_t offset) = 0;
+
+	virtual void Dispatch(uint32_t groupCountX, uint32_t groupCountY, uint32_t groupCountZ) = 0;
+
+	virtual void DispatchIndirect(RHIBufferRef argumentBuffer, uint32_t argumentOffset) = 0;
+
+    virtual void TraceRays(uint32_t groupCountX, uint32_t groupCountY, uint32_t groupCountZ) = 0;
+
+    virtual void Draw(uint32_t vertexCount, uint32_t instanceCount, uint32_t firstVertex, uint32_t firstInstance) = 0;
+
+    virtual void DrawIndexed(uint32_t indexCount, uint32_t instanceCount, uint32_t firstIndex, uint32_t vertexOffset, uint32_t firstInstance) = 0;
+
+    virtual void DrawIndirect(RHIBufferRef argumentBuffer, uint32_t offset, uint32_t drawCount) = 0;
+
+    virtual void DrawIndexedIndirect(RHIBufferRef argumentBuffer, uint32_t offset, uint32_t drawCount) = 0;
+
+    // TODO 
+    // virtual void BeginRenderQuery(RHIRenderQuery* RenderQuery) = 0;
+
+	// virtual void EndRenderQuery(RHIRenderQuery* RenderQuery) = 0;
+
+    //ImGui /////////////////////////////////////////////////////////////////////////////////////
+
+    virtual void ImGuiCreateFontsTexture() = 0;
+
+    virtual void ImGuiRenderDrawData(ImGuiDrawFunc func) = 0;
+
+private:
+    RHICommandPoolRef pool;
+};
+
+// 针对需要立即执行的不在渲染循环中的RHI命令单独设置的上下文
+// 每次调用Flush()将所有已经提交的命令立即执行
+class RHICommandContextImmediate : public RHIResource 
+{
+public:
+    RHICommandContextImmediate() 
+    : RHIResource(RHI_COMMAND_CONTEXT_IMMEDIATE)
+    {}
+
+    virtual void Flush() = 0;
+
+    virtual void TextureBarrier(const RHITextureBarrier& barrier) = 0;
+
+    virtual void BufferBarrier(const RHIBufferBarrier& barrier) = 0;
+
+    virtual void CopyTextureToBuffer(RHITextureRef src, TextureSubresourceLayers srcSubresource, RHIBufferRef dst, uint64_t dstOffset) = 0;
+
+    virtual void CopyBufferToTexture(RHIBufferRef src, uint64_t srcOffset, RHITextureRef dst, TextureSubresourceLayers dstSubresource) = 0;
+
+    virtual void CopyBuffer(RHIBufferRef src, uint64_t srcOffset, RHIBufferRef dst, uint64_t dstOffset, uint64_t size) = 0;
+
+    virtual void CopyTexture(RHITextureRef src, TextureSubresourceLayers srcSubresource, RHITextureRef dst, TextureSubresourceLayers dstSubresource) = 0;
+
+    virtual void GenerateMips(RHITextureRef src) = 0;
+};

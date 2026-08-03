@@ -1,0 +1,85 @@
+#version 460
+#extension GL_EXT_ray_tracing : enable
+#extension GL_ARB_separate_shader_objects : enable
+#extension GL_GOOGLE_include_directive : enable
+
+#include "../common/common.glsl"
+#include "ddgi_layout.glsl"
+
+vec3 SphericalFibonacci(float i, float n)
+{
+    const float PHI = sqrt(5.0) * 0.5 + 0.5;
+#define madfrac(A, B) ((A) * (B)-floor((A) * (B)))
+    float phi       = 2.0 * PI * madfrac(i, PHI - 1);
+    float cos_theta = 1.0 - (2.0 * i + 1.0) * (1.0 / n);
+    float sin_theta = sqrt(clamp(1.0 - cos_theta * cos_theta, 0.0f, 1.0f));
+
+    return vec3(cos(phi) * sin_theta, sin(phi) * sin_theta, cos_theta);
+
+#undef madfrac
+}
+
+layout(location = 0) rayPayloadEXT DDGIPayload RAY_PAYLOAD;
+
+layout(push_constant) uniform DDGIComputeSetting {
+	int volumeLightID;
+	float _padding[3];
+} SETTING;
+
+void main() 
+{
+  	VolumeLight volumeLight = LIGHTS.volumeLights[SETTING.volumeLightID];
+
+	ivec2 pixel = ivec2(gl_LaunchIDEXT.xy);
+	int   rayIndex   = pixel.x;
+	int   probeIndex = pixel.y;
+	ivec3 probeCoord = FetchProbeCoord(volumeLight.setting, probeIndex);
+
+	vec3  origin      = FetchProbeWorldPos(volumeLight.setting, probeCoord);
+	vec3  direction   = normalize(SphericalFibonacci(rayIndex, volumeLight.setting.raysPerProbe));  
+
+	if(volumeLight.setting.randomOrientation)
+	{
+		Rand rand = SeedRand(GLOBAL_SETTING.totalTicks, GLOBAL_SETTING.totalTicks + probeIndex);	// 给一个随机旋转，每个探针内相同
+		vec3 rotation = vec3(RandFloat(rand), RandFloat(rand), RandFloat(rand)) * 2 * PI;			// 其实可以每探针只算一次，or在CPU算
+		mat3 rotationMat = mat3(1.0, 0.0, 0.0, 
+								0.0, cos(rotation.x), -sin(rotation.x), 
+								0.0, sin(rotation.x), cos(rotation.x)) * 
+						   mat3(cos(rotation.y), 0.0, sin(rotation.y), 
+								0.0, 1.0, 0.0, 
+								-sin(rotation.y), 0.0, cos(rotation.y)) *	
+						   mat3(cos(rotation.z), -sin(rotation.z), 0.0, 
+								sin(rotation.z), cos(rotation.z), 0.0, 
+								0.0, 0.0, 1.0);
+
+		direction = normalize(rotationMat * direction);
+	}
+
+	float tmin        = MIN_RAY_TRACING_DISTANCE;
+	float tmax        = MAX_RAY_TRACING_DISTANCE;
+
+	RAY_PAYLOAD.dist      = tmax;
+	RAY_PAYLOAD.normal    = vec4(0.0f);
+	RAY_PAYLOAD.diffuse   = vec4(0.0f);
+	RAY_PAYLOAD.emission  = vec4(0.0f);
+
+	traceRayEXT(TLAS, 			  		// acceleration structure
+		gl_RayFlagsOpaqueEXT,   		// rayFlags
+		0xFF,           				// cullMask
+		0,              				// sbtRecordOffset
+		0,              				// sbtRecordStride
+		0,              				// missIndex
+		origin.xyz,     				// ray origin
+		tmin,           				// ray min range
+		direction.xyz,  				// ray direction
+		tmax,           				// ray max range
+		0               				// payload (location = 0)
+  	);
+
+	// if(RAY_PAYLOAD.dist < tmax) AddGizmoLine(origin, origin + direction * RAY_PAYLOAD.dist, RAY_PAYLOAD.diffuse);	// 可视化trace路径
+
+	imageStore(G_BUFFER_POSITION,	 		pixel, vec4(direction, RAY_PAYLOAD.dist)); 
+	imageStore(G_BUFFER_NORMAL_ROUGHNESS, 	pixel, RAY_PAYLOAD.normal);
+	imageStore(G_BUFFER_DIFFUSE_METALLIC, 	pixel, RAY_PAYLOAD.diffuse);
+	imageStore(G_BUFFER_EMISSION, 			pixel, RAY_PAYLOAD.emission);
+}

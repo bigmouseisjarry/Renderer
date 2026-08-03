@@ -1,0 +1,77 @@
+#version 460
+#extension GL_GOOGLE_include_directive : enable
+
+#include "../common/common.glsl"
+
+#include "common.glsl"
+
+#define THREAD_SIZE_X 16
+#define THREAD_SIZE_Y 16
+#define THREAD_SIZE_Z 1
+layout (local_size_x = THREAD_SIZE_X, 
+		local_size_y = THREAD_SIZE_Y, 
+		local_size_z = THREAD_SIZE_Z) in;
+void main() 
+{	
+    ivec2 pixel     = ivec2(gl_GlobalInvocationID.xy);
+    vec2 uv         = ScreenPixToUV(pixel); 
+
+	vec3 color 			= imageLoad(CURRENT_COLOR_VARIANCE[0], pixel).xyz;
+	float historyLength = imageLoad(CURRENT_MOMENTS, pixel).b;
+
+	vec4 outColorVariance;
+	outColorVariance.xyz = color;
+	
+	// 确实能在由视角变换等引起的历史帧不可用的情况下有效估计方差，从而缓解噪声
+	// 需要atrous循环到高轮次（7~8，大于原论文的5）才有用，且需要使用原论文的其他参数（主要是亮度项系数4，但是会导致阴影变糊）
+	// 开销暂不明确，但是加上高轮次 + ReSTIR DI 已经到了16ms左右
+	if (historyLength < 5.0f && FetchDepthTex(pixel) != 1.0f) 
+	{
+		vec4 pPosition      = DepthToWorld(uv);
+		vec3 pNormal        = normalize(texelFetch(G_BUFFER_NORMAL_ROUGHNESS, pixel, 0).xyz);
+
+		vec2 sumMoments = vec2(0.0f);
+		float weights = epsilon;
+		for (int y = -2; y <= 2; y++)	// ReLAX里用的5x5，原版SVGF是7x7
+		{
+			for (int x = -2; x <= 2; x++)
+			{
+				ivec2 qPixel = pixel + ivec2(x, y);
+				if (any(lessThan(qPixel, ivec2(0, 0))) || any(greaterThan(qPixel, ivec2(WINDOW_WIDTH - 1, WINDOW_HEIGHT - 1)))) continue;
+				if (FetchDepthTex(qPixel) == 1.0f) continue;
+				
+				vec2 qUV        = ScreenPixToUV(qPixel); 
+				{
+					vec4 qPosition      = DepthToWorld(qUV);
+					vec3 qNormal        = normalize(texelFetch(G_BUFFER_NORMAL_ROUGHNESS, qPixel, 0).xyz);
+					vec2 qMoments 		= imageLoad(CURRENT_MOMENTS, qPixel).rg;
+
+					float wp    = GetPlaneDistanceWeight(pPosition.xyz, pNormal, qPosition.xyz);
+                	float wn    = GetNormalWeight(pNormal, qNormal);
+					float w 	= wp * wn;
+					float weight = gaussKernel5x5[5 * (y + 2) + (x + 2)] / 273.0f * w;
+ 
+                	sumMoments 	+= weight * qMoments; 
+					weights 	+= weight;
+				}
+			}
+		}
+		
+		sumMoments /= weights;
+		float variance = sumMoments.y - sumMoments.x * sumMoments.x;
+
+		// give the variance a boost for the first frames
+        variance *= 5.0f / historyLength;
+
+        outColorVariance.a = abs(variance);
+	} 
+	else 
+	{
+		vec2 moments = imageLoad(CURRENT_MOMENTS, pixel).rg;
+		float variance = moments.y - moments.x * moments.x;
+		outColorVariance.a = abs(variance);
+	}
+
+	imageStore(CURRENT_COLOR_VARIANCE[0], pixel, outColorVariance);
+}
+

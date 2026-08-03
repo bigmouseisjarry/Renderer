@@ -1,0 +1,161 @@
+#version 460
+#extension GL_ARB_separate_shader_objects : enable
+#extension GL_GOOGLE_include_directive : enable
+
+#include "../common/common.glsl"
+#include "common.glsl"
+
+#define THREAD_SIZE_X 16
+#define THREAD_SIZE_Y 16
+#define THREAD_SIZE_Z 1
+layout (local_size_x = THREAD_SIZE_X, 
+		local_size_y = THREAD_SIZE_Y, 
+		local_size_z = THREAD_SIZE_Z) in;
+void main() 
+{
+    ivec2 pixel         = ivec2(gl_GlobalInvocationID.xy);
+
+    ivec2 tracePixel   = HALF_SIZE_SSSR ? 
+                            pixel / 2 :
+                            pixel;
+
+    vec2 uv             = ScreenPixToUV(pixel);
+
+	// 采样G Buffer信息 ////////////////////////////////////////////////////////////////////////////////////
+
+    float depth = FetchDepthTex(pixel);
+    if(depth == 1.0f)
+    {
+        imageStore(SSSR_RESOLVE, pixel, vec4(0.0f) );
+        return;
+    }
+
+    vec4 gbffer0    = imageLoad(G_BUFFER_DIFFUSE_METALLIC, pixel);
+    vec4 gbffer1    = imageLoad(G_BUFFER_NORMAL_ROUGHNESS, pixel);
+    vec3 diffuse    = gbffer0.xyz;
+    vec3 normal     = gbffer1.xyz;
+    float roughness = max(gbffer1.w, 0.05f);
+    float metallic  = gbffer0.w;
+    vec4 worldPos   = DepthToWorld(uv);  // 从UV重建的世界坐标会有一些精度误差，不算大
+
+    if(roughness > SETTING.maxRoughness)
+    {
+        imageStore(SSSR_RESOLVE, ivec2(pixel.xy), vec4(0.0f));
+        return;
+    }
+
+    // 光照参数计算 //////////////////////////////////
+ 
+	vec3 N          = normalize(normal);                        //法线
+	vec3 V          = normalize((CAMERA.pos - worldPos).xyz);	//视线
+    vec3 R          = normalize(reflect(-V, N));                //反射
+
+    vec3 F0             = mix(vec3(0.04f), diffuse.rgb, metallic); 
+    float NoV           = Saturate(dot(N, V));
+    float coneTangent   = Lerp(0, roughness * (1 - SETTING.importanceSampleBias), NoV * sqrt(roughness)); //锥体追踪，没搞明白，暂时抄的
+
+	// 本帧结果////////////////////////////////////////////////////////////////////////////////////
+
+    Rand rand = SeedRand(GLOBAL_SETTING.totalTicks, pixel.y * GLOBAL_SETTING.totalTicks + pixel.x);
+    vec2 noise = vec2(RandFloat(rand), RandFloat(rand));
+    mat2 ditterRotation = mat2(noise.x, noise.y, -noise.x, -noise.y);
+
+    vec4 accumulatedColor = vec4(0.0f);
+    float accumulatedDist = 0.0f;
+    float weightSum = 0.0f;
+
+    //  TODO 根据粗糙度选择采样数目
+    // ivec2 deltaUV[21] = {ivec2(0, 0), 
+    //                     ivec2(-1, 0), ivec2(1, 0), ivec2(0, 1), ivec2(0, -1),
+    //                     ivec2(-1, -1), ivec2(1, -1), ivec2(-1, 1), ivec2(1, 1),
+    //                     ivec2(-2, -1), ivec2(-2, 0), ivec2(-2, 1), ivec2(2, -1),ivec2(2, 0), ivec2(2, 1), 
+    //                     ivec2(-1, -2), ivec2(0, -2), ivec2(1, -2), ivec2(-1, 2), ivec2(0, 2), ivec2(1, 2)}; 
+
+    int minIndex = 4;
+    int maxIndex = 12;
+    if(roughness < 0.2f) 
+    {
+        minIndex = 0;
+        maxIndex = 3;
+    }
+    ivec2 deltaUV[13] =  {  ivec2(-1, 0), ivec2(1, 0), ivec2(0, 1), ivec2(0, -1),
+                            ivec2(-2.0, -2.0), ivec2(0.0, -2.0), ivec2(2.0, -2.0), 
+                            ivec2(-2.0, 0.0), ivec2(0.0, 0.0), ivec2(2.0, 0.0), 
+                            ivec2(-2.0, 2.0), ivec2(0.0, 2.0), ivec2(2.0, 2.0)};
+    for(int i = minIndex; i <= maxIndex; i++)
+    { 
+
+        ivec2 neighburTex   = tracePixel.xy + ivec2(round(ditterRotation * deltaUV[i]));
+        ivec2 neighburFullTex = HALF_SIZE_SSSR ? neighburTex * 2 : neighburTex;
+
+        vec4 traceResult    = imageLoad(SSSR_HIT_RESULT, neighburTex);
+        vec4 traceColor     = imageLoad(SSSR_HIT_COLOR, neighburTex);
+        float hitPdf        = imageLoad(SSSR_PDF, neighburTex).x;
+        float hitMask       = traceResult.w;
+        vec2 hitUV          = traceResult.xy;   
+        // float hitDepth      = traceResult.z;    //traceResult.z != fetchDepth
+
+        vec4 hitColor = vec4(0.0f);
+        float hitDist = 0.0f;
+        float weight = 0.0f;
+        if(SETTING.mode == 0)
+        {
+            vec4 hitPos         = DepthToWorld(hitUV);
+            hitDist             = length(hitPos.xyz - worldPos.xyz);
+            vec3 L              = normalize(hitPos.xyz - worldPos.xyz);
+
+            float localBRDF     = ResolveBRDF(vec3(1.0f), roughness, metallic, N, V, L).specular.x;
+            weight              = max(localBRDF / max(1e-5, hitPdf) * dot(N, L), 1e-3);    // 权重推导 https://zhuanlan.zhihu.com/p/689424019
+
+            // 采样使用伪cone tracing，预先滤波颜色缓冲，然后根据粗糙度，追踪距离等估计采样mip
+            float radius        = coneTangent * length(hitUV - uv);
+            float mip           = clamp(log2(radius * WINDOW_WIDTH), 0, 6);
+            hitColor            = textureLod(sampler2D(IN_COLOR_PYRAMID, SAMPLER[0]), hitUV, mip); 
+
+            if(hitMask == 2.0f)  // 被遮挡的情况，当作黑色单独处理
+            {
+                hitColor = vec4(0.0f);
+                hitMask = 1.0f;
+                weight = 1.0f;
+            }
+        }
+        else if(SETTING.mode == 1 || SETTING.mode == 2)
+        {
+            vec4 hitPos         = traceResult;
+            hitDist             = length(hitPos.xyz - worldPos.xyz);
+            vec3 L              = normalize(hitPos.xyz - worldPos.xyz);
+            
+            float localBRDF     = ResolveBRDF(vec3(1.0f), roughness, metallic, N, V, L).specular.x;
+            weight              = max(localBRDF / max(1e-3, hitPdf) * dot(N, L), 1e-3);    
+
+            hitColor            = traceColor;
+        }
+
+        accumulatedColor    += vec4(ToneMap(max(hitColor.rgb, 0.0f)), hitMask) * weight; 
+        accumulatedDist     += hitDist * weight;
+        weightSum           += weight;
+    }
+    accumulatedColor        = accumulatedColor / weightSum;
+    accumulatedColor        = vec4(InverseToneMap(accumulatedColor.xyz), accumulatedColor.w);
+    accumulatedDist         = accumulatedDist / weightSum;
+    if(roughness < 0.025)
+        accumulatedDist *= -1.0f;    // 粗糙度过低的标记一下，无需使用NRD降噪
+  
+    // 之后的部分和镜面反射IBL完全一致，用半球radiance采样加权（在SSR里使用射线寻找，cone tracing也是类似的），乘以预积分部分
+    vec3 kS = FresnelSchlickRoughness(NoV, F0, roughness); 
+    vec3 kD = 1.0 - kS;
+
+    vec2 brdf = texture(sampler2D(BRDF_LUT, SAMPLER[0]), vec2(NoV, 1.0 - roughness)).rg;    // 纹理UV是反的！！
+    brdf = pow(brdf, vec2(1.0/2.2));      //gamma矫正
+
+    vec3 reflection = accumulatedColor.xyz * accumulatedColor.w;               
+    if(SETTING.enableSkybox != 0) 
+        reflection += PreFilteredReflection(R, roughness, SKYBOX_IBL[1], SAMPLER[0]).rgb * (1 - accumulatedColor.w);	//没有trace到的就按天空盒处理？没有做可见性测试，会漏光
+
+    vec3 specularColor  = reflection * (kS * brdf.x + brdf.y);
+    vec4 currentColor   = vec4(specularColor, accumulatedDist); 
+
+	// 输出结果////////////////////////////////////////////////////////////////////////////////////
+
+    imageStore(SSSR_RESOLVE, ivec2(pixel.xy), currentColor );
+}

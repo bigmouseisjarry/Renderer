@@ -1,0 +1,83 @@
+#pragma once
+
+#include "Core/Event/EventSystem.h"
+#include "Core/Math/Math.h"
+#include "Core/Serialize/Serializable.h"
+#include "Component.h"
+#include "Function/Render/RenderPass/MeshPass.h"
+#include "Function/Render/RenderResource/Drawable.h"
+#include "Function/Render/RenderResource/Material.h"
+#include "Function/Render/RenderResource/Model.h"
+#include "Function/Render/RenderResource/RenderStructs.h"
+#include <cstdint>
+#include <utility>
+#include <vector>
+
+enum MeshRendererMode
+{
+	RENDER_MODE_DEFAULT = 0,
+	RENDER_MODE_CLUSTER,
+	RENDER_MODE_VIRTUAL_MESH,
+
+	RENDER_MODE_MAX,//
+};
+
+class MeshRendererComponent : public Component, public AssetBinder, public Drawable
+{
+public:
+	MeshRendererComponent() = default;
+	~MeshRendererComponent();
+
+	virtual void OnLoad() override;
+	virtual void OnSave() override;
+	virtual void OnInit() override;
+	virtual void OnUpdate(float deltaTime) override;
+
+	virtual std::string GetTypeName() override		{ return "Mesh Renderer Component"; }
+	virtual ComponentType GetType() override	    { return MESH_RENDERER_COMPONENT; }
+
+	void SetModel(ModelRef model); 					
+	ModelRef GetModel()								{ return model; }
+
+	void SetMaterial(MaterialRef material, uint32_t index = 0);
+	void SetMaterials(std::vector<MaterialRef> materials, uint32_t firstIndex = 0);
+	MaterialRef GetMaterial(uint32_t index);			
+
+	virtual void CollectDrawBatch(std::vector<DrawBatch>& batches) override;
+	virtual void CollectAccelerationStructureInstance(std::vector<RHIAccelerationStructureInstanceInfo>& instances) override;
+	virtual void CollectSurfaceCacheTask(std::vector<SurfaceCacheTask>& tasks) override;
+
+private:
+	void InitResource();
+	int updateTicks = 0;	//GPU端数据已经更新的帧数，需要至少更新FRAMES_IN_FLIGHT次
+	ModelRef model;
+    std::vector<MaterialRef> materials;
+	std::vector<ObjectInfo> objectInfos;
+	std::vector<uint32_t> objectIDs;
+	std::vector<uint32_t> meshCardIDs;
+
+	// 矩阵计算的用时很高，尽量缓存
+	Mat4 prevModel = Mat4::Identity();
+	Vec3 prevScale = Vec3::Ones();
+	std::vector<Mat4> currentModels;
+	std::vector<Mat4> prevModels;
+
+	bool castShadow;					//是否产生阴影（加入shadow map render pass）
+	MeshRendererMode renderMode;		//渲染模式
+
+	int32_t materilalInspectMode = 1;		//材质检视模式
+	int32_t materilalInspectIndex = 0;		//材质检视下标
+
+private:
+    BeginSerailize()
+    SerailizeBaseClass(Component)
+    SerailizeBaseClass(AssetBinder)
+	SerailizeEntry(castShadow)
+	SerailizeEntry(renderMode)
+	//SerailizeAssetEntry(model)
+	//SerailizeAssetArrayEntry(materials)
+    EndSerailize
+	
+	EnableComponentEditourUI()
+};
+

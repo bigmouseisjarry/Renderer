@@ -1,0 +1,144 @@
+#version 460
+#extension GL_GOOGLE_include_directive : enable
+
+#include "../common/common.glsl"	
+#include "include/common.glsl"	
+
+#define THREAD_SIZE_X 16
+#define THREAD_SIZE_Y 16
+#define THREAD_SIZE_Z 1
+layout (local_size_x = THREAD_SIZE_X, 
+		local_size_y = THREAD_SIZE_Y, 
+		local_size_z = THREAD_SIZE_Z) in;
+void main()
+{
+    ivec2 pixel     = ivec2(gl_GlobalInvocationID.xy);
+    vec2 uv         = ScreenPixToUV(pixel); 
+
+    vec4 gbffer0    = imageLoad(G_BUFFER_DIFFUSE_METALLIC, pixel);
+    vec4 gbffer1    = imageLoad(G_BUFFER_NORMAL_ROUGHNESS, pixel);
+    vec4 gbffer2    = imageLoad(G_BUFFER_EMISSION, pixel);
+    vec3 diffuse    = gbffer0.xyz;
+    vec3 normal     = gbffer1.xyz;
+    vec3 emission   = gbffer2.xyz;
+    float roughness = gbffer1.w;
+    float metallic  = gbffer0.w;
+    float depth     = FetchDepth(uv);
+    vec4 worldPos   = DepthToWorld(uv, depth);
+
+    float cacheFactor = RESTIR_GI_SETTING.surfaceCacheFactor;
+
+    /////////////////////////////////////////////////////////
+
+    uvec2 downsamplePixel = uvec2(pixel.x / WIDTH_DOWNSAMPLE_RATE, pixel.y / HEIGHT_DOWNSAMPLE_RATE);
+    ivec2 downsampleExtent = ivec2(WINDOW_WIDTH / WIDTH_DOWNSAMPLE_RATE, WINDOW_HEIGHT / HEIGHT_DOWNSAMPLE_RATE);
+
+    // vec2 frac = vec2(fract(float(pixel.x) / WINDOW_WIDTH * downsampleExtent.x), 
+    //                  fract(float(pixel.y) / WINDOW_HEIGHT * downsampleExtent.y));
+    // vec4 weight = vec4( (1.0 - frac.x) * (1.0 - frac.y),
+    //                     frac.x * (1.0 - frac.y),
+    //                     (1.0 - frac.x) * frac.y,
+    //                     frac.x * frac.y);
+
+    vec4 finalDiffuse   = vec4(0.0f);
+    vec4 finalSpecular  = vec4(0.0f);
+    if(depth != 1.0f)
+    {
+        // for(int x = 0; x < 2; x++)
+        // {
+        //     for(int y = 0; y < 2; y++)
+        //     {
+        //         uint reservoirIndex = (downsamplePixel.y + y) * downsampleExtent.x + (downsamplePixel.x + x);
+	    //         GIReservoir res = RESULT_RESERVOIRS[reservoirIndex];
+
+        //         vec3 radiance = res.sampl.outRadiance * res.w * cacheFactor * weight[y * 2 + x]; 
+        //         float dist = length(res.sampl.hitPos - worldPos.xyz) * weight[y * 2 + x]; // hitDistance
+        {
+            {
+                uint reservoirIndex = downsamplePixel.y * downsampleExtent.x + downsamplePixel.x;
+	            GIReservoir res = RESULT_RESERVOIRS[reservoirIndex];
+
+                vec3 radiance = res.sampl.outRadiance * res.w * cacheFactor; 
+                float dist = length(res.sampl.hitPos - worldPos.xyz); // hitDistance
+
+                finalDiffuse.w += dist;
+                if(RESTIR_GI_SETTING.showRadiance != 0)
+                {
+                    finalDiffuse.xyz += radiance;
+                }
+                else 
+                {
+                    vec3 N = normalize(normal);
+                    vec3 V = normalize(CAMERA.pos.xyz - worldPos.xyz);	
+                    vec3 L = normalize(res.sampl.hitPos - worldPos.xyz);
+                    float NoL = saturate(dot(N, L));
+        
+                    BRDFData data = ResolveBRDF(diffuse.xyz, roughness, metallic, N, V, L);
+                    vec3 diffuseColor = data.diffuse * radiance * NoL;
+                    vec3 specularColor = data.specular * radiance * NoL;
+
+                    finalDiffuse.xyz += diffuseColor;
+                    if(roughness > 0.75f) 
+                        finalDiffuse += vec4(specularColor, 0.0f);      // 粗糙度较大的镜面反射直接用这个？
+                }                                                       // 交给reblur diffuse降噪？relax的效果不是很好
+            }
+        }
+    }
+
+
+    // if(depth != 1.0f)
+    // {
+    //     vec3 radiance = res.sampl.outRadiance * res.w;
+
+    //     vec3 F0 = mix(vec3(0.04f), diffuse.rgb, metallic); 
+    //     vec3 N = normalize(normal);
+    //     vec3 V = normalize(CAMERA.pos.xyz - worldPos.xyz);	
+    //     float NoV = saturate(dot(N, V));
+
+    //     vec3 k_specular = FresnelSchlickRoughness(NoV, F0, roughness); 
+    //     vec3 k_diffuse  = 1.0 - k_specular;     //BRDF积分项里每个radiance对应的kD是不同的（k_specular = F 视角相关），把kD移出积分是一个近似估计
+
+    //     vec3 f_diffuse  = Diffuse_Lambert(diffuse.rgb);  
+
+    //     vec3 diffuseColor = (1.0 - metallic) * k_diffuse * f_diffuse * radiance;  
+
+    //     finalDiffuse.xyz = diffuseColor;
+    // }
+
+
+
+
+
+
+
+
+    if(RESTIR_GI_SETTING.combineMode == 0)   // 直接混合
+    {
+        vec4 color = vec4(finalDiffuse.xyz + finalSpecular.xyz, 0.0f);
+        if(RESTIR_GI_SETTING.showRadiance == 0)
+        {
+            vec4 baseColor = imageLoad(FINAL_COLOR, pixel);
+            color.xyz += baseColor.xyz;
+        }
+        imageStore(FINAL_COLOR, pixel, color);
+    }
+    if(RESTIR_GI_SETTING.combineMode == 1)   // 后续降噪
+    {
+        imageStore(GI_DIFFUSE_COLOR, pixel, finalDiffuse);
+        imageStore(GI_SPECULAR_COLOR, pixel, finalSpecular);
+    }
+    if(RESTIR_GI_SETTING.combineMode == 2)   // 后续降噪，合并DI
+    {                                        // TODO 合并??????????????
+        vec4 diffuse = imageLoad(GI_DIFFUSE_COLOR, pixel);
+        finalDiffuse.xyz += diffuse.xyz;
+        finalDiffuse.w += diffuse.w; 
+        finalDiffuse.w /= 2.0f;
+        imageStore(GI_DIFFUSE_COLOR, pixel, finalDiffuse);
+
+        vec4 specular = imageLoad(GI_SPECULAR_COLOR, pixel);
+        finalSpecular.xyz += specular.xyz;
+        finalSpecular.w += specular.w; 
+        finalSpecular.w /= 2.0f;
+        imageStore(GI_SPECULAR_COLOR, pixel, finalSpecular);
+    }
+}

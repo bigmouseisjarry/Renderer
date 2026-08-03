@@ -1,0 +1,94 @@
+#version 460
+#extension GL_GOOGLE_include_directive : enable
+
+#include "../common/common.glsl"
+
+#include "common.glsl"
+
+#define THREAD_SIZE_X 16
+#define THREAD_SIZE_Y 16
+#define THREAD_SIZE_Z 1
+layout (local_size_x = THREAD_SIZE_X, 
+		local_size_y = THREAD_SIZE_Y, 
+		local_size_z = THREAD_SIZE_Z) in;
+void main() 
+{	
+    ivec2 pixel     = ivec2(gl_GlobalInvocationID.xy);
+    vec2 uv         = ScreenPixToUV(pixel); 
+
+    imageStore(CURRENT_COLOR_VARIANCE[0],    ivec2(pixel.xy), vec4(0.0));
+    imageStore(CURRENT_COLOR_VARIANCE[1],    ivec2(pixel.xy), vec4(0.0));
+    imageStore(CURRENT_MOMENTS,    ivec2(pixel.xy), vec4(0.0));
+
+
+    uint objectID   = FetchObjectIDTex(pixel);
+    vec2 velocity   = FetchVelocityTex(pixel);
+    vec3 normal     = texelFetch(G_BUFFER_NORMAL_ROUGHNESS, pixel, 0).xyz;
+
+	vec3 diffuse 		= max(texelFetch(G_BUFFER_DIFFUSE_METALLIC, pixel, 0).xyz, 1e-3);
+	vec3 color 			= imageLoad(IN_COLOR, pixel).xyz / diffuse;	// demodulate albedo
+
+	vec3 prevColor;
+	vec2 prevMoments;
+	float historyLength;
+    bool valid = Reproject(		// 此处用的是更精确的重投影，对重投影后的临近2x2像素检查有效性，并做双线性插值
+        pixel, 					// 明显提升效果
+        velocity,				// ReLAX还使用了bicubic的插值，暂时没做
+        objectID,
+        normal,
+        OBJECT_ID[1],
+        HISTORY_G_BUFFER_NORMAL_ROUGHNESS,
+		HISTORY_COLOR_VARIANCE,
+		HISTORY_MOMENTS,
+        prevColor,
+        prevMoments,
+		historyLength);
+
+	////////////////////////////////////////////////////////////////////////////////
+	// ReLAX专门做了一个history clamp的pass来适应动态的光照
+	// 此外分离了diffuse和specular，镜面反射部分有额外的重投影/双边滤波权重等，都没做
+	// 这里只是为了降低高光的拖尾问题，用和TAA完全一样的clamp方法也是可以的，有一定效果，但是不能完全解决
+    if(SETTING.historyClamp != 0)
+	{
+		AdjacentTex3 adjTex;
+		for(int i = 0; i < 3; i++)
+		{
+			for(int j = 0; j < 3; j++)
+			{
+				ivec2 neighborPixel  = pixel + ivec2(i - 1, j - 1);
+				vec3 neighborDiffuse = texelFetch(G_BUFFER_DIFFUSE_METALLIC, neighborPixel, 0).xyz;
+				adjTex.color[i][j] = RGBtoLuminance(neighborDiffuse) < 0.01f ? 
+										vec3(0.0f) : 
+										imageLoad(IN_COLOR, neighborPixel).xyz / neighborDiffuse;
+			}
+		}
+		RGBtoYCoCg(adjTex);
+		prevColor = RGBtoYCoCg(prevColor);
+		prevColor = YCoCgtoRGB(ClampedColor(prevColor, adjTex));
+	}
+
+	////////////////////////////////////////////////////////////////////////////////
+
+
+	float blend = SETTING.alpha;
+	if (any(isnan(prevColor)) || 
+		FetchDepthTex(pixel) == 1.0f || 
+		!valid) 
+	{
+		historyLength = 0.0f;
+		blend = 1.0f;
+	}
+	if(historyLength != 0.0f) blend = max(1.0 / 50.0, 1 / historyLength);	// TODO	确实能保证静帧非常稳定
+																			// 还是需要historyClamp来保证动态，暂未支持
+
+	float luminance 	= RGBtoLuminance(clamp(color, vec3(0.0f), vec3(100.0f)));
+	luminance 			= max(0.0f, luminance);
+	vec2 moments 		= vec2(luminance, luminance * luminance);
+	float currentLength = min(historyLength + 1.0f, 100.0f); 
+	
+	vec4 outMoments		= vec4(moments * blend + prevMoments * (1.0f - blend), currentLength, 0.0f);
+	vec4 outColor 		= vec4(color * blend + prevColor * (1.0f - blend), 0.0f);
+
+	imageStore(CURRENT_MOMENTS, pixel, outMoments);
+	imageStore(CURRENT_COLOR_VARIANCE[0], pixel, outColor);
+}

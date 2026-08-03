@@ -1,0 +1,103 @@
+#version 460
+#extension GL_GOOGLE_include_directive : enable
+
+#include "../common/common.glsl"
+#include "common.glsl"
+
+#define THREAD_SIZE_X 64
+#define THREAD_SIZE_Y 1
+#define THREAD_SIZE_Z 1
+layout (local_size_x = THREAD_SIZE_X, 
+		local_size_y = THREAD_SIZE_Y, 
+		local_size_z = THREAD_SIZE_Z) in;
+void main() 
+{
+	uint gID = gl_GlobalInvocationID.x;
+
+	// 逐cluster剔除
+	if(gID < CLUSTER_DRAW_DATAS[0].setting.processSize)
+	{
+		IndirectClusterDrawInfo clusterInfo = CLUSTER_DRAW_DATAS[0].draws[gID];
+
+		MeshCluster cluster = MESH_CLUSTERS.slot[clusterInfo.clusterID];
+		Object object = OBJECTS.slot[clusterInfo.objectID];
+		
+		BoundingSphere worldSphere = SphereTransform(cluster.sphere, object.model, object.localScale.xyz * object.modelScale.xyz);	//世界空间的包围球包围盒,是cluster的不是object的
+
+		for(int passIndex = 0; passIndex < SETTING.passCount; passIndex++)
+		{
+			bool visible = true;			//整体可见性
+			bool frustumVisible = true;		//视锥剔除可见性
+			bool occlusionVisible = true;	//遮蔽剔除可见性
+
+			//屏幕空间绘制
+			if(	SETTING.passType == DEPTH_PASS_INDEX ||
+				SETTING.passType == G_BUFFER_PASS_INDEX ||
+				SETTING.passType == FORWARD_PASS_INDEX ||
+				SETTING.passType == TRANSPARENT_PASS_INDEX)
+			{
+				frustumVisible = frustumVisible && FrustumIntersectSphere(CAMERA.frustum, worldSphere);
+
+				occlusionVisible = occlusionVisible && OcclusionCull( 			//遮蔽剔除使用前一帧的深度缓冲Hiz
+					worldSphere, 
+					CAMERA.pos.xyz, CAMERA.view, CAMERA.proj, CAMERA.near,
+					DEPTH_PYRAMID[1], SAMPLER[3]); 
+			}
+
+			//光源空间绘制，平行光
+			else if(SETTING.passType == DIRECTIONAL_SHADOW_PASS_INDEX)
+			{			
+				// frustumVisible = frustumVisible && FrustumIntersectSphere(LIGHTS.directionalLights[passIndex].frustum, worldSphere);
+				frustumVisible = frustumVisible && SphereIntersectSphere(LIGHTS.directionalLights[passIndex].sphere, worldSphere);
+			}
+
+			//光源空间绘制，点光源
+			else if(SETTING.passType == POINT_SHADOW_PASS_INDEX)
+			{
+				if(passIndex >= LIGHTS.lightSetting.pointshadowedLightCnt * 6)	visible = false;	//没启用的点光源槽位
+				else 
+				{
+					uint pointShadowLightID = passIndex / 6;
+					uint face = passIndex % 6;
+
+					//frustumVisible = frustumVisible && SphereIntersectSphere(worldSphere, LIGHTS.pointLights[LIGHTS.lightSetting.pointShadowLightIDs[pointShadowLightID]].sphere);
+					frustumVisible = frustumVisible && FrustumIntersectSphere(LIGHTS.pointLights[LIGHTS.lightSetting.pointShadowLightIDs[pointShadowLightID]].frustum[face], worldSphere);
+				}
+			}
+			
+			//TODO INDIRECT_COMMANDS可以放到这里来录制，不只是instanceCount
+
+			if(SETTING.disableFrustrumCulling != 0) frustumVisible = true;
+			if(SETTING.disableOcclusionCulling != 0) occlusionVisible = true;
+			visible = visible && occlusionVisible && frustumVisible;
+			// visible = true;	// 
+			
+			if(SETTING.enableStatistics != 0)
+			{
+				atomicAdd(CLUSTER_DRAW_DATAS[passIndex].setting.drawSize, visible ? 1 : 0);						//存一下剔除的数量信息
+				atomicAdd(CLUSTER_DRAW_DATAS[passIndex].setting.frustumCull, frustumVisible ? 0 : 1);
+				atomicAdd(CLUSTER_DRAW_DATAS[passIndex].setting.occlusionCull, occlusionVisible ? 0 : 1);
+			}
+		
+			if(visible) 
+			{
+				uint offset = atomicAdd(CLUSTER_DRAW_COMMANDS[passIndex].command[clusterInfo.commandID].instanceCount, 1);	// 更新command和缓冲
+
+				MeshClusterDrawInfo drawInfo; 
+				drawInfo.objectID = clusterInfo.objectID;
+				drawInfo.clusterID = clusterInfo.clusterID;		
+
+				MESH_CLUSTER_DRAW_INFOS.slot[
+					CLUSTER_DRAW_COMMANDS[passIndex].command[
+						clusterInfo.commandID].firstInstance + offset] = drawInfo;
+
+				if(SETTING.showBoundingBox != 0) AddGizmoBox(worldSphere.centerRadius.xyz, vec3(worldSphere.centerRadius.w), vec4(0.0f, 0.0f, 1.0f, 1.0f));
+				// if(SETTING.showBoundingBox != 0) AddGizmoSphere(worldSphere.centerRadius.xyz, worldSphere.centerRadius.w, vec4(0.0f, 0.0f, 1.0f, 1.0f));
+			}
+
+		}
+	}
+}
+
+
+

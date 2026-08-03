@@ -1,0 +1,103 @@
+#version 460
+#extension GL_GOOGLE_include_directive : enable
+
+#include "../common/common.glsl"	
+#include "include/common.glsl"	
+
+#define THREAD_SIZE_X 16
+#define THREAD_SIZE_Y 16
+#define THREAD_SIZE_Z 1
+layout (local_size_x = THREAD_SIZE_X, 
+		local_size_y = THREAD_SIZE_Y, 
+		local_size_z = THREAD_SIZE_Z) in;
+void main()
+{
+    ivec2 pixel     = ivec2(gl_GlobalInvocationID.xy);
+    vec2 uv         = ScreenPixToUV(pixel); 
+
+    vec4 gbffer0    = imageLoad(G_BUFFER_DIFFUSE_METALLIC, pixel);
+    vec4 gbffer1    = imageLoad(G_BUFFER_NORMAL_ROUGHNESS, pixel);
+    vec4 gbffer2    = imageLoad(G_BUFFER_EMISSION, pixel);
+    vec3 diffuse    = gbffer0.xyz;
+    vec3 normal     = gbffer1.xyz;
+    vec3 emission   = gbffer2.xyz;
+    float roughness = gbffer1.w;
+    float metallic  = gbffer0.w;
+    float depth     = FetchDepth(uv);
+    vec4 worldPos   = DepthToWorld(uv, depth);
+
+    /////////////////////////////////////////////////////////
+
+    uint reservoirIndex = pixel.y * WINDOW_WIDTH + pixel.x;
+	DIReservoir res = RESULT_RESERVOIRS[reservoirIndex];
+
+    vec4 finalColor = vec4(0.0f);
+    if(depth != 1.0f)
+    {
+        {
+            uint lightID = res.sampl.lightID;
+
+            vec3 pHat = EvaluatePHatFull(
+                lightID, worldPos.xyz, normal,
+                diffuse, roughness, metallic); 
+
+            finalColor.xyz += pHat * res.w;
+            finalColor.w = HitDistance(lightID, worldPos.xyz);  // hitDistance
+        }
+
+        if (RESTIR_DI_SETTING.bruteLighting != 0)  // 暴力遍历光源的测试，算是基线吧
+        {
+            finalColor = vec4(0.0f);
+            for(int i = 0; i < LIGHTS.lightSetting.pointLightCnt; i++)
+            {
+                uint lightID = LIGHTS.lightSetting.pointLightIDs[i];
+
+                vec3 pHat = EvaluatePHatFull(
+                lightID, worldPos.xyz, normal,
+                diffuse, roughness, metallic); 
+
+                finalColor.xyz += pHat;
+            }
+        }
+
+        // 可以把平行光加上
+        {
+            vec3 N = normalize(normal);
+            vec3 V = normalize(CAMERA.pos.xyz - worldPos.xyz);	
+
+            finalColor.xyz +=   DirectionalLighting(diffuse, roughness, metallic, worldPos, N, V) * 
+                                RtDirectionalShadow(worldPos, 0.0f);
+        }
+    }
+
+    if (RESTIR_DI_SETTING.showWeight != 0)
+    {
+        finalColor = vec4(0.0f);
+        if(res.sumWeights > 0.0f) 
+            finalColor.xyz += res.w / res.sumWeights;
+
+        imageStore(FINAL_COLOR, pixel, finalColor);
+    }
+    else if (RESTIR_DI_SETTING.showLightID != 0)
+    {
+        finalColor = vec4(0.0f);
+        finalColor.x += float(res.sampl.lightID) / LIGHTS.lightSetting.pointLightCnt;
+
+        imageStore(FINAL_COLOR, pixel, finalColor);
+    }
+    else if(RESTIR_DI_SETTING.combineMode == 0)   // 直接混合，此处本身Deferred也已经禁用了，不合并
+    {
+        finalColor.w = 0.0f;
+        imageStore(FINAL_COLOR, pixel, finalColor);
+    }
+    else //if(RESTIR_DI_SETTING.combineMode == 1)   // 后续降噪
+    {
+        imageStore(DI_DIFFUSE_COLOR, pixel, finalColor);
+    }
+
+    // for (int i = 0; i < RESERVOIR_SIZE; ++i) 
+    // {
+    //     uint lightID = res.sampl.lightID;
+    //     if(lightID == 1) finalColor = vec4(1.0f, 0.0f, 0.0f, 0.0f);
+    // }
+}

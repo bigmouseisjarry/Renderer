@@ -1,0 +1,98 @@
+#version 460
+#extension GL_GOOGLE_include_directive : enable
+
+#include "../common/common.glsl"
+#include "common.glsl"
+
+#define THREAD_SIZE_X 64
+#define THREAD_SIZE_Y 1
+#define THREAD_SIZE_Z 1
+layout (local_size_x = THREAD_SIZE_X, 
+		local_size_y = THREAD_SIZE_Y, 
+		local_size_z = THREAD_SIZE_Z) in;
+void main() 
+{
+	uint gID = gl_GlobalInvocationID.x;
+
+	// 逐物体剔除
+	if(gID < MESH_DRAW_DATAS[0].setting.processSize)
+	{
+		IndirectMeshDrawInfo meshInfo = MESH_DRAW_DATAS[0].draws[gID];
+		Object object = OBJECTS.slot[meshInfo.objectID];
+		
+		BoundingSphere worldSphere = SphereTransform(object.sphere, object.model, object.localScale.xyz * object.modelScale.xyz);	//世界空间的包围球包围盒
+		BoundingBox worldBox = BoundingBoxTransform(object.box, object.model);
+
+		for(int passIndex = 0; passIndex < SETTING.passCount; passIndex++)
+		{
+			bool visible = true;			//整体可见性
+			bool frustumVisible = true;		//视锥剔除可见性
+			bool occlusionVisible = true;	//遮蔽剔除可见性
+
+			// 屏幕空间绘制
+			if(	SETTING.passType == DEPTH_PASS_INDEX ||
+				SETTING.passType == G_BUFFER_PASS_INDEX ||
+				SETTING.passType == FORWARD_PASS_INDEX ||
+				SETTING.passType == TRANSPARENT_PASS_INDEX)
+			{
+				// frustumVisible = frustumVisible && FrustumIntersectSphere(CAMERA.frustum, worldSphere);
+				frustumVisible = frustumVisible && FrustumIntersectBox(CAMERA.frustum, worldBox);
+
+				occlusionVisible = occlusionVisible && OcclusionCull( 			//遮蔽剔除使用前一帧的深度缓冲Hiz
+					worldSphere, 
+					CAMERA.pos.xyz, CAMERA.view, CAMERA.proj, CAMERA.near,
+					DEPTH_PYRAMID[1], SAMPLER[3]); 
+			}
+
+			//光源空间绘制，平行光
+			else if(SETTING.passType == DIRECTIONAL_SHADOW_PASS_INDEX)
+			{			
+				// 实际上这里的剔除也不是很严谨，平行光源的包围盒理论上是"无限长"的矩形
+				// frustumVisible = frustumVisible && FrustumIntersectBox(LIGHTS.directionalLights[passIndex].frustum, worldBox);
+				frustumVisible = frustumVisible && BoxIntersectSphere(worldBox, LIGHTS.directionalLights[passIndex].sphere);
+
+				// 屏幕空间深度提供的是"需要接受阴影的表面"信息，但即便物体在屏幕空间被完全遮蔽，它投射的阴影仍可能在屏幕空间可见（从侧面）
+				// 到底怎么剔除比较合适？
+			}
+
+			//光源空间绘制，点光源
+			else if(SETTING.passType == POINT_SHADOW_PASS_INDEX)
+			{
+				if(passIndex >= LIGHTS.lightSetting.pointshadowedLightCnt * 6)	visible = false;	//没启用的点光源槽位
+				else 
+				{
+					uint pointShadowLightID = passIndex / 6;
+					uint face = passIndex % 6;
+
+					//frustumVisible = frustumVisible && BoxIntersectSphere(worldBox, LIGHTS.pointLights[LIGHTS.lightSetting.pointShadowLightIDs[pointShadowLightID]].sphere);
+					frustumVisible = frustumVisible && FrustumIntersectSphere(LIGHTS.pointLights[LIGHTS.lightSetting.pointShadowLightIDs[pointShadowLightID]].frustum[face], worldSphere);
+				}
+			}
+
+			//TODO INDIRECT_COMMANDS可以放到这里来录制，不只是instanceCount
+
+			if(SETTING.disableFrustrumCulling != 0) frustumVisible = true;
+			if(SETTING.disableOcclusionCulling != 0) occlusionVisible = true;
+			visible = visible && occlusionVisible && frustumVisible;
+
+			MESH_DRAW_COMMANDS[passIndex].commands[meshInfo.commandID].instanceCount = visible ? 1 : 0;		// 更新command
+
+			if(SETTING.enableStatistics != 0)
+			{
+				atomicAdd(MESH_DRAW_DATAS[passIndex].setting.drawSize, visible ? 1 : 0);						// 存一下剔除的数量信息
+				atomicAdd(MESH_DRAW_DATAS[passIndex].setting.frustumCull, frustumVisible ? 0 : 1);
+				atomicAdd(MESH_DRAW_DATAS[passIndex].setting.occlusionCull, occlusionVisible ? 0 : 1);
+			}
+
+			if(visible && SETTING.showBoundingBox != 0) 
+			{
+				vec3 center = (worldBox.maxBound + worldBox.minBound) / 2.0f;
+				vec3 radius = (worldBox.maxBound - worldBox.minBound) / 2.0f;
+				AddGizmoBox(center, radius, vec4(0.0f, 0.0f, 1.0f, 1.0f));
+			}
+		}
+	}
+}
+
+
+

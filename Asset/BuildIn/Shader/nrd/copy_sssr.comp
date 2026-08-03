@@ -1,0 +1,33 @@
+#version 460
+#extension GL_ARB_separate_shader_objects : enable
+#extension GL_GOOGLE_include_directive : enable
+#extension GL_EXT_samplerless_texture_functions : enable
+
+#include "../common/common.glsl"
+
+#define NRD_GLSL 1
+#include "NRD.hlsli"
+#include "common.glsl"
+	
+layout(set = 1, binding = 1, rgba16f) 	    uniform image2D RESTIR_SPECULAR_COLOR;
+layout(set = 1, binding = 2, rgba16f) 	    uniform image2D SSSR_RESOLVE;
+
+#define THREAD_SIZE_X 16
+#define THREAD_SIZE_Y 16
+#define THREAD_SIZE_Z 1
+layout (local_size_x = THREAD_SIZE_X, 
+		local_size_y = THREAD_SIZE_Y, 
+		local_size_z = THREAD_SIZE_Z) in;
+void main() 
+{
+    ivec2 pixel     = ivec2(gl_GlobalInvocationID.xy);
+    vec2 uv         = ScreenPixToUV(pixel);
+
+    vec4 specularHitDist = vec4(0.0f);
+    if(SETTING.restirEnabled != 0)
+        specularHitDist = imageLoad(RESTIR_SPECULAR_COLOR, pixel);
+        
+    specularHitDist += imageLoad(SSSR_RESOLVE, pixel);
+
+    imageStore(RESTIR_SPECULAR_COLOR, pixel, specularHitDist);
+}

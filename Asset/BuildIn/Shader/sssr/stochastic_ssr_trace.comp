@@ -1,0 +1,290 @@
+#version 460
+#extension GL_ARB_separate_shader_objects : enable
+#extension GL_GOOGLE_include_directive : enable
+
+#include "../common/common.glsl"
+#include "common.glsl"
+
+// https://blog.csdn.net/qjh5606/article/details/120102582
+// https://www.jpgrenier.org/ssr.html
+
+float GetScreenFadeBord(vec2 pos, float value)
+{
+    float borderDist = min(1 - max(pos.x, pos.y), min(pos.x, pos.y));
+    return Saturate(borderDist > value ? 1 : borderDist / value);
+}
+
+bool ValidUV(vec2 uv, vec2 border)
+{
+    return  uv.x <= 1.0f - border.x && uv.x >= 0.0f + border.x && 
+            uv.y <= 1.0f - border.y && uv.y >= 0.0f + border.y;
+}
+
+ivec2 GetCellCount(int mipLevel)
+{
+    return textureSize(DEPTH_PYRAMID[0], mipLevel).xy;
+}
+
+ivec2 GetCell(vec2 uv, int level)
+{
+	//return UVToNearestScreenPix(uv, GetCellCount(level));
+    return ivec2(floor(uv * GetCellCount(level)));
+}
+
+bool CrossedCellBoundary(vec2 cellIdxOne, vec2 cellIdxTwo)
+{
+	return cellIdxOne.x != cellIdxTwo.x || cellIdxOne.y != cellIdxTwo.y;
+}
+
+vec4 IntersectCellBoundary(vec4 start, vec4 dir, int mipLevel)  // TODO 
+{  
+    vec2 crossStep = vec2(dir.x >= 0.0 ? 1.0 : -1.0, dir.y >= 0.0 ? 1.0 : -1.0);
+    vec2 crossOffset = crossStep * 0.00001;
+    crossStep = saturate(crossStep);
+
+    ivec2 cellCount     = GetCellCount(mipLevel);
+    ivec2 cellIdx       = GetCell(start.xy, mipLevel);
+    vec2 cellUV         = 1.0 / cellCount;
+    vec2 planes         = vec2(cellIdx) / cellCount + cellUV * crossStep;
+
+    vec2 solutions = (planes - start.xy) / dir.xy;
+    vec4 intersectionPos = start + dir * min(solutions.x, solutions.y);
+
+    intersectionPos.xy += (solutions.x < solutions.y) ? vec2(crossOffset.x, 0.0) : vec2(0.0, crossOffset.y);
+
+    return intersectionPos;
+}
+
+float SampleDepth(texture2D depth, sampler sampl, int mipLevel, vec2 uv)
+{
+    return textureLod(sampler2D(depth, sampl), uv, mipLevel).r;
+}
+
+vec4 TraceHiz( int startLevel, 
+                int maxLevel, 
+                int endLevel, 
+                int maxLoop, 
+                float thickness,
+                vec3 worldPos,
+                vec3 worldDir)
+{
+    
+    // 步进起始点             
+    vec4 baseNDCPos         = WorldToNDC(vec4(worldPos, 1.0f));                                      
+    float baseDr            = 1.0 / baseNDCPos.z;
+    vec2 baseUV             = NDCToScreen(baseNDCPos.xy);                 
+    vec4 start              = vec4(baseUV, baseDr, 0); 
+
+    // 步进方向
+    vec4 targetWorldPos     = vec4(worldPos + worldDir, 1.0f);        // worldDir偏移距离过长会导致ndc坐标超出视锥范围，有计算错误
+    vec4 targetNDCPos       = WorldToNDC(targetWorldPos);                
+    float targetDr          = 1.0 / targetNDCPos.z;                         // ndc空间的深度倒数，线性相关于view space的深度     //ndc空间的w坐标倒数也是线性
+    vec2 targetUV           = NDCToScreen(targetNDCPos.xy);                 // uv坐标，线性 
+
+    // 步进单位
+    float deltaScale        = 1 / length(targetUV - baseUV);
+    vec2 deltaUV            = (targetUV - baseUV);                         
+    float deltaDr           = (targetDr - baseDr);
+    float deltaDist         = (length(targetWorldPos.xyz - worldPos));
+    vec4 dir                = vec4(deltaUV, deltaDr, deltaDist) * deltaScale;
+
+    // Hiz加速////////////////////////////////////////////
+
+    vec4 current = start;
+    //current = IntersectCellBoundary(current, dir, 0);
+    
+    int level                   = startLevel;
+    float loop                  = 0;
+    float valid                 = 0.0f;    //0无效，1有效，2遮挡
+
+    while(loop < maxLoop)  
+    {
+        loop++;
+
+        vec4 temp       = IntersectCellBoundary(current, dir, level);
+        float tempDr;
+        if(level > 0)   tempDr  = 1.0 / (SampleDepth(DEPTH_PYRAMID[0],  SAMPLER[2], level, temp.xy).r);    
+        else            tempDr  = 1.0 / (SampleDepth(DEPTH[0],          SAMPLER[2], level, temp.xy).r);
+
+        if(!ValidUV(temp.xy, vec2(0.0f)))    level--;   //0. 超出UV范围，缩短测试距离
+        else if(tempDr <= temp.z + 0.0001)              //1. 测试步进未被遮挡，移动测试点
+        {
+            current = temp;
+            level = min(maxLevel, level + 1); 
+
+            // vec2 oldCell    = GetCell(currentUV, level);
+            // vec2 newCell    = GetCell(tempUV, level);
+            //if(CrossedCellBoundary(oldCell, newCell)) level = min(maxLevel, level + 1); 
+        }
+        else                                            //2. 被遮挡，缩短测试距离
+        {
+            level--;
+        }
+
+        if(level < endLevel)                            //3. 终止搜索
+        {   
+            float finalMarchDepth   = LinearEyeDepth(1.0 / current.z,                                   CAMERA.near, CAMERA.far);
+            float finalHitDepth     = LinearEyeDepth(SampleDepth(DEPTH[0], SAMPLER[2], 0, current.xy),   CAMERA.near, CAMERA.far);
+
+            // 命中判定：厚度满足要求（反射march到的深度与该点处遮挡深度差），并非无限远处，uv有效，不是到循环才停止，trace距离足够远
+            if( //(finalMarchDepth > finalHitDepth - thickness) &&    // 在指定厚度的前面（trace到的结果可见）
+                !(FetchDepth(current.xy) > 0.999f) &&               // 并非trace到天空盒
+                ValidUV(current.xy, vec2(0.01)) &&                  // UV有效
+                loop < maxLoop &&                                   // 未超出最大循环
+                current.w > SETTING.minHitDistance)     
+            {
+                valid = 1.0f;
+
+                if(!(finalMarchDepth > finalHitDepth - thickness)) valid = 2.0f;  // 遮挡   
+            }
+            break;
+        }
+    }
+
+    return vec4(current.xy, 1.0 / current.z, valid);
+}
+
+vec4 RayTraceSurfaceCache(
+    out vec4 lighting,
+    vec3 worldPos,
+    vec3 worldDir)
+{
+#if ENABLE_RAY_TRACING > 0
+    uint hitObjectID = 0;
+    vec4 hitPos = vec4(0.0f);
+    vec3 hitNormal = vec3(0.0f);
+
+    bool valid = RayQueryHitObject(
+        worldPos, worldPos + normalize(worldDir) * MAX_RAY_TRACING_DISTANCE, 
+        GLOBAL_SETTING.rayTracingOffset,	// 虚拟几何和光追加速结构不一致，做一点偏移
+        hitObjectID, 
+        hitPos, 
+        hitNormal);
+
+    if(valid)   FetchSurfaceCacheLighting(lighting, hitObjectID, hitPos.xyz, hitNormal);
+    if(valid)   return hitPos;
+    else        return vec4(0.0f);
+#else
+    return vec4(0.0f);
+#endif
+}
+
+
+#define THREAD_SIZE_X 16
+#define THREAD_SIZE_Y 16
+#define THREAD_SIZE_Z 1
+layout (local_size_x = THREAD_SIZE_X, 
+		local_size_y = THREAD_SIZE_Y, 
+		local_size_z = THREAD_SIZE_Z) in;
+void main() {
+
+    ivec2 pixel         = ivec2(gl_GlobalInvocationID.xy);          // 只有trace是半精度的，resolve和filter都是全精度
+
+    ivec2 samplePixel   = HALF_SIZE_SSSR ? 
+                            pixel * 2 :
+                            pixel;
+
+    vec2 uv             = ScreenPixToUV(samplePixel);
+
+    vec2 extent         = HALF_SIZE_SSSR ? 
+                            vec2(HALF_WINDOW_WIDTH, HALF_WINDOW_HEIGHT) : 
+                            vec2(WINDOW_WIDTH, WINDOW_HEIGHT);
+
+    // 采样G Buffer信息 ////////////////////////////////////////////////////////////////////////////////////
+
+    float depth = FetchDepthTex(samplePixel);
+
+    vec4 gbffer0    = imageLoad(G_BUFFER_DIFFUSE_METALLIC, samplePixel);
+    vec4 gbffer1    = imageLoad(G_BUFFER_NORMAL_ROUGHNESS, samplePixel);
+    vec3 diffuse    = gbffer0.xyz;
+    vec3 normal     = gbffer1.xyz;
+    float roughness = max(gbffer1.w, 0.05f);
+    float metallic  = gbffer0.w;
+    vec4 worldPos   = DepthToWorld(uv);  // 从UV重建的世界坐标会有一些精度误差，不算大
+    
+    // 光照参数计算 //////////////////////////////////
+ 
+    float a2            = pow(roughness, 4) ;                       //粗糙度4次方
+
+    vec3 N              = normalize(normal);    
+    vec3 V              = normalize(CAMERA.pos.xyz - worldPos.xyz);	
+
+    if( length(N)   < 0.01f || 
+        roughness   < 0.0f  || 
+        roughness   > SETTING.maxRoughness ||
+        depth == 1.0f)                                              //没有有效信息
+    {
+		imageStore(SSSR_HIT_RESULT, ivec2(pixel.xy), vec4(0.0f) );
+        imageStore(SSSR_PDF, ivec2(pixel.xy), vec4(0.0f) );
+        return;
+    }
+
+    // 计算射线 ////////////////////////////////////////////////////////////////////////////////////
+
+    // vec2 seed           = Hammersley(totalTicks, 16);  
+    Rand rand           = SeedRand(GLOBAL_SETTING.totalTicks, pixel.y * GLOBAL_SETTING.totalTicks + pixel.x);
+    vec2 seed           = vec2(RandFloat(rand), RandFloat(rand));
+    seed.y              = Lerp(seed.y, 0.0f, SETTING.importanceSampleBias); //BRDF的拖尾会产生大量噪声，对重要性采样的方向做些偏移限制来减小（也会导致反射比真实粗糙度偏锐利）
+
+    vec4 newSample      = ImportanceSampleGGX(seed, a2);
+    vec3 H              = normalize(TangentToWorld(newSample.xyz, N));   //半程向量
+    float HPDF          = newSample.a;
+    float VoH           = clamp(dot(V, H), 0.0f, 1.0f);
+    float pdf           = RayPDFToReflectionRayPDF(VoH, HPDF);
+    vec3 L              = normalize(2.0 * dot(V, H) * H - V);
+
+    // 输出结果， 本轮输出的是光线命中点的位置信息和PDF，下轮负责采样颜色和计算 /////////////////////////////
+
+    if(SETTING.mode == 0)
+    {
+        vec4 traceResult    = TraceHiz(SETTING.startMip, SETTING.maxMip, SETTING.endMip, SETTING.maxLoop, SETTING.thickness, worldPos.xyz, L);
+        if(traceResult.a == 1.0f) 
+            traceResult.a   = Square(traceResult.a * GetScreenFadeBord(traceResult.xy, SETTING.screenFade));     //屏幕边缘淡出
+
+        imageStore(SSSR_HIT_RESULT, ivec2(pixel.xy), traceResult);
+        imageStore(SSSR_PDF, ivec2(pixel.xy), vec4(pdf, vec3(0.0f)));
+    }
+    else if(SETTING.mode == 1)
+    {
+        vec4 hitColor = vec4(0.0f);
+        vec4 hitPos = RayTraceSurfaceCache(hitColor, worldPos.xyz, L);  // 由于虚拟几何体减面后的结构与光追加速结构不一致，可能存在自相交问题
+                                                                                    // megalights和lumen里都有单独的介绍
+        imageStore(SSSR_HIT_COLOR, ivec2(pixel.xy), hitColor);
+        imageStore(SSSR_HIT_RESULT, ivec2(pixel.xy), hitPos);
+    }
+    else if(SETTING.mode == 2)
+    {
+        vec4 traceResult    = TraceHiz(SETTING.startMip, SETTING.maxMip, SETTING.endMip, SETTING.maxLoop, SETTING.thickness, worldPos.xyz, L);
+
+        vec4 hitColor = vec4(0.0f);
+        vec4 hitPos = vec4(0.0f);
+        if(traceResult.a == 0.0f || traceResult.a == 2.0f)   // 屏幕空间trace失效
+        {
+            // worldPos = DepthToWorld(traceResult.xy);
+            hitPos = RayTraceSurfaceCache(hitColor, worldPos.xyz, L);
+        }
+        else 
+        {
+            hitPos = DepthToWorld(traceResult.xy);
+            hitColor = textureLod(sampler2D(IN_COLOR_PYRAMID, SAMPLER[0]), traceResult.xy, 0); 
+        }
+
+        imageStore(SSSR_HIT_COLOR, ivec2(pixel.xy), hitColor);
+        imageStore(SSSR_HIT_RESULT, ivec2(pixel.xy), hitPos);
+    }   
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

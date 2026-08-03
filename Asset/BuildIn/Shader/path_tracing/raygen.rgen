@@ -1,0 +1,99 @@
+#version 460
+#extension GL_EXT_ray_tracing : enable
+#extension GL_ARB_separate_shader_objects : enable
+#extension GL_GOOGLE_include_directive : enable
+
+#include "../common/common.glsl"
+#include "common.glsl"
+
+layout(location = 0) rayPayloadEXT Payload RAY_PAYLOAD;
+
+void main() 
+{
+	ivec2 pixel     = ivec2(gl_LaunchIDEXT.xy);
+	vec2 uv         = ScreenPixToUV(pixel); 
+
+	RAY_PAYLOAD.rand = SeedRand(GLOBAL_SETTING.totalTicks, pixel.y * GLOBAL_SETTING.totalTicks + pixel.x);
+
+	vec3 outColor = vec3(0.0f);
+	for(uint s = 0; s < SETTING.numSamples; s++)
+	{
+		RAY_PAYLOAD.throughput = vec3(0.0);
+		RAY_PAYLOAD.lightColor = vec3(0.0);
+		RAY_PAYLOAD.distance = 0.0f;
+		RAY_PAYLOAD.pdf = 1.0f; 
+		RAY_PAYLOAD.numBounce = 0;
+
+		vec2 ditterPixel      = pixel + vec2(RandFloat(RAY_PAYLOAD.rand), RandFloat(RAY_PAYLOAD.rand)) - vec2(0.5f);
+		vec2 ditterUV         = ScreenPixToUV(ditterPixel); 
+
+		vec2 d = ditterUV * 2.0 - 1.0;
+		//vec2 d = uv * 2.0 - 1.0;
+		vec4 origin = CAMERA.pos;
+		vec4 target = CAMERA.invProj * vec4(d.x, d.y, 1, 1) ;
+		vec4 direction = normalize(CAMERA.invView * vec4(normalize(target.xyz), 0));
+		float tmin = MIN_RAY_TRACING_DISTANCE;
+		float tmax = MAX_RAY_TRACING_DISTANCE;
+
+		vec3 throughput = vec3(1.0f);
+		for(uint b = 0; b <= SETTING.numBounce; b++)
+		{
+			traceRayEXT(TLAS, 					// acceleration structure
+				gl_RayFlagsOpaqueEXT,       	// rayFlags
+				0xFF,           				// cullMask
+				0,              				// sbtRecordOffset
+				0,              				// sbtRecordStride
+				0,              				// missIndex
+				origin.xyz,     				// ray origin
+				tmin,           				// ray min range
+				direction.xyz,  				// ray direction
+				tmax,           				// ray max range
+				0               				// payload (location = 0)
+			);
+			
+			vec3 hitThroughput 	= RAY_PAYLOAD.throughput;
+			vec3 hitLightColor	= RAY_PAYLOAD.lightColor;
+			float hitDistance 	= RAY_PAYLOAD.distance;
+			float hitPdf		= RAY_PAYLOAD.pdf;
+			vec3 hitColor 		= throughput * hitLightColor;
+
+			if(hitDistance == MAX_RAY_TRACING_DISTANCE)		// 找到天空
+			{
+				if(SETTING.sampleSkyBox > 0 || b == 0)  outColor += hitColor;	
+				break;
+			}
+			if(SETTING.indirectOnly == 0 || b > 0) 			// 本轮的光照
+			{
+				outColor += hitColor;
+			}			
+			if(hitPdf < 1e-5)								// 下一轮反射的采样无效
+			{
+				break;
+			}
+
+			throughput *= hitThroughput / hitPdf;	// 更新throughput
+
+			origin = origin + hitDistance * direction;		// 更新下一轮反射方向
+			direction = vec4(RAY_PAYLOAD.reflectDir, 0);
+
+			if (b >= 3) 									// Russian Roulette
+			{	
+				float p = max(throughput.x, max(throughput.y, throughput.z));
+				if (p < 1e-5 || RandFloat(RAY_PAYLOAD.rand) > p) break;
+
+				throughput *= 1 / p;
+			}
+		}
+	}
+	if(any(isinf(outColor)) || any(isnan(outColor)))
+		outColor = vec3(0.0f);	
+	//outColor = min(outColor, 15.0f);	// TODO 镜面反射
+
+	bool accumulateHistory 	= SETTING.numSamples < SETTING.totalNumSamples;
+	vec3 historyColor 		= accumulateHistory ? imageLoad(HISTORY_COLOR, pixel).xyz : vec3(0.0f);
+	vec3 accumulatedColor 	= (historyColor + outColor);
+	outColor = accumulatedColor / SETTING.totalNumSamples;
+
+	imageStore(OUT_COLOR, pixel, vec4(outColor, 0.0f));
+	imageStore(HISTORY_COLOR, pixel, vec4(accumulatedColor, 0.0f));
+}

@@ -1,0 +1,136 @@
+#version 460
+#extension GL_ARB_separate_shader_objects : enable
+#extension GL_GOOGLE_include_directive : enable
+
+#include "../common/common.glsl"
+#include "common.glsl"
+
+shared uint sharedPointLightCount;
+shared uint sharedPointLightIDs[MAX_LIGHTS_PER_CLUSTER];
+
+vec4 CardNDCToLocal(vec3 ndcPos, in MeshCardInfo card)
+{
+    vec4 cardViewPos = card.invProj * vec4(ndcPos, 1.0f);
+    cardViewPos /= cardViewPos.w;
+    vec4 cardWorldPos = card.invView * cardViewPos;
+    vec4 localPos = vec4(cardWorldPos.xyz / card.scale, 1.0f);
+    return localPos;
+}
+
+#define THREAD_SIZE_X SURFACE_CACHE_DIRECT_LIGHTING_TILE_SIZE
+#define THREAD_SIZE_Y SURFACE_CACHE_DIRECT_LIGHTING_TILE_SIZE
+#define THREAD_SIZE_Z 1
+layout (local_size_x = THREAD_SIZE_X, 
+        local_size_y = THREAD_SIZE_Y, 
+        local_size_z = THREAD_SIZE_Z) in;
+void main() 
+{
+    // TODO 把tile剔除光源的过程单独写一个pass？
+    if(gl_LocalInvocationID.x == 0 && gl_LocalInvocationID.y == 0)
+    {
+        SurfaceCacheLightingDispatch dispatch = CACHE_DIRECT_LIGHTING_DISPATCH.slot[gl_WorkGroupID.x];
+        MeshCardInfo card = MESH_CARDS.slot[dispatch.meshCardID];
+        Object object = OBJECTS.slot[dispatch.objectID];
+
+        // 根据NDC坐标里tile对应边界上的两个顶点，转到局部空间构建包围盒
+        ivec2 cardPixel0 = ivec2(dispatch.tileIndex * SURFACE_CACHE_DIRECT_LIGHTING_TILE_SIZE);
+        vec3 ndcPos0 = vec3(ScreenToNDC(ScreenPixToUV(cardPixel0, ivec2(card.atlasExtent))), 1.0);
+        vec4 localPos0 = CardNDCToLocal(ndcPos0, card);
+
+        ivec2 cardPixel1 = ivec2((dispatch.tileIndex + ivec2(1)) * SURFACE_CACHE_DIRECT_LIGHTING_TILE_SIZE);
+        vec3 ndcPos1 = vec3(ScreenToNDC(ScreenPixToUV(cardPixel1, ivec2(card.atlasExtent))), 0.0);
+        vec4 localPos1 = CardNDCToLocal(ndcPos1, card);
+
+        BoundingBox tileBox;
+        tileBox.minBound = vec3(min(localPos0.x, localPos1.x), min(localPos0.y, localPos1.y), min(localPos0.z, localPos1.z));
+        tileBox.maxBound = vec3(max(localPos0.x, localPos1.x), max(localPos0.y, localPos1.y), max(localPos0.z, localPos1.z));
+        tileBox = BoundingBoxTransform(tileBox, object.model);
+
+        //光源剔除////////////////////////////////////////////////////////////////////////////////////////////////////
+
+        sharedPointLightCount = 0;
+        for(int i = 0; i < LIGHTS.lightSetting.pointLightCnt; i++)
+        {
+            uint lightID = LIGHTS.lightSetting.pointLightIDs[i];
+            PointLight pointLight = LIGHTS.pointLights[lightID];
+            if(!pointLight.enable) continue;
+
+            BoundingSphere sphere = pointLight.sphere;
+
+            if(BoxIntersectSphere(tileBox, sphere) && sharedPointLightCount < MAX_LIGHTS_PER_CLUSTER)   // 世界空间的包围盒求交
+            {
+                sharedPointLightIDs[sharedPointLightCount++] = lightID;
+            }
+        }
+    }
+    barrier();
+
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+
+
+
+    SurfaceCacheLightingDispatch dispatch = CACHE_DIRECT_LIGHTING_DISPATCH.slot[gl_WorkGroupID.x];
+    MeshCardInfo card = MESH_CARDS.slot[dispatch.meshCardID];
+    Object object = OBJECTS.slot[dispatch.objectID];
+
+    ivec2 cardPixel = ivec2(dispatch.tileIndex * SURFACE_CACHE_DIRECT_LIGHTING_TILE_SIZE) + ivec2(gl_LocalInvocationID.xy);             // 在atlasExtent中的像素偏移，无padding
+    ivec2 atlasPixel = cardPixel + ivec2(dispatch.tileOffset * SURFACE_CACHE_DIRECT_LIGHTING_TILE_SIZE) + ivec2(SURFACE_CACHE_PADDING); // 在surface cache全局的像素偏移，带padding
+
+    vec4 diffuseMetallic    = texelFetch(CACHE_DIFFUSE_METALLIC, atlasPixel, 0);
+    vec4 normalRoughness    = texelFetch(CACHE_NORMAL_ROUGHNESS, atlasPixel, 0);
+    vec4 emission           = texelFetch(CACHE_EMISSION, atlasPixel, 0);
+    float depth             = texelFetch(CACHE_DEPTH, atlasPixel, 0).x;
+    vec3 diffuse = diffuseMetallic.xyz;
+    vec3 normal = normalRoughness.xyz;
+    float roughness = normalRoughness.w;
+    //float metallic = diffuseMetallic.w;
+    float metallic = 0.005f;  // 当作完全非金属处理
+    if(depth == 1.0f) 
+    {
+        imageStore(CACHE_LIGHTING, atlasPixel, vec4(0.0f, 0.0f, 0.0f, 1.0f));
+        return;
+    }
+
+    // 从虚拟相机的ndc空间转到物体空间，再转回世界空间
+    vec3 ndcPos = vec3(ScreenToNDC(ScreenPixToUV(cardPixel, ivec2(card.atlasExtent))), depth);
+    vec4 localPos = CardNDCToLocal(ndcPos, card);
+    vec4 worldPos = object.model * localPos;
+    vec3 worldNormal = mat3(object.model) * normal; //TODO
+
+
+
+    vec4 finalColor = vec4(0.0f, 0.0f, 0.0f, 1.0f);
+
+
+	vec3 F0 = mix(vec3(0.04f), diffuse, metallic);
+    vec3 N = normalize(worldNormal);
+    vec3 V = normalize(CAMERA.pos.xyz - worldPos.xyz);	// 对于漫反射，V取值应该不影响结果
+                                                        // 直接用CAMERA是错误的，观察位置不是用于场景渲染的相机位置，再怎么也该是card光栅使用的虚拟相机位置
+
+    vec3 directLightColor = DirectionalDiffuseLighting(diffuse, roughness, metallic, worldPos, N, V) *  
+                            RtDirectionalShadow(worldPos, 0.0f);                                        // 平行光源是CSM，对于镜头外的覆盖不对，暂时用光追实现，后续改成虚拟阴影贴图？
+                            //PointDiffuseLighting(diffuse, roughness, metallic, worldPos, N, V);       // 这个是Cluster based，镜头外无效
+
+    for(int i = 0; i < sharedPointLightCount; i++)
+    {
+        directLightColor += PointDiffuseLighting(diffuse, roughness, metallic, worldPos, N, V, sharedPointLightIDs[i]) *
+                            PointShadow(sharedPointLightIDs[i], worldPos);                                  // 点光源阴影的shadow map是正确的
+    }
+
+    // vec3 indirectLightColor = IndirectLighting(diffuse, roughness, metallic, worldPos, N, V);            // 间接光照目前使用的是DDGI，之后改成gather
+    //                                                                                                      // DDGI里计算切比雪夫系数时会使用V做偏移，置零就不会视角相关   
+    vec3 indirectIrradiance = IndirectIrradiance(diffuse, roughness, metallic, worldPos, N, vec3(0.0f));
+    vec3 f_diffuse  = Diffuse_Lambert(diffuse); 
+    vec3 k_diffuse = vec3(1.0f);    //TODO 
+    vec3 indirectLightColor = (1.0 - metallic) * f_diffuse * k_diffuse * indirectIrradiance;    
+
+
+    finalColor.xyz += directLightColor + indirectLightColor + emission.xyz;
+    imageStore(CACHE_LIGHTING, atlasPixel, finalColor);
+    //imageStore(CACHE_LIGHTING, atlasPixel, vec4(worldPos));
+}
+
+
+

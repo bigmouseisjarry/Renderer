@@ -1,0 +1,83 @@
+#version 460
+#extension GL_ARB_separate_shader_objects : enable
+#extension GL_GOOGLE_include_directive : enable
+
+#include "../common/common.glsl"
+#include "ddgi_layout.glsl"
+
+layout(push_constant) uniform DDGIComputeSetting {
+	int volumeLightID;
+	float _padding[3];
+} SETTING;
+
+#define THREAD_SIZE_X 32
+#define THREAD_SIZE_Y 32
+#define THREAD_SIZE_Z 1
+layout (local_size_x = THREAD_SIZE_X, 
+        local_size_y = THREAD_SIZE_Y, 
+        local_size_z = THREAD_SIZE_Z) in;
+void main() 
+{
+    // 第一轮 计算辐射率
+    VolumeLight volumeLight = LIGHTS.volumeLights[SETTING.volumeLightID];
+    
+    ivec2 pixel       = ivec2(gl_GlobalInvocationID.xy);
+    int   probeIndex  = pixel.y;
+    int   rayIndex   = pixel.x;
+
+    ivec3 probeCoord  = FetchProbeCoord(volumeLight.setting, probeIndex);
+    vec3  origin      = FetchProbeWorldPos(volumeLight.setting, probeCoord);
+
+    vec4 dirDist    = imageLoad(G_BUFFER_POSITION,          pixel);
+    vec4 normal     = imageLoad(G_BUFFER_NORMAL_ROUGHNESS,   pixel);
+    vec4 diffuse    = imageLoad(G_BUFFER_DIFFUSE_METALLIC, pixel);
+    vec4 emission   = imageLoad(G_BUFFER_EMISSION,          pixel);
+
+    vec3 direction  = dirDist.xyz;
+    float dist      = dirDist.w;
+    float roughness = normal.w;     //粗糙度
+    float metallic  = diffuse.w;    //金属度
+
+    vec3 radiance   = vec3(0.0f);    //漫反射辐射率
+
+    // 光照计算
+    if(dist < MAX_RAY_TRACING_DISTANCE && length(normal.xyz) > 0.01)
+    {
+        //光照计算相关向量////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+        vec4 worldPos = vec4(origin + direction * dist, 1.0f);      //相对坐标到绝对世界坐标
+
+        vec3 N = normalize(normal.xyz);	                //法线
+        vec3 V = normalize(-direction);	                //视线，此处的视线原点是探针位置
+        vec3 R = normalize(reflect(-V, N));             //反射
+        float NoV = dot(N, V); 
+
+        // 直接光照计算，仅漫反射 //////////////////////////////////
+
+        vec3 directLightColor = 
+            DirectionalDiffuseLighting(diffuse.xyz, roughness, metallic, worldPos, N, V) * DirectionalShadow(worldPos) + 
+            PointDiffuseLighting(diffuse.xyz, roughness, metallic, worldPos, N, V);
+
+        // 间接光照计算 //////////////////////////////////
+
+        vec3 indirectLightColor = volumeLight.setting.infiniteBounce ?
+            IndirectLighting(diffuse.xyz, roughness, metallic, worldPos, N, V) :
+            vec3(0.0f);
+
+        //合并////////////////////////////////////////////////////////////////////////////////////////////////////////
+        radiance = directLightColor + indirectLightColor;
+        radiance += emission.xyz;
+
+        if(NoV <= 0.0f)
+            radiance.xyz = vec3(0.0f);    // trace到背面了
+    }
+    else if(dist == MAX_RAY_TRACING_DISTANCE)
+    {
+        radiance = diffuse.xyz;  //天光
+    }
+
+    imageStore(DDGI_RADIANCE, pixel, vec4(radiance, 0.0f));
+}
+
+
+

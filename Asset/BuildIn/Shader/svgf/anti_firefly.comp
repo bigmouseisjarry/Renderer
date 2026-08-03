@@ -1,0 +1,69 @@
+#version 460
+#extension GL_GOOGLE_include_directive : enable
+
+#include "../common/common.glsl"
+
+#include "common.glsl"
+
+#define THREAD_SIZE_X 16
+#define THREAD_SIZE_Y 16
+#define THREAD_SIZE_Z 1
+
+shared vec3 SHARED_COLOR[THREAD_SIZE_X][THREAD_SIZE_Y];
+shared uint SHARED_OBJECT_ID[THREAD_SIZE_X][THREAD_SIZE_Y];
+
+layout (local_size_x = THREAD_SIZE_X, 
+		local_size_y = THREAD_SIZE_Y, 
+		local_size_z = THREAD_SIZE_Z) in;
+void main() 
+{	
+    if(SETTING.antiFirefly <= 0) return;
+
+    ivec2 pixel         = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 localPixel    = ivec2(gl_LocalInvocationID.xy);
+    vec2 uv             = ScreenPixToUV(pixel); 
+
+    vec3 color 			= imageLoad(CURRENT_COLOR_VARIANCE[0], pixel).xyz;
+    uint objectID       = FetchObjectIDTex(pixel);
+    float luminance     = RGBtoLuminance(color);
+    SHARED_COLOR[localPixel.x][localPixel.y] = color;
+    SHARED_OBJECT_ID[localPixel.x][localPixel.y] = objectID;
+    barrier();
+
+    float maxLuminance = -1000.0f;
+    float minLuminance = 1000.0f;
+    ivec2 maxLocalPixel = ivec2(0, 0);
+    ivec2 minLocalPixel = ivec2(0, 0);
+
+    for (int x = -1; x <= 1; x++)	
+    {
+        for (int y = -1; y <= 1; y++)
+        {
+            ivec2 samplePixel = localPixel + ivec2(x, y);   //TODO 边界处缺少数据，这里直接跳过了
+            if (any(lessThan(samplePixel, ivec2(0, 0))) || any(greaterThan(samplePixel, ivec2(THREAD_SIZE_X - 1, THREAD_SIZE_Y - 1)))) continue;
+            if (x == 0 && y == 0) continue;
+
+            vec3 sampleColor    = SHARED_COLOR[samplePixel.x][samplePixel.y];
+            uint sampleObjectID = SHARED_OBJECT_ID[samplePixel.x][samplePixel.y];
+            float sampleLuminance = RGBtoLuminance(sampleColor);
+            if (sampleObjectID != objectID) continue;
+
+            if (maxLuminance < sampleLuminance)
+            {
+                maxLuminance = sampleLuminance;
+                maxLocalPixel = samplePixel;
+            }
+            if (minLuminance > sampleLuminance)
+            {
+                minLuminance = sampleLuminance;
+                minLocalPixel = samplePixel; 
+            }
+        }
+    }
+
+    vec3 outColor = color;
+    if(luminance < minLuminance)    outColor = SHARED_COLOR[minLocalPixel.x][minLocalPixel.y];
+    if(luminance > maxLuminance)    outColor = SHARED_COLOR[maxLocalPixel.x][maxLocalPixel.y];
+
+    imageStore(CURRENT_COLOR_VARIANCE[0], pixel, vec4(outColor, 0.0f));
+}

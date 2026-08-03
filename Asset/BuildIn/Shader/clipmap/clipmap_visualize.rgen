@@ -1,0 +1,46 @@
+#version 460
+#extension GL_EXT_ray_tracing : enable
+#extension GL_ARB_separate_shader_objects : enable
+#extension GL_GOOGLE_include_directive : enable
+
+#include "../common/common.glsl"
+#include "clipmap.glsl"
+
+layout(set = 1, binding = 0, rgba16f) uniform readonly image3D VXGI_CLIPMAP;
+layout(set = 1, binding = 1) buffer VXGI_CLIPMAP_BUFFER {
+	ClipmapInfo clipmapInfo;
+};
+layout(set = 1, binding = 2, rgba16f) uniform image2D OUT_COLOR;
+
+layout(location = 0) rayPayloadEXT vec3 HIT_VALUE;
+
+void main() 
+{
+	const vec2 pixelCenter = vec2(gl_LaunchIDEXT.xy) + vec2(0.5);
+	const vec2 inUV = pixelCenter / vec2(gl_LaunchSizeEXT.xy);
+	vec2 d = inUV * 2.0 - 1.0;
+
+	vec4 origin = CAMERA.pos;
+	vec4 target = CAMERA.invProj * vec4(d.x, d.y, 1, 1) ;
+	vec4 direction = CAMERA.invView * vec4(normalize(target.xyz), 0);
+
+	float tmin = MIN_RAY_TRACING_DISTANCE;
+	float tmax = MAX_RAY_TRACING_DISTANCE;
+
+    HIT_VALUE = vec3(0.0);
+
+	traceRayEXT(TLAS, 					// acceleration structure
+		gl_RayFlagsOpaqueEXT,       	// rayFlags
+		0xFF,           				// cullMask
+		0,              				// sbtRecordOffset
+		0,              				// sbtRecordStride
+		0,              				// missIndex
+		origin.xyz,     				// ray origin
+		tmin,           				// ray min range
+		direction.xyz,  				// ray direction
+		tmax,           				// ray max range
+		0               				// payload (location = 0)
+  	);
+
+	imageStore(OUT_COLOR, ivec2(gl_LaunchIDEXT.xy), vec4(HIT_VALUE, 0.0));
+}

@@ -1,0 +1,146 @@
+#version 460
+#extension GL_EXT_ray_tracing : enable
+#extension GL_ARB_separate_shader_objects : enable
+#extension GL_GOOGLE_include_directive : enable
+
+#include "../common/common.glsl"
+#include "include/common.glsl"
+
+#define THREAD_SIZE_X 16
+#define THREAD_SIZE_Y 16
+#define THREAD_SIZE_Z 1
+layout (local_size_x = THREAD_SIZE_X, 
+		local_size_y = THREAD_SIZE_Y, 
+		local_size_z = THREAD_SIZE_Z) in;
+void main() 
+{
+    ivec2 pixel     = ivec2(gl_GlobalInvocationID.xy);
+    vec2 uv         = ScreenPixToUV(pixel); 
+
+   	vec4 gbffer0    = imageLoad(G_BUFFER_DIFFUSE_METALLIC, pixel);
+    vec4 gbffer1    = imageLoad(G_BUFFER_NORMAL_ROUGHNESS, pixel);
+    vec4 gbffer2    = imageLoad(G_BUFFER_EMISSION, pixel);
+    vec3 diffuse    = gbffer0.xyz;
+    vec3 normal     = normalize(gbffer1.xyz);
+    vec3 emission   = gbffer2.xyz;
+    float roughness = gbffer1.w;
+    float metallic  = gbffer0.w;
+    vec4 worldPos   = DepthToWorld(uv); 
+	float depth 	= FetchDepthTex(pixel);
+
+	// 空域复用Reservoir //////////////////////////////////
+
+	uint reservoirIndex = ReservoirIndex(pixel);
+	DIReservoir res = RESERVOIRS[reservoirIndex];
+	Rand rand = SeedRand(GLOBAL_SETTING.totalTicks, pixel.y * GLOBAL_SETTING.totalTicks + pixel.x);
+
+	ivec2 neighborPixel[NUM_NEIGHBORS];
+	vec3 neighborNormal[NUM_NEIGHBORS];
+	uint neighborNumStreamSamples[NUM_NEIGHBORS];
+	uint originNumStreamSamples = res.numStreamSamples;
+
+	if(depth < 1.0f && RESTIR_DI_SETTING.spatialReuse != 0)
+	{
+		for(int j = 0; j < NUM_NEIGHBORS; j++)
+		{	
+			float angle = RandFloat(rand) * 2.0 * PI;								// 搜索圆范围内的随机临近像素
+			float radius = sqrt(RandFloat(rand)) * RESTIR_DI_SETTING.spatialRadius;
+
+			ivec2 randNeighborOffset = ivec2(floor(cos(angle) * radius), floor(sin(angle) * radius));
+			ivec2 randNeighborPixel  = ivec2(clamp(int(pixel.x) + randNeighborOffset.x, 0, int(WINDOW_WIDTH) - 1),
+											 clamp(int(pixel.y) + randNeighborOffset.y, 0, int(WINDOW_HEIGHT) - 1));
+			vec2 randNeighborUV = ScreenPixToUV(randNeighborPixel);
+			uint randIndex 		= ReservoirIndex(randNeighborPixel);	
+			
+			neighborPixel[j] = randNeighborPixel;
+			neighborNumStreamSamples[j] = RESERVOIRS[randIndex].numStreamSamples; 
+			neighborNormal[j] = normalize(imageLoad(G_BUFFER_NORMAL_ROUGHNESS, randNeighborPixel).xyz);
+
+			float neighborDepth = FetchDepthTex(randNeighborPixel);
+			if(neighborDepth == 1.0f) 
+			{
+				neighborNumStreamSamples[j] = 0;
+				continue;
+			}
+
+			//if(RESTIR_DI_SETTING.unbias == 0)	// 可以简单筛一下临近像素，原论文只在有偏时使用
+			{
+				vec3 positionDiff = worldPos.xyz - DepthToWorld(randNeighborUV).xyz;
+				float normalDot = dot(normal, neighborNormal[j]);
+				if (length(positionDiff) > RESTIR_DI_SETTING.spatialPosThreshold  ||			// 弃置世界距离差异大的，原论文比较的是深度
+					normalDot < cos(radians(RESTIR_DI_SETTING.spatialNormalThreshold)))		// 弃置法线差异大的
+				{
+					neighborNumStreamSamples[j] = 0;
+					continue;
+				}
+			}
+
+			DIReservoir randRes = RESERVOIRS[randIndex];
+			float newPHat = EvaluatePHat(
+					randRes.sampl.lightID, worldPos.xyz, normal,
+					diffuse, roughness, metallic); 
+			CombineDIReservoirs(res, randRes, newPHat, rand);
+		}
+
+		if(RESTIR_DI_SETTING.unbias != 0)
+		{
+			uint z = originNumStreamSamples;
+			for(int j = 0; j < NUM_NEIGHBORS; j++)
+			{		
+				// 需要重新评估该采样光源对于临近像素是否有贡献，来更新权重
+				// 也没必要再算一遍phat，确定0项就行
+
+				// vec4 neighborGbffer0    = imageLoad(G_BUFFER_DIFFUSE_METALLIC, neighborPixel[j]);
+				// vec4 neighborGbffer1    = imageLoad(G_BUFFER_NORMAL_ROUGHNESS, neighborPixel[j]);
+				// vec4 neighborGbffer2    = imageLoad(G_BUFFER_EMISSION, neighborPixel[j]);
+				// vec3 neighborDiffuse    = neighborGbffer0.xyz;
+				// vec3 neighborNormal     = normalize(neighborGbffer1.xyz);
+				// vec3 neighborEmission   = neighborGbffer2.xyz;
+				// float neighborRoughness = neighborGbffer0.w;
+				// float neighborMetallic  = neighborGbffer1.w;
+				vec4 neighborWorldPos   = DepthToWorld(ScreenPixToUV(neighborPixel[j])); 
+
+				// float newPHatNeighbor = EvaluatePHat(		
+				// 	res.sampl.lightID, neighborWorldPos.xyz, neighborNormal,
+				// 	neighborDiffuse, neighborRoughness, neighborMetallic);
+				// if(newPHatNeighbor <= 0.0) continue;
+
+				PointLight pointLight 	= LIGHTS.pointLights[res.sampl.lightID];
+				float neighborDistance 	= length(neighborWorldPos.xyz - pointLight.pos);
+				vec3 neighborL		 	= normalize(pointLight.pos - neighborWorldPos.xyz);
+				vec3 neighborN 			= normalize(neighborNormal[j]);
+				if(dot(neighborN, neighborL) <= 0.0f || neighborDistance >= pointLight.far)	continue;
+
+
+				if(RESTIR_DI_SETTING.visibilityReuse != 0)		// 可见性测试是最主要的性能开销
+				{
+					bool shadowed = RayQueryVisibility(neighborWorldPos.xyz, LIGHTS.pointLights[res.sampl.lightID].pos, GLOBAL_SETTING.rayTracingOffset);
+					if(shadowed) continue;
+				}
+						
+				z = z + neighborNumStreamSamples[j]; 				
+			}
+
+			if(RESTIR_DI_SETTING.visibilityReuse != 0)
+			{
+				bool shadowed = RayQueryVisibility(worldPos.xyz, LIGHTS.pointLights[res.sampl.lightID].pos, GLOBAL_SETTING.rayTracingOffset);
+				if(shadowed) 
+				{
+					CleanDIReservoir(res);			
+				}
+			}
+			
+			if (z > 0 && res.pHat > 0.0) 
+			{
+				res.w = (1.0 / res.pHat) * (1.0 / z) * res.sumWeights;	// 无偏就是这两行的区别
+				//res.w = (1.0 / res.pHat) * (1.0 / res.numStreamSamples) * res.sumWeights;	
+				// 由于错误的考虑了pHat为0的采样，有偏的实际上会偏暗
+			}
+			else {
+				CleanDIReservoir(res);			
+			}
+		}
+	}
+
+	RESULT_RESERVOIRS[reservoirIndex] = res;
+}

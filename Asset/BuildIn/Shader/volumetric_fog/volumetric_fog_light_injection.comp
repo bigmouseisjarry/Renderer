@@ -1,0 +1,155 @@
+#version 460
+#extension GL_ARB_separate_shader_objects : enable
+#extension GL_GOOGLE_include_directive : enable
+
+#include "../common/common.glsl"
+#include "common.glsl"
+
+// Beer–Lambert law 光线穿透率，与传输距离成指数关系
+// 此处假设介质均匀，若不均匀则转为对多段传输距离分别计算穿透率，相乘即可
+float transmittance(vec3 worldPos, vec3 cameraPos, float attenuation)
+{
+    return exp(-distance(worldPos.xyz, cameraPos.xyz) * attenuation);
+}
+
+// 相位函数，光被散射到各方向的分布函数
+// 各向异性近似
+float henyeyGreensteinPhase(float G, float CosTheta)
+{
+    // Reference implementation (i.e. not schlick approximation). 
+    // See http://www.pbr-book.org/3ed-2018/Volume_Scattering/Phase_Functions.html
+    float Numer = 1.0f - G * G;
+    float Denom = max(0.001,1.0f + G * G - 2.0f * G * CosTheta);
+    return Numer / (4.0f * PI * Denom * sqrt(Denom));
+}
+
+// 各向同性
+float isotropicScattering()
+{
+    return 1.0f / (4 * PI);
+}
+
+float LowPointShadow(uint lightID, vec4 worldPos)
+{
+	if(lightID == 0) return 0.0f;	// 0为无效ID
+
+	PointLight pointLight = LIGHTS.pointLights[lightID];
+	if(pointLight.shadowID >= MAX_POINT_SHADOW_COUNT) return 1.0f;	//无效阴影索引
+
+	vec3 pointLightVec = normalize(pointLight.pos - worldPos.xyz);
+	vec3 pointDistance = abs(worldPos.xyz - pointLight.pos);
+
+	float shadowDistance = LinearEyeDepth(texture(samplerCube(POINT_SHADOW[pointLight.shadowID + MAX_POINT_SHADOW_COUNT], SAMPLER[0]), -pointLightVec).r, pointLight.near, pointLight.far);
+
+	float pointShadow = length(pointDistance) - shadowDistance;
+	pointShadow = pointShadow > pointLight.bias ? 0.0f : 1.0f;	//给阴影一点颜色？
+
+    return pointShadow;
+}
+
+#define THREAD_SIZE_X VOLUMETRIC_FOG_SIZE_X / 10	
+#define THREAD_SIZE_Y VOLUMETRIC_FOG_SIZE_Y / 10	
+#define THREAD_SIZE_Z 1	
+layout (local_size_x = THREAD_SIZE_X, 
+		local_size_y = THREAD_SIZE_Y, 
+		local_size_z = THREAD_SIZE_Z) in;
+void main() 
+{
+	// 阶段一 收集各视锥体素的光照信息
+	// 如果做区域性的烟雾，还需要添加一轮获取介质信息的pass
+	ivec3 pixel = ivec3(gl_GlobalInvocationID.xyz);
+	if(pixel.x >= VOLUMETRIC_FOG_SIZE_X || pixel.y >= VOLUMETRIC_FOG_SIZE_Y || pixel.z >= VOLUMETRIC_FOG_SIZE_Z) return;
+
+
+	Rand rand = SeedRand(GLOBAL_SETTING.totalTicks, (pixel.y + WINDOW_HEIGHT) * GLOBAL_SETTING.totalTicks + (pixel.x + WINDOW_WIDTH) + pixel.z);
+	vec3 ditter = vec3(RandFloat(rand), RandFloat(rand), RandFloat(rand));
+
+
+	vec4 worldPos 			= FetchVolumetricClusterPos(pixel + ditter);
+	vec4 worldPosNoDitter 	= FetchVolumetricClusterPos(pixel);
+	vec4 worldNearPos 		= vec4(CAMERA.pos.xyz + normalize(CAMERA.front) * CAMERA.near, 1.0f);
+
+	vec3 V 					= normalize(CAMERA.pos.xyz - worldPos.xyz);	        //视线
+
+	vec3 accumulateColor = vec3(0.0f);
+	float transmittance = transmittance(worldPosNoDitter.xyz, worldNearPos.xyz, SETTING.attenuationFactor);	//计算穿透率就不加抖动了
+
+	// 点光源
+	{
+		ivec3 clusterGrid   = FetchLightClusterGrid(WorldToNDC(worldPos).xyz);
+        uvec2 clusterIndex  = FetchLightClusterIndex(clusterGrid);      //读取对应cluster的索引信息 
+
+		for(uint i = clusterIndex.x; i < clusterIndex.x + clusterIndex.y; i++)
+		{
+			uint lightID = LIGHT_CLUSTER_INDEX.slot[i].lightID;
+			PointLight pointLight = LIGHTS.pointLights[lightID];
+
+			vec3 L 											= normalize(pointLight.pos - worldPos.xyz);
+			float VoL 										= dot(V, L);
+			float scattering								= isotropicScattering();
+			if(SETTING.isotropic == 0) scattering 	= henyeyGreensteinPhase(SETTING.henyeyGreensteinG, VoL);
+			scattering *= pointLight.fogScattering;
+
+			float pointDistance = length(worldPos.xyz - pointLight.pos.xyz);
+			float pShadow = LowPointShadow(lightID, worldPos);  
+			//float pShadow = 1.0f;
+
+			float attenuation   = PointLightFalloff(pointDistance, pointLight.far);
+
+    		vec3 radiance = pShadow *               //辐射率 = 阴影值 * 光强 * 颜色 * 衰减
+							pointLight.color * 
+							pointLight.intencity *
+							attenuation;  
+
+			accumulateColor += radiance * scattering * SETTING.scatteringIntencity;
+			//accumulateColor += pointShadow * attenuation;
+			//accumulateColor += pointShadow;
+		}
+	}
+
+	// 平行光源
+	if(LIGHTS.lightSetting.directionalLightCnt != 0)
+	{
+		DirectionalLight dirLight = LIGHTS.directionalLights[0];
+
+		vec3 L 											= -normalize(dirLight.dir);
+		float VoL 										= dot(V, L);
+		float scattering								= isotropicScattering();
+		if(SETTING.isotropic == 0) scattering 	= henyeyGreensteinPhase(SETTING.henyeyGreensteinG, VoL);
+		scattering *= dirLight.fogScattering;
+
+		float dirShadow = DirectionalShadow(worldPos);           
+
+        vec3 radiance = dirShadow *           //辐射率 = 阴影值 * 光强 * 颜色
+                        dirLight.color * 
+                        dirLight.intencity;     
+
+		accumulateColor += radiance * scattering * SETTING.scatteringIntencity;
+	}
+
+	//TODO 间接光照
+	// if(SETTING.indirectLightIntencity >= 0.01f)
+	// {
+	// 	for(int i = 0; i < LIGHT.lightSetting.volume_light_cnt; i++)
+	// 	{
+	// 		VolumeLight volumeLight = LIGHT.volumeLights[i];
+	// 		if(	volumeLight.setting.enable &&
+	// 			PointIntersectBox(worldPos.xyz, volumeLight.setting.box))    //需要在包围盒范围内
+	// 		{
+	// 			// indirectIrradiance  = fetchIrradiance(volumeLight.setting, worldPos, N, V, VOLUME_LIGHT_IRRADIANCE_SAMPLERS[i], VOLUME_LIGHT_DEPTH_SAMPLERS[i]);
+	// 			// vec3 diffuse = indirectIrradiance * albedo.rgb;
+	// 			// vec3 diffuseColor = kD * diffuse;    
+
+	// 			// indirectColor = diffuseColor * ao;
+
+	// 			// break;  //暂时只用一个的，没处理重叠情况
+	// 		}
+	// 	}
+	// }
+
+
+	imageStore(VOLUMETRIC_FOG_RAW, ivec3(pixel.xyz), vec4( accumulateColor, transmittance ) );
+}
+
+
+

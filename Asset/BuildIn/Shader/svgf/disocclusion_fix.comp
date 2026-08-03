@@ -1,0 +1,91 @@
+#version 460
+#extension GL_GOOGLE_include_directive : enable
+
+#include "../common/common.glsl"
+
+#include "common.glsl"
+
+
+
+
+int GetRadius(float historyLength)
+{
+    // IMPORTANT: progression is "{8, 4, 2, 1} + 1". "+1" is important to better break blobs
+    return int(pow(2, 5.0f - historyLength)) + 1;
+}
+
+
+
+#define THREAD_SIZE_X 16
+#define THREAD_SIZE_Y 16
+#define THREAD_SIZE_Z 1
+layout (local_size_x = THREAD_SIZE_X, 
+		local_size_y = THREAD_SIZE_Y, 
+		local_size_z = THREAD_SIZE_Z) in;
+void main() 
+{	
+    ivec2 pixel     = ivec2(gl_GlobalInvocationID.xy);
+    vec2 uv         = ScreenPixToUV(pixel); 
+
+	vec3 color 			= imageLoad(CURRENT_COLOR_VARIANCE[0], pixel).xyz;
+	float historyLength = imageLoad(CURRENT_MOMENTS, pixel).z;
+	vec3 outColor 		= color;
+
+	if(SETTING.disocclusionFix <= 0) 
+	{
+		// if (historyLength < 5.0f && FetchDepthTex(pixel) != 1.0f) 
+		//  	imageStore(CURRENT_COLOR_VARIANCE[0], pixel, vec4(1.0f, 0.0f, 0.0f, 0.0f));
+		return;
+	}
+
+	// 重投影失败将导致ReSTIR SVGF TAA历史帧信息全部失效，噪点会非常明显，即便使用SVGF的空域方差估计也不能完全解决
+	// ReLAX针对性的做了优化，对于历史帧长度不够的部分用空域的滤波来填补，在加上之后的atrous进一步过滤
+	// 此处的开销并不大 
+	if (historyLength < 5.0f && FetchDepthTex(pixel) != 1.0f) 	//  up to 3 frames in history
+	{
+		vec4 pPosition      = DepthToWorld(uv);
+		vec3 pNormal        = normalize(texelFetch(G_BUFFER_NORMAL_ROUGHNESS, pixel, 0).xyz);
+
+		outColor = color;													// 本帧的数据还是需要保留，ReLAX里用的权重就是1
+		float weights = 1.0f;												// apply all edge stoppers
+		//int stride = 4;													// 4px stride，实际代码里用的一个逐渐缩小的步长
+		int stride = GetRadius(historyLength);
+		for (int y = -2; y <= 2; y++)										// 5x5 taps
+		{
+			for (int x = -2; x <= 2; x++)
+			{
+				ivec2 qPixel = pixel + ivec2(x, y) * stride;
+				if (any(lessThan(qPixel, ivec2(0, 0))) || any(greaterThan(qPixel, ivec2(WINDOW_WIDTH - 1, WINDOW_HEIGHT - 1)))) continue;
+				if (FetchDepthTex(qPixel) == 1.0f) continue;
+
+				vec2 qUV        = ScreenPixToUV(qPixel); 
+				{
+					vec4 qPosition      = DepthToWorld(qUV);
+					vec3 qNormal        = normalize(texelFetch(G_BUFFER_NORMAL_ROUGHNESS, qPixel, 0).xyz);
+					vec3 qColor         = imageLoad(CURRENT_COLOR_VARIANCE[0], qPixel).xyz;
+
+					float wp    = GetPlaneDistanceWeight(pPosition.xyz, pNormal, qPosition.xyz);
+                	float wn    = GetNormalWeight(pNormal, qNormal);
+					float w 	= wp * wn;
+					//float weight = gaussKernel5x5[5 * (y + 2) + (x + 2)] / 273.0f * w;
+					float weight = w;	//ReLAX并没有用高斯核，是直接加的
+ 
+					outColor 	+= weight * qColor;
+					weights 	+= weight;
+				}
+			}
+		}
+		outColor /= weights;
+
+		// 再把moments补上
+		{
+			float luminance 	= RGBtoLuminance(outColor);
+			luminance 			= max(0.0f, luminance);
+			vec2 moments 		= vec2(luminance, luminance * luminance);
+			imageStore(CURRENT_MOMENTS, pixel, vec4(moments, historyLength, 0.0f));
+		}
+	} 
+
+	imageStore(CURRENT_COLOR_VARIANCE[0], pixel, vec4(outColor, 0.0f));
+}
+

@@ -1,0 +1,86 @@
+#version 460
+#extension GL_EXT_ray_tracing : enable
+#extension GL_ARB_separate_shader_objects : enable
+#extension GL_GOOGLE_include_directive : enable
+
+#include "../common/common.glsl"
+#include "include/common.glsl"
+
+
+#define THREAD_SIZE_X 16
+#define THREAD_SIZE_Y 16
+#define THREAD_SIZE_Z 1
+layout (local_size_x = THREAD_SIZE_X, 
+		local_size_y = THREAD_SIZE_Y, 
+		local_size_z = THREAD_SIZE_Z) in;
+void main() 
+{
+    ivec2 pixel     = ivec2(gl_GlobalInvocationID.xy);
+    vec2 uv         = ScreenPixToUV(pixel); 
+
+    vec4 gbffer0    = imageLoad(G_BUFFER_DIFFUSE_METALLIC, pixel);
+    vec4 gbffer1    = imageLoad(G_BUFFER_NORMAL_ROUGHNESS, pixel);
+    vec4 gbffer2    = imageLoad(G_BUFFER_EMISSION, pixel);
+    vec3 diffuse    = gbffer0.xyz;
+    vec3 normal     = normalize(gbffer1.xyz);
+    vec3 emission   = gbffer2.xyz;
+    float roughness = gbffer1.w;
+    float metallic  = gbffer0.w;
+    vec4 worldPos   = DepthToWorld(uv);
+	float depth 	= FetchDepthTex(pixel);
+
+	// 点光源采样，创建新Reservoir //////////////////////////////////
+
+	uint reservoirIndex = ReservoirIndex(pixel);
+	DIReservoir res = NewDIReservoir();
+	Rand rand = SeedRand(GLOBAL_SETTING.totalTicks, (pixel.y + WINDOW_HEIGHT) * GLOBAL_SETTING.totalTicks + (pixel.x + WINDOW_WIDTH));
+
+	if(depth == 1.0f)	// 无效的G-Buffer信息
+	{
+		RESERVOIRS[reservoirIndex] = res;
+		return;
+	}
+
+	for (int i = 0; i < RESTIR_DI_SETTING.initialSampleCount; i++) 
+	{	
+		uint lightID = LIGHTS.lightSetting.pointLightIDs[uint(round(RandFloat(rand) * (LIGHTS.lightSetting.pointLightCnt - 1)))];	// 抽样选取点光源及其选择概率，直接用均匀分布了
+		float lightSampleProb = (1.0f / LIGHTS.lightSetting.pointLightCnt);	
+
+		float pHat = EvaluatePHat(
+			lightID, worldPos.xyz, normal, 
+			diffuse, roughness, metallic); 
+
+		AddSampleToDIReservoir(res, lightID, pHat, lightSampleProb, rand);
+	}
+	
+	// 时域复用Reservoir //////////////////////////////////
+
+	if (RESTIR_DI_SETTING.temporalReuse != 0) 
+	{
+		vec4 reprojection   = texelFetch(REPROJECTION_RESULT, pixel, 0);
+		ivec2 prevPixel     = ivec2(reprojection.zw);
+		bool valid          = prevPixel.x > 0.0f ? true : false;	
+
+		if(valid)
+		{
+			DIReservoir prevRes = PREV_RESERVOIRS[ReservoirIndex(prevPixel)];	
+			prevRes.numStreamSamples = min(prevRes.numStreamSamples, RESTIR_DI_SETTING.temporalSampleCountMultiplier * res.numStreamSamples);	// 需要设置一个累计采样数的上限
+			
+			float newPHat = EvaluatePHat(								// 时域复用下的可见性测试使用的是阴影贴图
+					prevRes.sampl.lightID, worldPos.xyz, normal,		// 空域用的光追
+					diffuse, roughness, metallic); 
+			CombineDIReservoirs(res, prevRes, newPHat, rand);		
+		}
+	}
+
+	if (RESTIR_DI_SETTING.visibilityReuse != 0) 
+	{
+		bool shadowed = RayQueryVisibility(worldPos.xyz, LIGHTS.pointLights[res.sampl.lightID].pos, GLOBAL_SETTING.rayTracingOffset);
+		if (shadowed) 
+		{
+			CleanDIReservoir(res);		
+		}
+	}
+
+	RESERVOIRS[reservoirIndex] = res;
+}

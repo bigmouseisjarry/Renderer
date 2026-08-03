@@ -1,0 +1,57 @@
+#version 460
+#extension GL_ARB_separate_shader_objects : enable
+#extension GL_GOOGLE_include_directive : enable
+
+#include "../common/common.glsl"
+
+layout (set = 1, binding = 0, rgba16f) uniform image2D OUT_COLOR;
+
+layout(push_constant) uniform IBLSetting {
+	vec4 front;
+	vec4 up;
+	
+	float deltaPhi;
+	float deltaTheta;
+
+	float roughness;
+	uint numSamples;
+	uint mip;
+} SETTING;
+
+// https://zhuanlan.zhihu.com/p/66518450
+
+#define THREAD_SIZE_X 16
+#define THREAD_SIZE_Y 16
+#define THREAD_SIZE_Z 1
+layout (local_size_x = THREAD_SIZE_X, 
+		local_size_y = THREAD_SIZE_Y, 
+		local_size_z = THREAD_SIZE_Z) in;
+void main() 
+{
+    ivec2 pixel     = ivec2(gl_GlobalInvocationID.xy);
+    vec2 uv         = ScreenPixToUV(pixel, ivec2(DIFFUSE_IBL_SIZE)); 
+	vec2 dir 		= uv * 2.0f - 1.0f;			//左上[-1,-1] 右下[1,1]
+
+	vec3 right 		= cross(SETTING.front.xyz, SETTING.up.xyz);
+	vec3 front 		= normalize(SETTING.front.xyz) + dir.x * normalize(right.xyz) + dir.y * normalize(SETTING.up.xyz);
+
+	vec3 N 			= normalize(front);
+	vec3 up 		= vec3(0.0, 1.0, 0.0);
+	right 			= normalize(cross(up, N));
+	up 				= cross(N, right);
+
+	vec3 color = vec3(0.0);
+	uint sampleCount = 0u;
+	for (float phi = 0.0; phi < PI * 2.0; phi += SETTING.deltaPhi) 
+	{
+		for (float theta = 0.0; theta < PI * 0.5; theta += SETTING.deltaTheta) 
+		{
+			vec3 tempVec 		= cos(phi) * right + sin(phi) * up;
+			vec3 sampleVector 	= cos(theta) * N + sin(theta) * tempVec;
+			color 				+= FetchSkyLight(sampleVector) * cos(theta) * sin(theta);	
+			sampleCount++;
+		}
+	}
+	
+	imageStore(OUT_COLOR, pixel, vec4(PI * color / float(sampleCount), 1.0));
+}

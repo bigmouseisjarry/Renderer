@@ -1,0 +1,35 @@
+#version 460
+#extension GL_GOOGLE_include_directive : enable
+
+#include "../common/common.glsl"
+
+#define THREAD_SIZE_X 256
+#define THREAD_SIZE_Y 1
+#define THREAD_SIZE_Z 1
+layout (local_size_x = THREAD_SIZE_X, 
+		local_size_y = THREAD_SIZE_Y, 
+		local_size_z = THREAD_SIZE_Z) in;
+void main() 
+{
+	uint gID = gl_GlobalInvocationID.x;
+
+    // 在这里添加组件的Gizmo
+    if(gID < LIGHTS.lightSetting.pointLightCnt)
+    {
+        uint lightID = LIGHTS.lightSetting.pointLightIDs[gID];
+		PointLight pointLight = LIGHTS.pointLights[lightID];
+
+        AddGizmoBillboard(pointLight.pos, vec2(0.5f), GLOBAL_SETTING.icons.pointLightIcon, vec4(pointLight.color, 1.0f));
+        //AddGizmoSphere(pointLight.pos, pointLight.far, vec4(pointLight.color, 1.0f));
+    }
+
+    if(gID == 0 && LIGHTS.lightSetting.directionalLightCnt != 0)    // 目前只支持一个
+    {
+        DirectionalLight dirLight = LIGHTS.directionalLights[0];
+        
+        AddGizmoBillboard(dirLight.pos, vec2(0.5f), GLOBAL_SETTING.icons.directionalLightIcon, vec4(dirLight.color, 1.0f));
+    }
+}
+
+
+

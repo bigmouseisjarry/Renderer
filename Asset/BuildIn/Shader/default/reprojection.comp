@@ -1,0 +1,59 @@
+#version 460
+#extension GL_GOOGLE_include_directive : enable
+
+#include "../common/common.glsl"
+
+layout(set = 1, binding = 0)            uniform texture2D CURRENT_NORMAL;	
+layout(set = 1, binding = 1)   		    uniform texture2D HISTORY_NORMAL;	
+layout(set = 1, binding = 2, rgba32f)   uniform image2D REPROJECTION_RESULT;		
+
+
+
+
+
+
+
+
+
+#define THREAD_SIZE_X 16
+#define THREAD_SIZE_Y 16
+#define THREAD_SIZE_Z 1
+layout (local_size_x = THREAD_SIZE_X, 
+		local_size_y = THREAD_SIZE_Y, 
+		local_size_z = THREAD_SIZE_Z) in;
+void main()
+{
+    ivec2 pixel     = ivec2(gl_GlobalInvocationID.xy);
+    vec2 uv         = ScreenPixToUV(pixel); 
+
+    uint objectID   = FetchObjectIDTex(pixel);
+    vec2 velocity   = FetchVelocityTex(pixel);
+    vec3 normal     = texelFetch(CURRENT_NORMAL, pixel, 0).xyz;     // 这里的法线其实不应该用G-Buffer里带法线贴图的结果
+
+    vec2 prevUV;
+    ivec2 prevPixel;
+    Reproject(
+        pixel, 
+        velocity,
+        objectID,
+        normal,
+        OBJECT_ID[1],
+        HISTORY_NORMAL,
+        prevUV,
+        prevPixel);
+
+    vec4 result = vec4(prevUV, prevPixel);
+    imageStore(REPROJECTION_RESULT, pixel, result);
+
+
+    // 此处统一的重投影计算：
+    // 若四像素临近插值有效，xy通道为前帧uv坐标
+    // 若四像素里有有效的，zw通道为前帧最近的有效整像素坐标pixel
+    // 无效时对应通道值小于0
+
+    // 需要使用重投影功能的有：
+    // TAA          UV即可，有clamping
+    // ReSTIR       必须用整像素
+    // SSSR         UV即可，有clamping
+    // SVGF         可能需要更复杂的重投影计算，例如9像素？
+}

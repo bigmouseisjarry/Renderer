@@ -1,0 +1,63 @@
+#version 460
+#extension GL_EXT_ray_tracing : enable
+#extension GL_ARB_separate_shader_objects : enable
+#extension GL_GOOGLE_include_directive : enable
+
+#include "../common/common.glsl"
+#include "../clipmap/clipmap.glsl"
+#include "common.glsl"
+
+layout(location = 0) rayPayloadEXT Payload RAY_PAYLOAD;
+
+void main() 
+{
+	int mipLevel = SETTING.region.mipLevel;
+	ClipmapLevel clipmapLevel = clipmapInfo.levels[mipLevel];
+
+	ivec3 index     = ivec3(gl_LaunchIDEXT.xyz + SETTING.region.min);
+
+	vec3 worldPos 	= FetchClipmapPos(clipmapLevel, index);
+	vec3 halfExtent = vec3(FetchClipmapHalfExtent(clipmapLevel));
+	float halfVoxelSize = clipmapLevel.voxelSize / 2; 
+
+	vec3 direction[6] = {
+		vec3(1.0, 0.0, 0.0),		// 前 +X
+		vec3(-1.0, 0.0, 0.0),		 // 后 -X
+		vec3(0.0, 1.0, 0.0),		// 上 +Y
+		vec3(0.0, -1.0, 0.0),		 // 下 -Y
+		vec3(0.0, 0.0, 1.0),		// 右 +Z
+		vec3(0.0, 0.0, -1.0),		 // 左 -Z
+	};
+	float tmin = MIN_RAY_TRACING_DISTANCE;
+	float tmax = 2 * (halfVoxelSize + 2 * tmin);			// 短距离trace
+	for(int i = 0; i < 6; i++)
+	{
+		RAY_PAYLOAD.objectID = 0;
+		RAY_PAYLOAD.normal = vec3(0.0);
+		RAY_PAYLOAD.diffuse = vec4(0.0);
+		RAY_PAYLOAD.worldPos = vec3(0.0);
+
+		vec3 origin = worldPos + direction[i] * (halfVoxelSize + 2 * tmin);
+		vec3 dir = normalize(-direction[i]);
+
+		traceRayEXT(TLAS, 					// acceleration structure
+			gl_RayFlagsOpaqueEXT,       	// rayFlags
+			0xFF,           				// cullMask
+			0,              				// sbtRecordOffset
+			0,              				// sbtRecordStride
+			0,              				// missIndex
+			origin.xyz,     				// ray origin
+			tmin,           				// ray min range
+			dir,  							// ray direction
+			tmax,           				// ray max range
+			0               				// payload (location = 0)
+		);
+
+		vec4 lighting = vec4(0.0f);
+		bool valid = FetchSurfaceCacheLighting(lighting, RAY_PAYLOAD.objectID, RAY_PAYLOAD.worldPos, RAY_PAYLOAD.normal);	// 用surface cache的光照结果
+
+		ivec3 texCoord = FetchClipmapSampleCoord(clipmapLevel, worldPos, i);
+		//imageStore(VXGI_CLIPMAP, texCoord, RAY_PAYLOAD.diffuse);
+		imageStore(VXGI_CLIPMAP, texCoord, valid ? lighting : vec4(0.0f));
+	}
+}

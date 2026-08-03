@@ -1,0 +1,55 @@
+#version 460
+#extension GL_GOOGLE_include_directive : enable
+
+// 0    Color
+// 1    Filtered Demodulate
+// 2    Filtered Variance
+// 3    History Variance
+// 4    Input Color
+// 5    Demodulate
+// 6    Moments
+// 7    History length
+
+#include "../common/common.glsl"
+
+#include "common.glsl"
+
+#define THREAD_SIZE_X 16
+#define THREAD_SIZE_Y 16
+#define THREAD_SIZE_Z 1
+layout (local_size_x = THREAD_SIZE_X, 
+		local_size_y = THREAD_SIZE_Y, 
+		local_size_z = THREAD_SIZE_Z) in;
+void main() 
+{	
+    ivec2 pixel     = ivec2(gl_GlobalInvocationID.xy);
+    vec2 uv         = ScreenPixToUV(pixel); 
+
+    int colorIndex = (SETTING.maxRound) % 2;
+
+    vec3 inputColor             = imageLoad(IN_COLOR, pixel).xyz;
+    vec4 colorVariance          = imageLoad(CURRENT_COLOR_VARIANCE[colorIndex], pixel);
+    vec4 prevColorVariance      = texelFetch(HISTORY_COLOR_VARIANCE, pixel, 0);
+    vec3 momentHistoryLength    = imageLoad(CURRENT_MOMENTS, pixel).xyz;
+    //vec3 diffuse                = texelFetch(G_BUFFER_DIFFUSE_METALLIC, pixel, 0).xyz;
+    vec3 diffuse 		        = max(texelFetch(G_BUFFER_DIFFUSE_METALLIC, pixel, 0).xyz, 1e-3);
+
+
+    vec4 color = vec4(0.0f);
+
+    if(SETTING.mode == 0)   color.xyz = colorVariance.xyz * diffuse;
+    if(SETTING.mode == 1)   color.xyz = colorVariance.xyz;
+    if(SETTING.mode == 2)   color.xyz = vec3(colorVariance.a);
+    if(SETTING.mode == 3)   color.xyz = vec3(prevColorVariance.a);
+    if(SETTING.mode == 4)   color.xyz = inputColor;
+    if(SETTING.mode == 5)   color.xyz = inputColor / diffuse;
+    if(SETTING.mode == 6)   color.xyz = vec3(momentHistoryLength.xy, 0.0f);
+    if(SETTING.mode == 7)   color.xyz = vec3(momentHistoryLength.z / 100.0f);
+
+    vec4 baseColor = vec4(0.0f);
+    if(SETTING.denoisedOnly == 0)
+    {
+        baseColor = imageLoad(OUT_COLOR, pixel);
+    }
+    imageStore(OUT_COLOR, pixel, color + baseColor);
+}

@@ -1,0 +1,164 @@
+#version 460
+#extension GL_EXT_ray_tracing : enable
+#extension GL_ARB_separate_shader_objects : enable
+#extension GL_GOOGLE_include_directive : enable
+
+#include "../common/common.glsl"
+#include "include/common.glsl"
+
+bool RayTraceSurfaceCache(out HitSample hitSample, vec3 worldPos, vec3 worldDir) 
+{
+	vec4 lighting;
+	uint hitObjectID;
+    vec4 hitPos;
+    vec3 hitNormal;
+
+	bool valid = RayQueryHitObject(
+		worldPos, worldPos + normalize(worldDir) * MAX_RAY_TRACING_DISTANCE, 
+		GLOBAL_SETTING.rayTracingOffset,	// 虚拟几何和光追加速结构不一致，做一点偏移 
+		hitObjectID, 
+		hitPos, 
+		hitNormal);
+		
+	if(valid)   // 命中物体
+	{
+		bool cacheValid = FetchSurfaceCacheLighting(lighting, hitObjectID, hitPos.xyz, hitNormal);
+		cacheValid = cacheValid && dot(-worldDir, hitNormal) >= 0.0f;	//命中背面
+
+		hitSample.hitPos = hitPos.xyz;
+		hitSample.hitNormal = hitNormal;
+		hitSample.outRadiance = cacheValid ? lighting.xyz : vec3(0.0f);	
+
+		return cacheValid;
+	}
+	else		// 天空盒
+	{
+		hitSample.hitPos = worldPos + normalize(worldDir) * MAX_RAY_TRACING_DISTANCE;
+		hitSample.hitNormal = -worldDir;
+		if(RESTIR_GI_SETTING.enableSkybox != 0)	hitSample.outRadiance = FetchSkyLight(worldDir).xyz;
+		else									hitSample.outRadiance = vec3(0.0f);
+
+		return true;
+	}
+}
+
+#define THREAD_SIZE_X 16
+#define THREAD_SIZE_Y 16
+#define THREAD_SIZE_Z 1
+layout (local_size_x = THREAD_SIZE_X, 
+		local_size_y = THREAD_SIZE_Y, 
+		local_size_z = THREAD_SIZE_Z) in;
+void main() 
+{
+    ivec2 pixel     = ivec2(gl_GlobalInvocationID.xy);
+	ivec2 screenPixel = ivec2(pixel.x * WIDTH_DOWNSAMPLE_RATE, pixel.y * HEIGHT_DOWNSAMPLE_RATE);
+    vec2 uv         = ScreenPixToUV(screenPixel); 
+
+    vec4 gbffer0    = imageLoad(G_BUFFER_DIFFUSE_METALLIC, screenPixel);
+    vec4 gbffer1    = imageLoad(G_BUFFER_NORMAL_ROUGHNESS, screenPixel);
+    vec4 gbffer2    = imageLoad(G_BUFFER_EMISSION, screenPixel);
+    vec3 diffuse    = gbffer0.xyz;
+    vec3 normal     = gbffer1.xyz;
+    vec3 emission   = gbffer2.xyz;
+    float roughness = gbffer1.w;
+    float metallic  = gbffer0.w;
+    vec4 worldPos   = DepthToWorld(uv);
+	float depth 	= FetchDepthTex(screenPixel);
+
+    // 半球方向随机生成采样向量，创建新Reservoir //////////////////////////////////
+
+    uint reservoirIndex = ReservoirIndex(pixel);
+    GIReservoir res = NewGIReservoir();
+    Rand rand = SeedRand(GLOBAL_SETTING.totalTicks, (pixel.y + WINDOW_HEIGHT / HEIGHT_DOWNSAMPLE_RATE) * GLOBAL_SETTING.totalTicks + (pixel.x + WINDOW_WIDTH / WIDTH_DOWNSAMPLE_RATE));
+
+    if(depth == 1.0f)    // 无效的G-Buffer信息
+    {
+        RESERVOIRS[reservoirIndex] = res;
+        return;
+    }
+
+	for (int i = 0; i < RESTIR_GI_SETTING.initialSampleCount; i++) 
+	{	
+		vec4 newSample     = UniformSampleHemisphere(vec2(RandFloat(rand), RandFloat(rand)));     	// 半球均匀采样
+		vec3 L             = normalize(TangentToWorld(newSample.xyz, normal));     
+		float pdf          = newSample.w;															// proposel PDF, 1 / (2 * PI)
+
+		// L = normal;		// 可以用这个法子可视化trace结果
+
+		// vec2 seed           	= vec2(RandFloat(rand), RandFloat(rand));
+		// vec3 N              	= normalize(normal); 
+		// vec4 newSample          = CosineSampleHemisphere(seed);                   // 余弦采样
+		// vec3 L           		= normalize(TangentToWorld(newSample.xyz, N));     
+		// float pdf    			= newSample.w;
+
+		// float a2            = pow(roughness, 4) ; 
+		// vec2 seed           = vec2(RandFloat(rand), RandFloat(rand));
+		// vec4 newSample      = ImportanceSampleGGX(seed, a2);
+		// vec3 N              = normalize(normal); 
+		// vec3 V              = normalize(CAMERA.pos.xyz - worldPos.xyz);	
+		// vec3 H              = normalize(TangentToWorld(newSample.xyz, N));   //半程向量
+		// float HPDF          = newSample.a;
+		// float VoH           = clamp(dot(V, H), 0.0f, 1.0f);
+		// float pdf           = RayPDFToReflectionRayPDF(VoH, HPDF);
+		// vec3 L              = normalize(2.0 * dot(V, H) * H - V);
+
+
+
+
+		HitSample hitSample;
+		bool valid = RayTraceSurfaceCache(hitSample, worldPos.xyz, L); 
+		float pHat = EvaluatePHat(hitSample); 
+
+		if(valid) AddSampleToGIReservoir(res, hitSample, pHat, pdf, rand);
+	}
+	
+	// 时域复用Reservoir //////////////////////////////////
+
+	if (RESTIR_GI_SETTING.temporalReuse != 0) 
+	{
+		vec4 reprojection   = texelFetch(REPROJECTION_RESULT, screenPixel, 0);	
+		ivec2 prevPixel     = ivec2(reprojection.zw);
+		prevPixel 			= ivec2(prevPixel.x / WIDTH_DOWNSAMPLE_RATE, prevPixel.y / HEIGHT_DOWNSAMPLE_RATE);
+		bool valid          = prevPixel.x > 0.0f ? true : false;		// TODO 是否需要专门计算下采样的重投影？
+
+		if(valid)
+		{
+			GIReservoir prevRes = PREV_RESERVOIRS[ReservoirIndex(prevPixel)];	
+			prevRes.numStreamSamples = min(prevRes.numStreamSamples, RESTIR_GI_SETTING.temporalSampleCountMultiplier * res.numStreamSamples);	// 需要设置一个累计采样数的上限
+			
+			float newPHat = EvaluatePHat(prevRes.sampl); 
+			CombineGIReservoirs(res, prevRes, newPHat, rand);		
+		}
+	}
+
+	if (RESTIR_GI_SETTING.visibilityReuse != 0) 
+	{
+		bool shadowed = RayQueryVisibility(worldPos.xyz, res.sampl.hitPos, GLOBAL_SETTING.rayTracingOffset);
+		if (shadowed) 
+		{
+			CleanGIReservoir(res);		
+		}
+	}
+
+	RESERVOIRS[reservoirIndex] = res;
+	// RESULT_RESERVOIRS[reservoirIndex] = res;
+
+
+	// vec3 lighting = vec3(0.0f);
+	// for (int i = 0; i < RESTIR_GI_SETTING.initialSampleCount; i++) 
+	// {	
+	// 	vec4 newSample     = UniformSampleHemisphere(vec2(RandFloat(rand), RandFloat(rand)));     	// 半球均匀采样
+	// 	vec3 L             = normalize(TangentToWorld(newSample.xyz, normal));     
+	// 	float pdf          = newSample.w;															// proposel PDF, 1 / (2 * PI)
+
+	// 	HitSample hitSample;
+	// 	RayTraceSurfaceCache(hitSample, worldPos.xyz, L); 
+	// 	vec3 N = normalize(normal);
+	// 	float NoL = saturate(dot(N, L));
+		
+	// 	lighting += hitSample.outRadiance * NoL / pdf;
+	// }
+	// res.w = 1.0f;
+	// res.sampl.outRadiance = lighting / RESTIR_GI_SETTING.initialSampleCount;
+	// RESERVOIRS[reservoirIndex] = res;
+}

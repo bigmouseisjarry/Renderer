@@ -1,0 +1,36 @@
+#version 460
+#extension GL_GOOGLE_include_directive : enable
+
+#include "../common/common.glsl"
+
+#include "common.glsl"
+
+#define THREAD_SIZE_X 16
+#define THREAD_SIZE_Y 16
+#define THREAD_SIZE_Z 1
+layout (local_size_x = THREAD_SIZE_X, 
+		local_size_y = THREAD_SIZE_Y, 
+		local_size_z = THREAD_SIZE_Z) in;
+void main() 
+{	
+    // ivec2 pixel     = ivec2(gl_GlobalInvocationID.xy);
+    // vec2 uv         = ScreenPixToUV(pixel); 
+
+    // int historyIndex    = SETTING.round % 2;
+    // int currentIndex    = (historyIndex + 1) % 2;
+
+    // vec4 moments        = imageLoad(CURRENT_MOMENTS, pixel);
+
+    // float sumVariance   = 0.0f;
+    // for (int y0 = -1; y0 <= 1; y0++) 
+    // {
+    //     for (int x0 = -1; x0 <= 1; x0++) 
+    //     {
+    //         sumVariance += gaussKernel3x3[x0 + 3 * y0 + 4] / 16.0f * imageLoad(CURRENT_COLOR_VARIANCE[currentIndex], pixel + ivec2(x0, y0)).a;
+    //     }
+    // }
+
+    // imageStore(CURRENT_MOMENTS, pixel, vec4(moments.xyz, sumVariance));
+}
+
+

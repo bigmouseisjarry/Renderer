@@ -1,0 +1,1 @@
+UnrealEngine\Engine\Content\Editor\Slate\Icons
