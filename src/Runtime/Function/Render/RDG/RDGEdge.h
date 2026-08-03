@@ -6,7 +6,11 @@
 
 // 所有RDG边均为 { 资源节点, pass节点 }
 // 在node里存储各个资源和pass的基本信息，在edge内存储依赖信息（例如subresource，读写参数信息，描述符绑定信息等）
-// sakura用了继承的edge子类来区分各种不同的资源依赖，感觉也没必要写那么复杂？
+// sakura用了继承的edge子类来区分各种不同的资源依赖
+
+// 简而言之 
+// 资源 → Pass    Pass 读取该资源          Link(resource, pass, edge)
+// Pass → 资源    Pass 写入/产出该资源     Link(pass, resource, edge)
 
 enum RDGEdgeType
 {
@@ -24,6 +28,8 @@ public:
     , edgeType(edgeType)
     {}
 
+	// 边相连的pass节点对边相连的资源节点做了产出操作并且该资源节点还会被后续的pass节点使用。
+    // 则为输出边，返回true。
     virtual bool IsOutput() { return false; }
 
     RDGEdgeType EdgeType() { return edgeType; }

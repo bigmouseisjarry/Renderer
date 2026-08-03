@@ -277,7 +277,8 @@ void RDGBuilder::PrepareDescriptorSet(RDGPassNodeRef pass)
 {
     graph->ForEachTexture(pass, [&](RDGTextureEdgeRef edge, RDGTextureNodeRef texture){
 
-        if(edge->IsOutput()) return;    // 作为output声明时不需要view
+        if (edge->IsOutput()) return;    // 作为output声明时不需要view
+        if (edge->asColor || edge->asDepthStencil) return;    // render target/rendering target单独处理
         RHITextureViewRef view = RDGTextureViewPool::Get()->Allocate({
             .texture = Resolve(texture),
             .format = texture->info.format,
@@ -367,6 +368,7 @@ void RDGBuilder::PrepareRenderTarget(RDGRenderPassNodeRef pass, RHIRenderPassInf
             .subresource = edge->subresource}).textureView;
         pass->pooledViews.push_back(view);
 
+        // 填充颜色附件
         if(edge->asColor)
         {
             renderPassInfo.extent = {texture->info.extent.width, texture->info.extent.height};
@@ -377,9 +379,11 @@ void RDGBuilder::PrepareRenderTarget(RDGRenderPassNodeRef pass, RHIRenderPassInf
                 .textureView = view,
                 .loadOp = edge->loadOp,
                 .storeOp = edge->storeOp,
-                .clearColor = edge->clearColor
+                .clearColor = edge->clearColor,
             };
         }
+
+        // 填充深度/模板附件
         else if (edge->asDepthStencil) 
         {
             renderPassInfo.extent = {texture->info.extent.width, texture->info.extent.height};
@@ -395,6 +399,52 @@ void RDGBuilder::PrepareRenderTarget(RDGRenderPassNodeRef pass, RHIRenderPassInf
             };
         }
     });
+}
+
+void RDGBuilder::PrepareRenderingTarget(RDGRenderPassNodeRef pass, RHIRenderingInfo& renderingInfo)
+{
+    renderingInfo.multiviewCount = pass->multiviewCount;
+    pass->ForEachTexture([&](RDGTextureEdgeRef edge, RDGTextureNodeRef texture) {
+
+        if (edge->IsOutput()) return;                            // 作为output声明时不需要view
+        if (!(edge->asColor || edge->asDepthStencil)) return;    // rendering target单独处理
+        RHITextureViewRef view = RDGTextureViewPool::Get()->Allocate({
+            .texture = Resolve(texture),
+            .format = texture->info.format,
+            .viewType = edge->viewType,
+            .subresource = edge->subresource }).textureView;
+        pass->pooledViews.push_back(view);
+
+        if (edge->asColor)
+        {
+            renderingInfo.extent = { texture->info.extent.width, texture->info.extent.height };
+            renderingInfo.layers = pass->multiviewCount > 0 ? 1 :                      // 启用multiview特性时，textureview的layer还是多个，framebuffer强制为1
+                edge->subresource.layerCount > 0 ? edge->subresource.layerCount : 1;
+
+            renderingInfo.colorAttachments[edge->binding] = {
+                .textureView = view,
+			    .currentState = edge->state,
+                .loadOp = edge->loadOp,
+                .storeOp = edge->storeOp,
+                .clearColor = edge->clearColor,
+            };
+        }
+        else if (edge->asDepthStencil)
+        {
+            renderingInfo.extent = { texture->info.extent.width, texture->info.extent.height };
+            renderingInfo.layers = pass->multiviewCount > 0 ? 1 :
+                edge->subresource.layerCount > 0 ? edge->subresource.layerCount : 1;
+
+            renderingInfo.depthStencilAttachment = {
+                .textureView = view,
+				.currentState = edge->state,
+                .loadOp = edge->loadOp,
+                .storeOp = edge->storeOp,
+                .clearDepth = edge->clearDepth,
+                .clearStencil = edge->clearStencil
+            };
+        }
+        });
 }
 
 void RDGBuilder::ReleaseResource(RDGPassNodeRef pass)
@@ -428,6 +478,9 @@ void RDGBuilder::ExecutePass(RDGRenderPassNodeRef pass)
     RHIRenderPassInfo renderPassInfo = {};
     PrepareRenderTarget(pass, renderPassInfo);
 
+	//RHIRenderingInfo renderingInfo = {};
+    //PrepareRenderingTarget(pass, renderingInfo);
+
     RHIRenderPassRef renderPass = EngineContext::RHI()->CreateRenderPass(renderPassInfo);   // renderPass和frameBuffer是在RHI层做的池化
 
     command->PushEvent(pass->Name(), {0.0f, 0.0f, 0.0f});
@@ -435,6 +488,7 @@ void RDGBuilder::ExecutePass(RDGRenderPassNodeRef pass)
     CreateInputBarriers(pass);
 
     command->BeginRenderPass(renderPass);
+	// command->BeginRendering(renderingInfo);
 
     RDGPassContext context = {
         .command = command,
@@ -447,6 +501,7 @@ void RDGBuilder::ExecutePass(RDGRenderPassNodeRef pass)
     pass->execute(context);
 
     command->EndRenderPass();
+    // command->EndRendering();
 
     CreateOutputBarriers(pass);
 

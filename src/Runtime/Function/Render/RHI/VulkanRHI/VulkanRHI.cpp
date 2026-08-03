@@ -876,9 +876,6 @@ VkFramebuffer VulkanRHIBackend::CreateVkFramebuffer(const VkFramebufferCreateInf
 
 
 
-
-
-
 void TextureBarrier(VkCommandBuffer commandBuffer, const RHITextureBarrier& barrier)
 {
     TextureSubresourceRange range = barrier.subresource;

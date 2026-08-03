@@ -82,6 +82,7 @@ protected:
 };
 typedef RDGResourceNode* RDGResourceNodeRef;
 
+// 纹理节点
 class RDGTextureNode : public RDGResourceNode
 {
 public:
@@ -106,6 +107,7 @@ private:
 };
 typedef RDGTextureNode* RDGTextureNodeRef;
 
+// 缓冲节点
 class RDGBufferNode : public RDGResourceNode
 {
 public:

@@ -78,6 +78,7 @@ private:
     void CreateOutputBarriers(RDGPassNodeRef pass);
     void PrepareDescriptorSet(RDGPassNodeRef pass);
     void PrepareRenderTarget(RDGRenderPassNodeRef pass, RHIRenderPassInfo& renderPassInfo);
+    void PrepareRenderingTarget(RDGRenderPassNodeRef pass, RHIRenderingInfo& renderingInfo);
     void ReleaseResource(RDGPassNodeRef pass);
     void ExecutePass(RDGRenderPassNodeRef pass);
     void ExecutePass(RDGComputePassNodeRef pass);
@@ -102,8 +103,17 @@ private:
     void Release(RDGTextureNodeRef textureNode, RHIResourceState state);  
     void Release(RDGBufferNodeRef bufferNode, RHIResourceState state);  
 
-    RHIResourceState PreviousState(RDGTextureNodeRef textureNode, RDGPassNodeRef passNode, TextureSubresourceRange subresource = {}, bool output = false);    // 获取当前pass（在执行顺序上）的资源的前序状态
-    RHIResourceState PreviousState(RDGBufferNodeRef bufferNode, RDGPassNodeRef passNode, uint32_t offset = 0, uint32_t size = 0, bool output = false);      // output用于标记是相对于输入还是输出资源
+    /*
+    * 获取当前pass（在执行顺序上）的资源的前序状态
+    * 
+	* @param textureNode 需要查询的资源节点
+    * @param passNode 当前所在的Pass节点
+    * @param subresource 资源的子资源范围
+    * @param output 相对于当前pass该资源是否为输出资源
+    * @return 前序状态
+    */
+    RHIResourceState PreviousState(RDGTextureNodeRef textureNode, RDGPassNodeRef passNode, TextureSubresourceRange subresource = {}, bool output = false);    
+    RHIResourceState PreviousState(RDGBufferNodeRef bufferNode, RDGPassNodeRef passNode, uint32_t offset = 0, uint32_t size = 0, bool output = false); 
     bool IsLastUsedPass(RDGTextureNodeRef textureNode, RDGPassNodeRef passNode, bool output = false);
     bool IsLastUsedPass(RDGBufferNodeRef bufferNode, RDGPassNodeRef passNode, bool output = false);
 
