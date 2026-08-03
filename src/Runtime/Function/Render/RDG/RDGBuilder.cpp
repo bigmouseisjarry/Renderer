@@ -475,20 +475,20 @@ void RDGBuilder::ExecutePass(RDGRenderPassNodeRef pass)
     PrepareDescriptorSet(pass);
 
     // 这里应该转成准备RenderingInfo
-    RHIRenderPassInfo renderPassInfo = {};
-    PrepareRenderTarget(pass, renderPassInfo);
+    //RHIRenderPassInfo renderPassInfo = {};
+    //PrepareRenderTarget(pass, renderPassInfo);
 
-	//RHIRenderingInfo renderingInfo = {};
-    //PrepareRenderingTarget(pass, renderingInfo);
+	RHIRenderingInfo renderingInfo = {};
+    PrepareRenderingTarget(pass, renderingInfo);
 
-    RHIRenderPassRef renderPass = EngineContext::RHI()->CreateRenderPass(renderPassInfo);   // renderPass和frameBuffer是在RHI层做的池化
+    // RHIRenderPassRef renderPass = EngineContext::RHI()->CreateRenderPass(renderPassInfo);   // renderPass和frameBuffer是在RHI层做的池化
 
     command->PushEvent(pass->Name(), {0.0f, 0.0f, 0.0f});
 
     CreateInputBarriers(pass);
 
-    command->BeginRenderPass(renderPass);
-	// command->BeginRendering(renderingInfo);
+    // command->BeginRenderPass(renderPass);
+	command->BeginRendering(renderingInfo);
 
     RDGPassContext context = {
         .command = command,
@@ -500,8 +500,8 @@ void RDGBuilder::ExecutePass(RDGRenderPassNodeRef pass)
     context.passIndex[2] = pass->passIndex[2];
     pass->execute(context);
 
-    command->EndRenderPass();
-    // command->EndRendering();
+    // command->EndRenderPass();
+    command->EndRendering();
 
     CreateOutputBarriers(pass);
 

@@ -76,20 +76,20 @@ void VulkanRHIBackend::InitImGui(GLFWwindow* window)
 {
     initImGui = true;
 
-    // TODO 这一部分的VkRenderPass创建是和pass相关的，应该放在外面？
-    VulkanRenderPassAttachments attachmentInfo = {};
-    attachmentInfo.colorAttachments.push_back({
-        .format = VulkanUtil::RHIFormatToVkFormat(EngineContext::Render()->GetColorFormat()),
-        .samples = VK_SAMPLE_COUNT_1_BIT,
-        .loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-        .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE});
-    attachmentInfo.depthStencilAttachment = {
-        .format = VulkanUtil::RHIFormatToVkFormat(EngineContext::Render()->GetDepthFormat()),
-        .samples = VK_SAMPLE_COUNT_1_BIT,
-        .loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-        .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE};
-    VkRenderPass tempPass = FindOrCreateVkRenderPass(attachmentInfo);   // 创建一个pass来作为规范
-                                                                                // 只需要兼容即可，和其他pass在RHI层的处理一样
+    //// TODO 这一部分的VkRenderPass创建是和pass相关的，应该放在外面？
+    //VulkanRenderPassAttachments attachmentInfo = {};
+    //attachmentInfo.colorAttachments.push_back({
+    //    .format = VulkanUtil::RHIFormatToVkFormat(EngineContext::Render()->GetColorFormat()),
+    //    .samples = VK_SAMPLE_COUNT_1_BIT,
+    //    .loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+    //    .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE});
+    //attachmentInfo.depthStencilAttachment = {
+    //    .format = VulkanUtil::RHIFormatToVkFormat(EngineContext::Render()->GetDepthFormat()),
+    //    .samples = VK_SAMPLE_COUNT_1_BIT,
+    //    .loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+    //    .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE};
+    //VkRenderPass tempPass = FindOrCreateVkRenderPass(attachmentInfo);   // 创建一个pass来作为规范
+    //                                                                            // 只需要兼容即可，和其他pass在RHI层的处理一样
 
     std::shared_ptr<VulkanRHIQueue> queue = ResourceCast(queues[QUEUE_TYPE_GRAPHICS][0]);    
 
@@ -122,8 +122,11 @@ void VulkanRHIBackend::InitImGui(GLFWwindow* window)
 	initInfo.MinImageCount = FRAMES_IN_FLIGHT;
 	initInfo.ImageCount = FRAMES_IN_FLIGHT;
 	initInfo.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+	initInfo.UseDynamicRendering = true;
+    initInfo.ColorAttachmentFormat = VulkanUtil::RHIFormatToVkFormat(EngineContext::Render()->GetColorFormat());
 	//ImGui_ImplVulkan_LoadFunctions();
-	ImGui_ImplVulkan_Init(&initInfo, tempPass);
+	//ImGui_ImplVulkan_Init(&initInfo, tempPass);
+    ImGui_ImplVulkan_Init(&initInfo, VK_NULL_HANDLE);
 }
 
 RHIQueueRef VulkanRHIBackend::GetQueue(const RHIQueueInfo& info) 
@@ -252,7 +255,8 @@ RHIRenderPassRef VulkanRHIBackend::CreateRenderPass(const RHIRenderPassInfo& inf
 RHIGraphicsPipelineRef VulkanRHIBackend::CreateGraphicsPipeline(const RHIGraphicsPipelineInfo& info) 
 { 
     // 准备转成Rendering方式构建
-    RHIGraphicsPipelineRef graphicsPipeline = std::make_shared<VulkanRHIGraphicsPipeline>(info, *this);
+    // RHIGraphicsPipelineRef graphicsPipeline = std::make_shared<VulkanRHIGraphicsPipeline>(info, *this);
+    RHIGraphicsPipelineRef graphicsPipeline = std::make_shared<VulkanRHIGraphicsPipeline>(info, *this, nullptr);
     RegisterResource(graphicsPipeline);
 
     return graphicsPipeline;
@@ -1294,11 +1298,16 @@ void VulkanRHICommandContext::BeginRendering(const RHIRenderingInfo& rendering)
 	renderingInfo.pColorAttachments = colorAttachments.data();
 	renderingInfo.colorAttachmentCount = (uint32_t)colorAttachments.size();
 
+
     // 深度模板附件
 	if (rendering.depthStencilAttachment.textureView != nullptr)
 	{
-		renderingInfo.pDepthAttachment = &depthStencilAttachment;
-		renderingInfo.pStencilAttachment = &depthStencilAttachment;
+        RHIFormat format = rendering.depthStencilAttachment.textureView->GetInfo().format;
+
+        if (IsDepthFormat(format))
+            renderingInfo.pDepthAttachment = &depthStencilAttachment;
+        if (IsStencilFormat(format))
+            renderingInfo.pStencilAttachment = &depthStencilAttachment;
 	}
 
 	// 渲染区域

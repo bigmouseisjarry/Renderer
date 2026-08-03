@@ -1281,9 +1281,9 @@ struct RHIGraphicsPipelineInfo
 				a.primitiveType == b.primitiveType &&
 				a.rasterizerState == b.rasterizerState &&
 				a.blendState == b.blendState &&
+				a.depthStencilState == b.depthStencilState &&
 				a.colorAttachmentFormats == b.colorAttachmentFormats &&              
 				a.depthStencilAttachmentFormat == b.depthStencilAttachmentFormat &&   
-				a.depthStencilState == b.depthStencilState &&
 				a.viewMask == b.viewMask;
 	}
 
