@@ -632,11 +632,11 @@ void PassWidget::ExposurePassUI(std::shared_ptr<ExposurePass> pass)
         if (ImPlot::BeginPlot("")) 
         {
             ImPlot::SetupAxes("log2 luminance","count(%)", ImPlotAxisFlags_AutoFit, ImPlotAxisFlags_AutoFit);
-            ImPlot::PlotBars("##0", xs.data(), counts.data(), 256, (pass->readBackData.setting.luminanceRange / 256));
-            ImPlot::SetNextFillStyle(ImVec4(1,1,0,1));
-            ImPlot::PlotBars("##1", &adaptedLuminance, &luminanceMax, 1, (pass->readBackData.setting.luminanceRange / 512));
-            ImPlot::SetNextFillStyle(ImVec4(1,1,1,1));
-            ImPlot::PlotBars("##2", &luminance, &luminanceMax, 1, (pass->readBackData.setting.luminanceRange / 512));  
+            ImPlot::PlotBars("##0", xs.data(), counts.data(), 256, (pass->readBackData.setting.luminanceRange / 256),ImPlotSpec());
+            ImPlot::PlotBars("##1", &adaptedLuminance, &luminanceMax, 1, (pass->readBackData.setting.luminanceRange / 512),
+                ImPlotSpec(ImPlotProp_FillColor, ImVec4(1, 1, 0, 1)));
+            ImPlot::PlotBars("##2", &luminance, &luminanceMax, 1, (pass->readBackData.setting.luminanceRange / 512),
+                ImPlotSpec(ImPlotProp_FillColor, ImVec4(1, 1, 1, 1)));
             ImPlot::EndPlot();
         } 
     }

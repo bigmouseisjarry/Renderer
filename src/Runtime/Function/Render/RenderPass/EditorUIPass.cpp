@@ -49,18 +49,18 @@ void EditorUIPass::InitImGuiStyle()
 	io.Fonts->AddFontFromFileTTF(EngineContext::File()->Absolute(EngineContext::File()->FontPath() + "notosans-bold.ttf").c_str(), 20);
 	io.Fonts->AddFontFromFileTTF(EngineContext::File()->Absolute(EngineContext::File()->FontPath() + "notosans-regular.ttf").c_str(), 20);
 	io.Fonts->AddFontFromFileTTF(EngineContext::File()->Absolute(EngineContext::File()->FontPath() + "sourcecodepro-regular.ttf").c_str(), 20);
-	{
-        RHIQueueRef queue           = EngineContext::RHI()->GetQueue({.type = QUEUE_TYPE_GRAPHICS, .index = 0});
-        RHICommandPoolRef pool      = EngineContext::RHI()->CreateCommandPool({ queue });  
-        RHICommandListRef command   = pool->CreateCommandList(true);
-        command->BeginCommand();
-        command->ImGuiCreateFontsTexture();
-        command->EndCommand();
-        command->Execute();
-        queue->WaitIdle();
+	//{
+ //       RHIQueueRef queue           = EngineContext::RHI()->GetQueue({.type = QUEUE_TYPE_GRAPHICS, .index = 0});
+ //       RHICommandPoolRef pool      = EngineContext::RHI()->CreateCommandPool({ queue });  
+ //       RHICommandListRef command   = pool->CreateCommandList(true);
+ //       command->BeginCommand();
+ //       command->ImGuiCreateFontsTexture();
+ //       command->EndCommand();
+ //       command->Execute();
+ //       queue->WaitIdle();
 
-		ImGui_ImplVulkan_DestroyFontUploadObjects();
-	}
+	//	ImGui_ImplVulkan_DestroyFontUploadObjects();
+	//}
 
     // 风格设置
     ImGuiStyle& style = ImGui::GetStyle();

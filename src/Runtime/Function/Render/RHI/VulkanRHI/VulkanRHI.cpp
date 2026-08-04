@@ -3,7 +3,6 @@
 #include "Function/Render/RHI/VulkanRHI/VulkanUtil.h"
 #include "GLFW/glfw3.h"
 #include "VulkanRHIResource.h"
-#include "VulkanUtil.h"
 #include "Function/Render/RHI/RHIResource.h"
 #include "Function/Render/RHI/RHIStructs.h"
 #include "Function/Render/RHI/RHI.h"
@@ -101,7 +100,8 @@ void VulkanRHIBackend::InitImGui(GLFWwindow* window)
 		PFN_vkVoidFunction deviceAddr = vkGetDeviceProcAddr(backend->GetLogicalDevice(), funcName);
 		return deviceAddr ? deviceAddr : instanceAddr;
 	};
-	const bool funcsLoaded = ImGui_ImplVulkan_LoadFunctions(funcLoader, this);
+	// const bool funcsLoaded = ImGui_ImplVulkan_LoadFunctions(funcLoader, this);
+    ImGui_ImplVulkan_LoadFunctions(VULKAN_VERSION, funcLoader, this);
 
 	IMGUI_CHECKVERSION();
 	ImGui::CreateContext();
@@ -112,21 +112,32 @@ void VulkanRHIBackend::InitImGui(GLFWwindow* window)
 
 	ImGui_ImplGlfw_InitForVulkan(window, true);
 	ImGui_ImplVulkan_InitInfo initInfo = {};
+    initInfo.ApiVersion = VULKAN_VERSION;
 	initInfo.Instance       = instance;
 	initInfo.PhysicalDevice = physicalDevice;
 	initInfo.Device         = logicalDevice;
 	initInfo.QueueFamily    = queue->GetQueueFamilyIndex();
 	initInfo.Queue          = queue->GetHandle();
 	initInfo.DescriptorPool = descriptorPool;
-	initInfo.Subpass = 0;
+	// initInfo.Subpass = 0;
 	initInfo.MinImageCount = FRAMES_IN_FLIGHT;
 	initInfo.ImageCount = FRAMES_IN_FLIGHT;
-	initInfo.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+	// initInfo.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
 	initInfo.UseDynamicRendering = true;
-    initInfo.ColorAttachmentFormat = VulkanUtil::RHIFormatToVkFormat(EngineContext::Render()->GetColorFormat());
+    // initInfo.ColorAttachmentFormat = VulkanUtil::RHIFormatToVkFormat(EngineContext::Render()->GetColorFormat());
+    
+    std::vector<VkFormat> colorFormats = {VulkanUtil::RHIFormatToVkFormat(EngineContext::Render()->GetColorFormat())};
+
+    initInfo.PipelineInfoMain.Subpass = 0;
+	initInfo.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+    initInfo.PipelineInfoMain.PipelineRenderingCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR;
+    initInfo.PipelineInfoMain.PipelineRenderingCreateInfo.colorAttachmentCount = 1;
+    initInfo.PipelineInfoMain.PipelineRenderingCreateInfo.pColorAttachmentFormats = colorFormats.data();
+
 	//ImGui_ImplVulkan_LoadFunctions();
 	//ImGui_ImplVulkan_Init(&initInfo, tempPass);
-    ImGui_ImplVulkan_Init(&initInfo, VK_NULL_HANDLE);
+    //ImGui_ImplVulkan_Init(&initInfo, VK_NULL_HANDLE);
+    ImGui_ImplVulkan_Init(&initInfo);
 }
 
 RHIQueueRef VulkanRHIBackend::GetQueue(const RHIQueueInfo& info) 
@@ -1541,7 +1552,7 @@ void VulkanRHICommandContext::DrawIndexedIndirect(RHIBufferRef argumentBuffer, u
 
 void VulkanRHICommandContext::ImGuiCreateFontsTexture()
 {
-    ImGui_ImplVulkan_CreateFontsTexture(handle);
+    // ImGui_ImplVulkan_CreateFontsTexture(handle);
 }
 
 void VulkanRHICommandContext::ImGuiRenderDrawData(ImGuiDrawFunc func)

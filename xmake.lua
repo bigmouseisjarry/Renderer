@@ -1,5 +1,5 @@
 add_rules("mode.debug", "mode.release")
-add_requires("vulkansdk", "glfw", "imgui 1.91.8", "stb", "assimp", "cereal", "spdlog", "eventpp", "meshoptimizer", "metis", "mikktspace", "eigen", "stduuid")
+add_requires("vulkansdk", "glfw", "imgui", "stb", "assimp", "cereal", "spdlog", "eventpp", "meshoptimizer", "metis", "mikktspace", "eigen", "stduuid")
 set_encodings("utf-8")
 
 target("renderer")

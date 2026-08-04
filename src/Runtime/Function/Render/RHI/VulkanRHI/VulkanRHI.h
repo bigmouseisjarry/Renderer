@@ -244,6 +244,7 @@ public:
 
     //ImGui /////////////////////////////////////////////////////////////////////////////////////
 
+    // 已经不再需要
     virtual void ImGuiCreateFontsTexture() override final;
 
     virtual void ImGuiRenderDrawData(ImGuiDrawFunc func) override final;
