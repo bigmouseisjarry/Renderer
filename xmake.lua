@@ -1,5 +1,5 @@
 add_rules("mode.debug", "mode.release")
-add_requires("vulkansdk", "glfw", "imgui", "stb", "assimp", "cereal", "spdlog", "eventpp", "meshoptimizer", "metis", "mikktspace", "eigen", "stduuid")
+add_requires("vulkansdk", "libsdl3","imgui", "stb", "assimp", "cereal", "spdlog", "eventpp", "meshoptimizer", "metis", "mikktspace", "eigen", "stduuid")
 set_encodings("utf-8")
 
 target("renderer")
@@ -7,7 +7,7 @@ target("renderer")
     set_kind("binary")
     add_files("src/**.cpp", "thirdparty/**.cpp", "thirdparty/**.c")
     add_headerfiles("src/**.h", "src/**.hpp")
-    remove_files("thirdparty/NRD/_Build/**.cpp", "thirdparty/NRD/_Build/**.c",
+    remove_files("thirdparty/NRD/_Build/**.cpp", "thirdparty/NRD/_Build/**.c","thirdparty/imgui/imgui_impl_glfw.cpp",
                   "thirdparty/ShaderMake/**/_Build/**.cpp")
     add_includedirs("src/Runtime/")
     add_includedirs("src/Editor/")
@@ -28,7 +28,7 @@ target("renderer")
                     "Asset/BuildIn/Shader/nrd",
                     "thirdparty/ShaderMake",
                     "thirdparty/MathLib")                
-    add_packages("vulkansdk", "glfw", "imgui", "stb", "assimp", "cereal", "spdlog", "eventpp", "meshoptimizer", "metis", "mikktspace", "eigen", "stduuid")
+    add_packages("vulkansdk", "libsdl3","imgui", "stb", "assimp", "cereal", "spdlog", "eventpp", "meshoptimizer", "metis", "mikktspace", "eigen", "stduuid")
 
 --
 -- If you want to known more usage about xmake, please see https://xmake.io

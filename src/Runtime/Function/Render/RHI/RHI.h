@@ -3,7 +3,8 @@
 #include "Function/Render/RHI/RHIStructs.h"
 #include "RHIResource.h"
 
-#include <GLFW/glfw3.h>
+//#include <GLFW/glfw3.h>
+#include <SDL3/SDL.h>
 #include <array>
 #include <cstdint>
 #include <string>
@@ -41,13 +42,17 @@ public:
 
     //ImGui ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-    virtual void InitImGui(GLFWwindow* window) = 0;
+    // virtual void InitImGui(GLFWwindow* window) = 0;
+
+    virtual void InitImGui(SDL_Window* window) = 0;
 
     //基本资源 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
     virtual RHIQueueRef GetQueue(const RHIQueueInfo& info) = 0;
 
-    virtual RHISurfaceRef CreateSurface(GLFWwindow* window) = 0;
+    // virtual RHISurfaceRef CreateSurface(GLFWwindow* window) = 0;
+
+    virtual RHISurfaceRef CreateSurface(SDL_Window* window) = 0;
 
     virtual RHISwapchainRef CreateSwapChain(const RHISwapchainInfo& info) = 0;
 

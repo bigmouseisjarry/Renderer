@@ -5,6 +5,8 @@
 #include "Function/Render/RHI/RHIStructs.h"
 #include "Core/Log/Log.h"
 #include "imgui_impl_vulkan.h"
+#include <SDL3/SDL_vulkan.h>
+#include <SDL3/SDL.h>
 #include "vma.h"
 
 #include <cassert>
@@ -20,21 +22,34 @@
 
 //基本资源 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-VulkanRHISurface::VulkanRHISurface(GLFWwindow* window, VulkanRHIBackend& backend)
-: RHISurface()
+//VulkanRHISurface::VulkanRHISurface(GLFWwindow* window, VulkanRHIBackend& backend)
+//: RHISurface()
+//{
+//    int width, height;
+//    glfwGetWindowSize(window, &width, &height);
+//    extent = { (uint32_t)width, (uint32_t)height };
+//
+//    //glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+//    //window = glfwCreateWindow(extent.width, extent.height, "", nullptr, nullptr);
+//
+//    //glfwSetWindowUserPointer(window, this);
+//    //glfwSetWindowSizeCallback(window, nullptr); //TODO
+//    //glfwSetCursorPosCallback(window, nullptr);
+//
+//    if (glfwCreateWindowSurface(backend.GetInstance(), window, nullptr, &handle) != VK_SUCCESS) 
+//    {
+//        LOG_FATAL("Failed to create window surface!");
+//    }
+//}
+
+VulkanRHISurface::VulkanRHISurface(SDL_Window* window, VulkanRHIBackend& backend)
+    :RHISurface()
 {
     int width, height;
-    glfwGetWindowSize(window, &width, &height);
+    SDL_GetWindowSize(window, &width, &height);
     extent = { (uint32_t)width, (uint32_t)height };
 
-    //glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
-    //window = glfwCreateWindow(extent.width, extent.height, "", nullptr, nullptr);
-
-    //glfwSetWindowUserPointer(window, this);
-    //glfwSetWindowSizeCallback(window, nullptr); //TODO
-    //glfwSetCursorPosCallback(window, nullptr);
-
-    if (glfwCreateWindowSurface(backend.GetInstance(), window, nullptr, &handle) != VK_SUCCESS) 
+    if (!SDL_Vulkan_CreateSurface(window, backend.GetInstance(), nullptr, &handle))
     {
         LOG_FATAL("Failed to create window surface!");
     }

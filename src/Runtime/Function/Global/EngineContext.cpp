@@ -30,12 +30,15 @@ std::shared_ptr<EngineContext> EngineContext::Init()
     context->fileSystem->Init("renderer");
 
     context->renderSystem = std::make_shared<RenderSystem>();
-    context->renderSystem->InitGLFW();
+    context->renderSystem->InitSDL();
+    // context->renderSystem->InitGLFW();
 
-    context->inputSystem = std::make_shared<InputSystem>();
-    context->inputSystem->Init();
-    context->inputSystem->InitGLFW();
+    //context->inputSystem = std::make_shared<InputSystem>();
+    //context->inputSystem->Init();
+    //context->inputSystem->InitGLFW();
 
+	context->inputSystem = std::make_shared<InputSystem>();
+    
     context->rhiBackend = RHIBackend::Init({.type = BACKEND_VULKAN, .enableDebug = true, .enableRayTracing = ENABLE_RAY_TRACING});
 
     context->renderResourceManger = std::make_shared<RenderResourceManager>();
@@ -67,6 +70,10 @@ void EngineContext::MainLoopInternal()
         {
             ENGINE_TIME_SCOPE(EngineContext::SystemTick);
 
+            // 还可以使用输入状态双缓冲来解决输入竞态问题
+            // inputSystem->Tick();  // glfw多线程？
+            exit = inputSystem->Tick();  
+
             EngineContext::ThreadPool()->AddQueuedWork([this](){
                 worldManager->Tick(deltaTime);
             });
@@ -77,13 +84,12 @@ void EngineContext::MainLoopInternal()
                 rhiBackend->Tick();
             }, ENGINE_THREAD_TYPE_RHI);
 
-            inputSystem->Tick();  // glfw多线程？
-            
             EngineContext::ThreadPool()->WaitIdle();   
         }
         {
             ENGINE_TIME_SCOPE(EngineContext::RenderTick);
-            exit = renderSystem->Tick();
+            // exit = renderSystem->Tick();
+            renderSystem->Tick();
         }
 
         currentFrameIndex = (currentFrameIndex + 1) % FRAMES_IN_FLIGHT;
@@ -102,7 +108,8 @@ void EngineContext::DestroyInternal()
     threadPool->Destroy();
     logSystem->Destroy();
     eventSystem->Destroy();
-    renderSystem->DestroyGLFW();
+    // renderSystem->DestroyGLFW();
+	renderSystem->DestroySDL();
 }
 
 void EngineContext::UpdateTimers()

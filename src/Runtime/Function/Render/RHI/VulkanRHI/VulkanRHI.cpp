@@ -1,7 +1,8 @@
 #include "VulkanRHI.h"
 #include "Function/Global/EngineContext.h"
 #include "Function/Render/RHI/VulkanRHI/VulkanUtil.h"
-#include "GLFW/glfw3.h"
+// #include "GLFW/glfw3.h"
+#include <SDL3/SDL.h>
 #include "VulkanRHIResource.h"
 #include "Function/Render/RHI/RHIResource.h"
 #include "Function/Render/RHI/RHIStructs.h"
@@ -12,7 +13,8 @@
 
 #include <cassert>
 #include <cstddef>
-#include <imgui_impl_glfw.h>
+// #include <imgui_impl_glfw.h>
+#include <imgui_impl_sdl3.h>
 #include <imgui_impl_vulkan.h>
 #include "ImGuizmo.h"
 
@@ -52,7 +54,8 @@ void VulkanRHIBackend::Destroy()
     if(initImGui) 
     {
         ImGui_ImplVulkan_Shutdown();
-        ImGui_ImplGlfw_Shutdown();
+        ImGui_ImplSDL3_Shutdown();
+        // ImGui_ImplGlfw_Shutdown();
         ImPlot::DestroyContext();
         ImGui::DestroyContext();
     }
@@ -71,71 +74,125 @@ void VulkanRHIBackend::Destroy()
 
 //基本资源 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-void VulkanRHIBackend::InitImGui(GLFWwindow* window)
+//void VulkanRHIBackend::InitImGui(GLFWwindow* window)
+//{
+//    initImGui = true;
+//
+//    //// TODO 这一部分的VkRenderPass创建是和pass相关的，应该放在外面？
+//    //VulkanRenderPassAttachments attachmentInfo = {};
+//    //attachmentInfo.colorAttachments.push_back({
+//    //    .format = VulkanUtil::RHIFormatToVkFormat(EngineContext::Render()->GetColorFormat()),
+//    //    .samples = VK_SAMPLE_COUNT_1_BIT,
+//    //    .loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+//    //    .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE});
+//    //attachmentInfo.depthStencilAttachment = {
+//    //    .format = VulkanUtil::RHIFormatToVkFormat(EngineContext::Render()->GetDepthFormat()),
+//    //    .samples = VK_SAMPLE_COUNT_1_BIT,
+//    //    .loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+//    //    .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE};
+//    //VkRenderPass tempPass = FindOrCreateVkRenderPass(attachmentInfo);   // 创建一个pass来作为规范
+//    //                                                                            // 只需要兼容即可，和其他pass在RHI层的处理一样
+//
+//    std::shared_ptr<VulkanRHIQueue> queue = ResourceCast(queues[QUEUE_TYPE_GRAPHICS][0]);    
+//
+//	//使用volk加载vulkan函数，需要重新绑定
+//	auto funcLoader = [](const char* funcName, void* engine)
+//	{
+//        auto backend = std::static_pointer_cast<VulkanRHIBackend>(EngineContext::RHI());
+//		PFN_vkVoidFunction instanceAddr = vkGetInstanceProcAddr(backend->GetInstance(), funcName);
+//		PFN_vkVoidFunction deviceAddr = vkGetDeviceProcAddr(backend->GetLogicalDevice(), funcName);
+//		return deviceAddr ? deviceAddr : instanceAddr;
+//	};
+//	// const bool funcsLoaded = ImGui_ImplVulkan_LoadFunctions(funcLoader, this);
+//    ImGui_ImplVulkan_LoadFunctions(VULKAN_VERSION, funcLoader, this);
+//
+//	IMGUI_CHECKVERSION();
+//	ImGui::CreateContext();
+//    ImPlot::CreateContext();
+//	ImGuiIO& io = ImGui::GetIO();
+//	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
+//	io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
+//
+//	ImGui_ImplGlfw_InitForVulkan(window, true);
+//	ImGui_ImplVulkan_InitInfo initInfo = {};
+//    initInfo.ApiVersion = VULKAN_VERSION;
+//	initInfo.Instance       = instance;
+//	initInfo.PhysicalDevice = physicalDevice;
+//	initInfo.Device         = logicalDevice;
+//	initInfo.QueueFamily    = queue->GetQueueFamilyIndex();
+//	initInfo.Queue          = queue->GetHandle();
+//	initInfo.DescriptorPool = descriptorPool;
+//	// initInfo.Subpass = 0;
+//	initInfo.MinImageCount = FRAMES_IN_FLIGHT;
+//	initInfo.ImageCount = FRAMES_IN_FLIGHT;
+//	// initInfo.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+//	initInfo.UseDynamicRendering = true;
+//    // initInfo.ColorAttachmentFormat = VulkanUtil::RHIFormatToVkFormat(EngineContext::Render()->GetColorFormat());
+//    
+//    std::vector<VkFormat> colorFormats = {VulkanUtil::RHIFormatToVkFormat(EngineContext::Render()->GetColorFormat())};
+//
+//    initInfo.PipelineInfoMain.Subpass = 0;
+//	initInfo.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+//    initInfo.PipelineInfoMain.PipelineRenderingCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR;
+//    initInfo.PipelineInfoMain.PipelineRenderingCreateInfo.colorAttachmentCount = 1;
+//    initInfo.PipelineInfoMain.PipelineRenderingCreateInfo.pColorAttachmentFormats = colorFormats.data();
+//
+//	//ImGui_ImplVulkan_LoadFunctions();
+//	//ImGui_ImplVulkan_Init(&initInfo, tempPass);
+//    //ImGui_ImplVulkan_Init(&initInfo, VK_NULL_HANDLE);
+//    ImGui_ImplVulkan_Init(&initInfo);
+//}
+
+void VulkanRHIBackend::InitImGui(SDL_Window* window)
 {
     initImGui = true;
 
-    //// TODO 这一部分的VkRenderPass创建是和pass相关的，应该放在外面？
-    //VulkanRenderPassAttachments attachmentInfo = {};
-    //attachmentInfo.colorAttachments.push_back({
-    //    .format = VulkanUtil::RHIFormatToVkFormat(EngineContext::Render()->GetColorFormat()),
-    //    .samples = VK_SAMPLE_COUNT_1_BIT,
-    //    .loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-    //    .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE});
-    //attachmentInfo.depthStencilAttachment = {
-    //    .format = VulkanUtil::RHIFormatToVkFormat(EngineContext::Render()->GetDepthFormat()),
-    //    .samples = VK_SAMPLE_COUNT_1_BIT,
-    //    .loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-    //    .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE};
-    //VkRenderPass tempPass = FindOrCreateVkRenderPass(attachmentInfo);   // 创建一个pass来作为规范
-    //                                                                            // 只需要兼容即可，和其他pass在RHI层的处理一样
+    std::shared_ptr<VulkanRHIQueue> queue = ResourceCast(queues[QUEUE_TYPE_GRAPHICS][0]);
 
-    std::shared_ptr<VulkanRHIQueue> queue = ResourceCast(queues[QUEUE_TYPE_GRAPHICS][0]);    
-
-	//使用volk加载vulkan函数，需要重新绑定
-	auto funcLoader = [](const char* funcName, void* engine)
-	{
-        auto backend = std::static_pointer_cast<VulkanRHIBackend>(EngineContext::RHI());
-		PFN_vkVoidFunction instanceAddr = vkGetInstanceProcAddr(backend->GetInstance(), funcName);
-		PFN_vkVoidFunction deviceAddr = vkGetDeviceProcAddr(backend->GetLogicalDevice(), funcName);
-		return deviceAddr ? deviceAddr : instanceAddr;
-	};
-	// const bool funcsLoaded = ImGui_ImplVulkan_LoadFunctions(funcLoader, this);
+    //使用volk加载vulkan函数，需要重新绑定
+    auto funcLoader = [](const char* funcName, void* engine)
+        {
+            auto backend = std::static_pointer_cast<VulkanRHIBackend>(EngineContext::RHI());
+            PFN_vkVoidFunction instanceAddr = vkGetInstanceProcAddr(backend->GetInstance(), funcName);
+            PFN_vkVoidFunction deviceAddr = vkGetDeviceProcAddr(backend->GetLogicalDevice(), funcName);
+            return deviceAddr ? deviceAddr : instanceAddr;
+        };
+    // const bool funcsLoaded = ImGui_ImplVulkan_LoadFunctions(funcLoader, this);
     ImGui_ImplVulkan_LoadFunctions(VULKAN_VERSION, funcLoader, this);
 
-	IMGUI_CHECKVERSION();
-	ImGui::CreateContext();
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
     ImPlot::CreateContext();
-	ImGuiIO& io = ImGui::GetIO();
-	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
-	io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
-
-	ImGui_ImplGlfw_InitForVulkan(window, true);
-	ImGui_ImplVulkan_InitInfo initInfo = {};
-    initInfo.ApiVersion = VULKAN_VERSION;
-	initInfo.Instance       = instance;
-	initInfo.PhysicalDevice = physicalDevice;
-	initInfo.Device         = logicalDevice;
-	initInfo.QueueFamily    = queue->GetQueueFamilyIndex();
-	initInfo.Queue          = queue->GetHandle();
-	initInfo.DescriptorPool = descriptorPool;
-	// initInfo.Subpass = 0;
-	initInfo.MinImageCount = FRAMES_IN_FLIGHT;
-	initInfo.ImageCount = FRAMES_IN_FLIGHT;
-	// initInfo.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
-	initInfo.UseDynamicRendering = true;
-    // initInfo.ColorAttachmentFormat = VulkanUtil::RHIFormatToVkFormat(EngineContext::Render()->GetColorFormat());
+    ImGuiIO& io = ImGui::GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
     
-    std::vector<VkFormat> colorFormats = {VulkanUtil::RHIFormatToVkFormat(EngineContext::Render()->GetColorFormat())};
+    ImGui_ImplSDL3_InitForVulkan(window);
+    ImGui_ImplVulkan_InitInfo initInfo = {};
+    initInfo.ApiVersion = VULKAN_VERSION;
+    initInfo.Instance = instance;
+    initInfo.PhysicalDevice = physicalDevice;
+    initInfo.Device = logicalDevice;
+    initInfo.QueueFamily = queue->GetQueueFamilyIndex();
+    initInfo.Queue = queue->GetHandle();
+    initInfo.DescriptorPool = descriptorPool;
+    // initInfo.Subpass = 0;
+    initInfo.MinImageCount = FRAMES_IN_FLIGHT;
+    initInfo.ImageCount = FRAMES_IN_FLIGHT;
+    // initInfo.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+    initInfo.UseDynamicRendering = true;
+    // initInfo.ColorAttachmentFormat = VulkanUtil::RHIFormatToVkFormat(EngineContext::Render()->GetColorFormat());
+
+    std::vector<VkFormat> colorFormats = { VulkanUtil::RHIFormatToVkFormat(EngineContext::Render()->GetColorFormat()) };
 
     initInfo.PipelineInfoMain.Subpass = 0;
-	initInfo.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+    initInfo.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
     initInfo.PipelineInfoMain.PipelineRenderingCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR;
     initInfo.PipelineInfoMain.PipelineRenderingCreateInfo.colorAttachmentCount = 1;
     initInfo.PipelineInfoMain.PipelineRenderingCreateInfo.pColorAttachmentFormats = colorFormats.data();
 
-	//ImGui_ImplVulkan_LoadFunctions();
-	//ImGui_ImplVulkan_Init(&initInfo, tempPass);
+    //ImGui_ImplVulkan_LoadFunctions();
+    //ImGui_ImplVulkan_Init(&initInfo, tempPass);
     //ImGui_ImplVulkan_Init(&initInfo, VK_NULL_HANDLE);
     ImGui_ImplVulkan_Init(&initInfo);
 }
@@ -145,7 +202,15 @@ RHIQueueRef VulkanRHIBackend::GetQueue(const RHIQueueInfo& info)
     return queues[info.type][info.index];
 }
 
-RHISurfaceRef VulkanRHIBackend::CreateSurface(GLFWwindow* window)
+//RHISurfaceRef VulkanRHIBackend::CreateSurface(GLFWwindow* window)
+//{
+//    RHISurfaceRef surface = std::make_shared<VulkanRHISurface>(window, *this);
+//    RegisterResource(surface);
+//
+//    return surface;
+//}
+
+RHISurfaceRef VulkanRHIBackend::CreateSurface(SDL_Window* window)
 {
     RHISurfaceRef surface = std::make_shared<VulkanRHISurface>(window, *this);
     RegisterResource(surface);
@@ -1558,7 +1623,8 @@ void VulkanRHICommandContext::ImGuiCreateFontsTexture()
 void VulkanRHICommandContext::ImGuiRenderDrawData(ImGuiDrawFunc func)
 {
     ImGui_ImplVulkan_NewFrame();
-    ImGui_ImplGlfw_NewFrame();
+    // ImGui_ImplGlfw_NewFrame();
+	ImGui_ImplSDL3_NewFrame();
     ImGui::NewFrame();
     IMGUIZMO_NAMESPACE::BeginFrame();
 

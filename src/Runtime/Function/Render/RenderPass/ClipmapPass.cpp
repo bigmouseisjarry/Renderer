@@ -56,17 +56,17 @@ void ClipmapPass::Build(RDGBuilder& builder)
         float speed = 5.0f;
         float delta = speed * EngineContext::GetDeltaTime() / 1000.0f;
 
-        if(EngineContext::Input()->KeyIsPressed(KEY_TYPE_I)) targetPos += Vec3(1.0, 0.0, 0.0) * delta;
-        if(EngineContext::Input()->KeyIsPressed(KEY_TYPE_K)) targetPos += Vec3(-1.0, 0.0, 0.0) * delta;
-        if(EngineContext::Input()->KeyIsPressed(KEY_TYPE_J)) targetPos += Vec3(0.0, 0.0, -1.0) * delta;
-        if(EngineContext::Input()->KeyIsPressed(KEY_TYPE_L)) targetPos += Vec3(0.0, 0.0, 1.0) * delta;
-        if(EngineContext::Input()->KeyIsPressed(KEY_TYPE_U)) targetPos += Vec3(0.0, 1.0, 0.0) * delta;
-        if(EngineContext::Input()->KeyIsPressed(KEY_TYPE_O)) targetPos += Vec3(0.0, -1.0, 0.0) * delta;
+        if(EngineContext::Input()->IsKeyPressed(SDL_SCANCODE_I)) targetPos += Vec3(1.0, 0.0, 0.0) * delta;
+        if(EngineContext::Input()->IsKeyPressed(SDL_SCANCODE_K)) targetPos += Vec3(-1.0, 0.0, 0.0) * delta;
+        if(EngineContext::Input()->IsKeyPressed(SDL_SCANCODE_J)) targetPos += Vec3(0.0, 0.0, -1.0) * delta;
+        if(EngineContext::Input()->IsKeyPressed(SDL_SCANCODE_L)) targetPos += Vec3(0.0, 0.0, 1.0) * delta;
+        if(EngineContext::Input()->IsKeyPressed(SDL_SCANCODE_U)) targetPos += Vec3(0.0, 1.0, 0.0) * delta;
+        if(EngineContext::Input()->IsKeyPressed(SDL_SCANCODE_O)) targetPos += Vec3(0.0, -1.0, 0.0) * delta;
     };
 
     updateRegions = clipmap->Update(targetPos);
     // updateRegions = clipmap->Update(Vec3(0, 0, 0));
-    if(fullUpdate || EngineContext::Input()->KeyIsPressed(KEY_TYPE_R))    // 手动全量更新
+    if(fullUpdate || EngineContext::Input()->IsKeyPressed(SDL_SCANCODE_R))    // 手动全量更新
     {
         fullUpdate = false;
         updateRegions.clear();

@@ -18,7 +18,7 @@ GraphicsPipelineCache::CachedPipeline GraphicsPipelineCache::Allocate(const RHIG
         return { nullptr };
     }
 
-    LOG_DEBUG("RHIGraphicsPipeline not found in cache, creating new.");
+    // LOG_DEBUG("RHIGraphicsPipeline not found in cache, creating new.");
     ret = {
         .pipeline = EngineContext::RHI()->CreateGraphicsPipeline(info)
     };

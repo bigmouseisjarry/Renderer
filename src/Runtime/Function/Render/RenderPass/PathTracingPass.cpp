@@ -59,7 +59,7 @@ void PathTracingPass::Build(RDGBuilder& builder)
 
             auto camera = EngineContext::World()->GetActiveScene()->GetActiveCamera();
             if( camera->IsMoved() || 
-                EngineContext::Input()->KeyIsPressed(KEY_TYPE_R)) 
+                EngineContext::Input()->IsKeyPressed(SDL_SCANCODE_R)) 
                 setting.totalNumSamples = 0;  // 相机移动后/手动更新后重新累计
             setting.totalNumSamples += setting.numSamples;
 

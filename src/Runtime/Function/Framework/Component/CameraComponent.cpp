@@ -38,26 +38,28 @@ void CameraComponent::InputMove(float deltaTime)
 
 	// 位移
     Vec3 deltaPosition = Vec3::Zero();
-	if(EngineContext::Input()->KeyIsPressed(KEY_TYPE_LEFT_SHIFT))		delta *= 5;
-	if(EngineContext::Input()->KeyIsPressed(KEY_TYPE_W))				deltaPosition += transformComponent->Front() * delta;
-	if(EngineContext::Input()->KeyIsPressed(KEY_TYPE_S))				deltaPosition -= transformComponent->Front() * delta;
-	if(EngineContext::Input()->KeyIsPressed(KEY_TYPE_A))				deltaPosition -= transformComponent->Right() * delta;
-	if(EngineContext::Input()->KeyIsPressed(KEY_TYPE_D))				deltaPosition += transformComponent->Right() * delta;
-	if(EngineContext::Input()->KeyIsPressed(KEY_TYPE_SPACE))			deltaPosition += transformComponent->Up() * delta;
-	if(EngineContext::Input()->KeyIsPressed(KEY_TYPE_LEFT_CONTROL))	deltaPosition -= transformComponent->Up() * delta;
+	if(EngineContext::Input()->IsKeyDown(SDL_SCANCODE_LSHIFT))			delta *= 5;
+	if(EngineContext::Input()->IsKeyDown(SDL_SCANCODE_W))				deltaPosition += transformComponent->Front() * delta;
+	if(EngineContext::Input()->IsKeyDown(SDL_SCANCODE_S))				deltaPosition -= transformComponent->Front() * delta;
+	if(EngineContext::Input()->IsKeyDown(SDL_SCANCODE_A))				deltaPosition -= transformComponent->Right() * delta;
+	if(EngineContext::Input()->IsKeyDown(SDL_SCANCODE_D))				deltaPosition += transformComponent->Right() * delta;
+	if(EngineContext::Input()->IsKeyDown(SDL_SCANCODE_SPACE))			deltaPosition += transformComponent->Up() * delta;
+	if(EngineContext::Input()->IsKeyDown(SDL_SCANCODE_LCTRL))			deltaPosition -= transformComponent->Up() * delta;
     transformComponent->Translate(deltaPosition);
 
-	if (EngineContext::Input()->MouseButtonIsPressed(MOUSE_BUTTON_TYPE_RIGHT)) 
+	if (EngineContext::Input()->IsKeyDown(SDL_BUTTON_RIGHT)) 
 	{
 		// 朝向
-		Vec2 offset = -EngineContext::Input()->GetMouseDeltaPosition() * sensitivity;
+		// Vec2 offset = -EngineContext::Input()->GetMouseDeltaPosition() * sensitivity;
+		Vec2 offset = Vec2(-EngineContext::Input()->GetMouseState().deltaX * sensitivity, -EngineContext::Input()->GetMouseState().deltaY * sensitivity);
 
 		Vec3 eulerAngle = transformComponent->GetEulerAngle();
 		eulerAngle = Math::ClampEulerAngle(eulerAngle + Vec3(0.0f, offset.x(), offset.y()));
 		transformComponent->SetRotation(eulerAngle);
 
 		// FOV
-		fovy -= EngineContext::Input()->GetScrollDeltaPosition().y() * sensitivity * 2;
+		// fovy -= EngineContext::Input()->GetScrollDeltaPosition().y() * sensitivity * 2;
+		fovy -= EngineContext::Input()->GetMouseState().wheelDelta * sensitivity * 2;
 		fovy = fovy > 135 ? 135 : fovy;
 		fovy = fovy < 30 ? 30 : fovy;
 	}

@@ -42,28 +42,42 @@
 #include <cstdio>
 #include <memory>
 
-void RenderSystem::InitGLFW()
+//void RenderSystem::InitGLFW()
+//{
+//    glfwInit();
+//    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+//    glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+//    window = glfwCreateWindow(WINDOW_EXTENT.width, WINDOW_EXTENT.height, "Toy Renderer", nullptr, nullptr); 
+//    // glfwSetWindowUserPointer(m_window, this);
+//    // glfwSetWindowSizeCallback(m_window, nullptr); //TODO
+//    // glfwSetCursorPosCallback(m_window, MousePosCallback);
+//    // glfwSetMouseButtonCallback(m_window, MouseButtonCallback);
+//    // glfwSetScrollCallback(m_window, ScrollCallback);
+//    // glfwSetKeyCallback(m_window, KeyCallback);
+//}
+
+//void RenderSystem::DestroyGLFW()
+//{
+//    glfwDestroyWindow(window);
+//    glfwTerminate();
+//}
+
+void RenderSystem::InitSDL()
 {
-    glfwInit();
-    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
-    window = glfwCreateWindow(WINDOW_EXTENT.width, WINDOW_EXTENT.height, "Toy Renderer", nullptr, nullptr); 
-    // glfwSetWindowUserPointer(m_window, this);
-    // glfwSetWindowSizeCallback(m_window, nullptr); //TODO
-    // glfwSetCursorPosCallback(m_window, MousePosCallback);
-    // glfwSetMouseButtonCallback(m_window, MouseButtonCallback);
-    // glfwSetScrollCallback(m_window, ScrollCallback);
-    // glfwSetKeyCallback(m_window, KeyCallback);
+    // TODO:后续加入SDL_INIT_AUDIO
+    SDL_Init(SDL_INIT_VIDEO);
+    window = SDL_CreateWindow("Toy Renderer", WINDOW_EXTENT.width, WINDOW_EXTENT.height, SDL_WINDOW_VULKAN);
 }
 
-void RenderSystem::DestroyGLFW()
+void RenderSystem::DestroySDL()
 {
-    glfwDestroyWindow(window);
-    glfwTerminate();
+    SDL_DestroyWindow(window);
+    SDL_Quit();
 }
 
 void RenderSystem::Init() 
 { 
+    // EngineContext::RHI()->InitImGui(window);
     EngineContext::RHI()->InitImGui(window);
 
     lightManager = std::make_shared<RenderLightManager>();
@@ -163,58 +177,107 @@ void RenderSystem::InitPasses()
     for(auto& pass : passes) { if(pass) pass->Init(); }
 }
 
-bool RenderSystem::Tick()
+//bool RenderSystem::Tick()
+//{
+//    ENGINE_TIME_SCOPE(RenderSystem::Tick);
+//    if(!glfwWindowShouldClose(window))
+//    {
+//        if(EngineContext::World()->GetActiveScene() == nullptr) return false;
+//
+//        {
+//            ENGINE_TIME_SCOPE(RenderSystem::WaitFence);
+//            auto& resource = perFrameCommonResources[EngineContext::ThreadPool()->ThreadFrameIndex()];
+//            resource.fence->Wait();                         // 等待帧栅栏，前一次本帧执行完毕后本帧才可重新开始收集和提交数据
+//        }    
+//        {
+//            ENGINE_TIME_SCOPE(RenderSystem::TickManagers);
+//            // meshManager->Tick();             // 先准备各个meshpass的绘制信息
+//            // lightManager->Tick();            // 准备光源信息   
+//            // surfaceCacheManager->Tick();     // 更新surfaceCache
+//            // UpdateGlobalSetting(); 
+//            
+//            // 非常简单的并行  
+//            EngineContext::ThreadPool()->AddQueuedWork([this](){
+//                surfaceCacheManager->Tick();
+//            });
+//            EngineContext::ThreadPool()->AddQueuedWork([this](){
+//                meshManager->Tick();    
+//            });
+//            EngineContext::ThreadPool()->AddQueuedWork([this](){
+//                lightManager->Tick();
+//            });
+//            EngineContext::ThreadPool()->AddQueuedWork([this](){
+//                UpdateGlobalSetting();   
+//            });
+//            EngineContext::ThreadPool()->WaitIdle();
+//        }
+//        
+//        BuildRDG(); // RDG的构建目前暂未支持多线程并行，只能串行；执行需要依赖于上面几个manager的数据处理结果
+//                    // 上面的WaitIdle该做成task graph的执行依赖
+//        ExecuteRDG();                             
+//        
+//        {
+//            ENGINE_TIME_SCOPE(RenderSystem::SyncRHI);                                   // GPU端瓶颈会导致此处的WaitIdle等待
+//            EngineContext::ThreadPool()->WaitIdle(ENGINE_THREAD_TYPE_RHI);  // loop里唯一和RHI线程同步的时点，RHI最多会延迟主线程一帧
+//            EngineContext::ThreadPool()->AddQueuedWork([this](){    
+//                meshManager->UpdateTLAS();  // TODO vk等支持多线程的指令录制，但是不支持同queue并行提交，此处的TLAS更新里有一个提交，不能和上面的前一帧指令并行，需要再改          
+//                SubmitRHI();               
+//                                            
+//            }, ENGINE_THREAD_TYPE_RHI);  
+//        }       
+//
+//        return false; 
+//    }
+//    return true;
+//}
+
+void RenderSystem::Tick()
 {
     ENGINE_TIME_SCOPE(RenderSystem::Tick);
-    if(!glfwWindowShouldClose(window))
+    if (EngineContext::World()->GetActiveScene() == nullptr) return;
+
     {
-        if(EngineContext::World()->GetActiveScene() == nullptr) return false;
-
-        {
-            ENGINE_TIME_SCOPE(RenderSystem::WaitFence);
-            auto& resource = perFrameCommonResources[EngineContext::ThreadPool()->ThreadFrameIndex()];
-            resource.fence->Wait();                         // 等待帧栅栏，前一次本帧执行完毕后本帧才可重新开始收集和提交数据
-        }    
-        {
-            ENGINE_TIME_SCOPE(RenderSystem::TickManagers);
-            // meshManager->Tick();             // 先准备各个meshpass的绘制信息
-            // lightManager->Tick();            // 准备光源信息   
-            // surfaceCacheManager->Tick();     // 更新surfaceCache
-            // UpdateGlobalSetting(); 
-            
-            // 非常简单的并行  
-            EngineContext::ThreadPool()->AddQueuedWork([this](){
-                surfaceCacheManager->Tick();
-            });
-            EngineContext::ThreadPool()->AddQueuedWork([this](){
-                meshManager->Tick();    
-            });
-            EngineContext::ThreadPool()->AddQueuedWork([this](){
-                lightManager->Tick();
-            });
-            EngineContext::ThreadPool()->AddQueuedWork([this](){
-                UpdateGlobalSetting();   
-            });
-            EngineContext::ThreadPool()->WaitIdle();
-        }
-        
-        BuildRDG(); // RDG的构建目前暂未支持多线程并行，只能串行；执行需要依赖于上面几个manager的数据处理结果
-                    // 上面的WaitIdle该做成task graph的执行依赖
-        ExecuteRDG();                             
-        
-        {
-            ENGINE_TIME_SCOPE(RenderSystem::SyncRHI);                                   // GPU端瓶颈会导致此处的WaitIdle等待
-            EngineContext::ThreadPool()->WaitIdle(ENGINE_THREAD_TYPE_RHI);  // loop里唯一和RHI线程同步的时点，RHI最多会延迟主线程一帧
-            EngineContext::ThreadPool()->AddQueuedWork([this](){    
-                meshManager->UpdateTLAS();  // TODO vk等支持多线程的指令录制，但是不支持同queue并行提交，此处的TLAS更新里有一个提交，不能和上面的前一帧指令并行，需要再改          
-                SubmitRHI();               
-                                            
-            }, ENGINE_THREAD_TYPE_RHI);  
-        }       
-
-        return false; 
+        ENGINE_TIME_SCOPE(RenderSystem::WaitFence);
+        auto& resource = perFrameCommonResources[EngineContext::ThreadPool()->ThreadFrameIndex()];
+        resource.fence->Wait();                         // 等待帧栅栏，前一次本帧执行完毕后本帧才可重新开始收集和提交数据
     }
-    return true;
+
+    {
+        ENGINE_TIME_SCOPE(RenderSystem::TickManagers);
+        // meshManager->Tick();             // 先准备各个meshpass的绘制信息
+        // lightManager->Tick();            // 准备光源信息   
+        // surfaceCacheManager->Tick();     // 更新surfaceCache
+        // UpdateGlobalSetting(); 
+
+        // 非常简单的并行  
+        EngineContext::ThreadPool()->AddQueuedWork([this]() {
+            surfaceCacheManager->Tick();
+            });
+        EngineContext::ThreadPool()->AddQueuedWork([this]() {
+            meshManager->Tick();
+            });
+        EngineContext::ThreadPool()->AddQueuedWork([this]() {
+            lightManager->Tick();
+            });
+        EngineContext::ThreadPool()->AddQueuedWork([this]() {
+            UpdateGlobalSetting();
+            });
+        EngineContext::ThreadPool()->WaitIdle();
+    }
+
+    BuildRDG(); // RDG的构建目前暂未支持多线程并行，只能串行；执行需要依赖于上面几个manager的数据处理结果
+    // 上面的WaitIdle该做成task graph的执行依赖
+    ExecuteRDG();
+
+    {
+        ENGINE_TIME_SCOPE(RenderSystem::SyncRHI);                                   // GPU端瓶颈会导致此处的WaitIdle等待
+        EngineContext::ThreadPool()->WaitIdle(ENGINE_THREAD_TYPE_RHI);  // loop里唯一和RHI线程同步的时点，RHI最多会延迟主线程一帧
+        EngineContext::ThreadPool()->AddQueuedWork([this]() {
+            meshManager->UpdateTLAS();  // TODO vk等支持多线程的指令录制，但是不支持同queue并行提交，此处的TLAS更新里有一个提交，不能和上面的前一帧指令并行，需要再改          
+            SubmitRHI();
+
+            }, ENGINE_THREAD_TYPE_RHI);
+    }
 }
 
 void RenderSystem::BuildRDG()

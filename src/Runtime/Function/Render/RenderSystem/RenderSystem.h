@@ -22,10 +22,13 @@ class RenderSystem
 public:
     void Init();
     void Destroy() {}
-    void InitGLFW();
-    void DestroyGLFW();
+    //void InitGLFW();
+    //void DestroyGLFW();
+    void InitSDL();
+    void DestroySDL();
 
-    bool Tick();
+    //bool Tick();
+    void Tick();
     void BuildRDG();
     void ExecuteRDG();
 
@@ -37,7 +40,8 @@ public:
     const bool IsPassEnabled(PassType passType) { if(passes[passType] && passes[passType]->IsEnabled()) return true; return false; }
     void SetPassEnabled(PassType passType, bool enable) { if(passes[passType]) passes[passType]->SetEnable(enable); }
 
-    GLFWwindow* GetWindow()         { return window; }
+    // GLFWwindow* GetWindow()         { return window; }
+	SDL_Window* GetWindow()      { return window; }
     Extent2D GetWindowsExtent()     { return WINDOW_EXTENT; }
     Extent2D GetHalfWindowsExtent() { return HALF_WINDOW_EXTENT; }
     RHIFormat GetHdrColorFormat()   { return HDR_COLOR_FORMAT; } 
@@ -52,12 +56,15 @@ public:
     DependencyGraphRef GetRDGDependenctyGraph()                                 { return rdgDependencyGraph; }
 
 private:
-    GLFWwindow* window;
+    // GLFWwindow* window;
+	SDL_Window* window;
+    
 
     std::array<RDGBuilderRef, FRAMES_IN_FLIGHT> rdgBuilders;
 
     RHIBackendRef backend;
     RHISurfaceRef surface;
+	// RHISurfaceRef sdlSurface;
     RHIQueueRef queue;
     RHISwapchainRef swapchain;
     RHICommandPoolRef pool;

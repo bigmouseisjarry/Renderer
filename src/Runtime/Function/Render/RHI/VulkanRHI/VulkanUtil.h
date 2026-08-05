@@ -6,6 +6,7 @@
 #include "VulkanRHIResource.h"
 
 #include "Function/Global/Definations.h"
+#include <SDL3/SDL_vulkan.h>
 
 #include <spirv_reflect.h>
 #include <volk.h>
@@ -121,13 +122,22 @@ public:
     {
         std::vector<const char*> extensions;
 
-        // GLFW扩展依赖
-        unsigned int glfwExtensionCount = 0;
-        const char** glfwExtensions;
-        glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
+        //// GLFW扩展依赖
+        //unsigned int glfwExtensionCount = 0;
+        //const char** glfwExtensions;
+        //glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
 
-        for (unsigned int i = 0; i < glfwExtensionCount; i++) {
-            extensions.push_back(glfwExtensions[i]);
+        //for (unsigned int i = 0; i < glfwExtensionCount; i++) {
+        //    extensions.push_back(glfwExtensions[i]);
+        //}
+
+		// SDL扩展依赖
+		unsigned int sdlExtensionCount = 0;
+        const char* const* sdlExtensions;
+        sdlExtensions = SDL_Vulkan_GetInstanceExtensions(&sdlExtensionCount);
+
+        for(unsigned int i = 0; i < sdlExtensionCount; i++) {
+            extensions.push_back(sdlExtensions[i]);
         }
 
         // 其他扩展

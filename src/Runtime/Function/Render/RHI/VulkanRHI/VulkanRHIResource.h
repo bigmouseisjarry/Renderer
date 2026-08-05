@@ -4,7 +4,8 @@
 #include "Function/Render/RHI/RHIStructs.h"
 
 #include <volk.h>
-#include <GLFW/glfw3.h>
+//#include <GLFW/glfw3.h>
+#include <SDL3/SDL.h>
 #include <vma.h>
 #include <cstdint>
 #include <memory>
@@ -38,7 +39,11 @@ private:
 class VulkanRHISurface : public RHISurface
 {
 public:
-	VulkanRHISurface(GLFWwindow* window, VulkanRHIBackend& backend);
+	// glfw的Surface
+	// VulkanRHISurface(GLFWwindow* window, VulkanRHIBackend& backend);
+
+	// sdl的Surface
+	VulkanRHISurface(SDL_Window* window, VulkanRHIBackend& backend);
 
 	const VkSurfaceKHR& GetHandle() { return handle; }
 

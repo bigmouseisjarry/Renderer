@@ -32,13 +32,17 @@ public:
 
     //ImGui ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-    virtual void InitImGui(GLFWwindow* window) override final;
+    // virtual void InitImGui(GLFWwindow* window) override final;
+
+    virtual void InitImGui(SDL_Window* window) override final;
 
     //基本资源 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
     virtual RHIQueueRef GetQueue(const RHIQueueInfo& info) override final;
 
-    virtual RHISurfaceRef CreateSurface(GLFWwindow* window) override final;
+    // virtual RHISurfaceRef CreateSurface(GLFWwindow* window) override final;
+
+    virtual RHISurfaceRef CreateSurface(SDL_Window* window) override final;
 
     virtual RHISwapchainRef CreateSwapChain(const RHISwapchainInfo& info) override final;
 
