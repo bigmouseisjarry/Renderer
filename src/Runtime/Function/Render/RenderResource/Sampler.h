@@ -15,4 +15,4 @@ public:
 
     RHISamplerRef sampler;
 };
-typedef std::shared_ptr<Sampler> SamplerRef;
+using SamplerRef = std::shared_ptr<Sampler>;

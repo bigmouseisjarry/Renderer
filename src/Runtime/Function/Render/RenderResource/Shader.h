@@ -35,4 +35,4 @@ private:
 
     EnableAssetEditourUI()
 };
-typedef std::shared_ptr<Shader> ShaderRef;
+using ShaderRef = std::shared_ptr<Shader>;

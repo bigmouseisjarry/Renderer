@@ -22,15 +22,6 @@
 #include <utility>
 #include <vector>
 
-/*
-1. ImGui_ImplVulkan_LoadFunctions(funcLoader, this) → 新签名要 (api_version, loader_func, user_data)
-  
-2. initInfo.Subpass / MSAASamples + ImGui_ImplVulkan_Init(&initInfo, tempPass) → 新版 Subpass/MSAASamples 移到了initInfo.PipelineInfoMain 里，Init 不再收 tempPass 参数
-
-3. ImGui_ImplVulkan_CreateFontsTexture(handle) → 新版改成了 ImGui_ImplVulkan_UpdateTexture(ImTextureData*)，且 1.92的字体纹理上传流程变了
-*/
-
-
 void LoadScene()
 {
     std::shared_ptr<Scene> scene = EngineContext::World()->LoadScene("Asset/BuildIn/Scene/default.asset");

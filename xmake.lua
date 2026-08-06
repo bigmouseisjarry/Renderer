@@ -7,6 +7,15 @@ target("renderer")
     set_kind("binary")
     add_files("src/**.cpp", "thirdparty/**.cpp", "thirdparty/**.c")
     add_headerfiles("src/**.h", "src/**.hpp")
+    add_extrafiles("Asset/BuildIn/Shader/**.comp",
+                    "Asset/BuildIn/Shader/**.glsl",
+                    "Asset/BuildIn/Shader/**.vert",
+                    "Asset/BuildIn/Shader/**.frag",
+                    "Asset/BuildIn/Shader/**.geom",
+                    "Asset/BuildIn/Shader/**.rgen",
+                    "Asset/BuildIn/Shader/**.rmiss",
+                    "Asset/BuildIn/Shader/**.rchit",
+                    "Asset/BuildIn/Shader/**.hlsli")
     remove_files("thirdparty/NRD/_Build/**.cpp", "thirdparty/NRD/_Build/**.c","thirdparty/imgui/imgui_impl_glfw.cpp",
                   "thirdparty/ShaderMake/**/_Build/**.cpp")
     add_includedirs("src/Runtime/")

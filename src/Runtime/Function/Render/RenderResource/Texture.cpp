@@ -41,7 +41,7 @@ TextureViewType TextureTypeToViewType(TextureType type)
 }
 
 Texture::Texture(const std::string& path)
-: textureType(TEXTURE_TYPE_2D)  // TODO 默认
+: textureType(TEXTURE_TYPE_2D)  // 默认
 , format(FORMAT_R8G8B8A8_SRGB)  
 , arrayLayer(1)
 {
@@ -50,7 +50,7 @@ Texture::Texture(const std::string& path)
 }
 
 Texture::Texture(const std::vector<std::string>& paths, TextureType type)
-: textureType(type)             // TODO 默认
+: textureType(type)             // 默认
 , format(FORMAT_R8G8B8A8_SRGB)  
 , arrayLayer(paths.size())
 {
@@ -81,24 +81,24 @@ void Texture::OnLoadAsset()
     else                    InitRHI();
 }
 
+// 创建空纹理
 void Texture::InitRHI()
 {
     ResourceType resourceType = (textureType == TEXTURE_TYPE_CUBE) ? (RESOURCE_TYPE_TEXTURE_CUBE | RESOURCE_TYPE_TEXTURE) : RESOURCE_TYPE_TEXTURE;
-    if(IsRWFormat(format))      resourceType |= RESOURCE_TYPE_RW_TEXTURE;       // TODO由外部设置做选择？是否有什么开销
-    if(IsRWFormat(format))      resourceType |= RESOURCE_TYPE_RENDER_TARGET;    // 
+    if (IsRWFormat(format))      resourceType |= (RESOURCE_TYPE_RW_TEXTURE | RESOURCE_TYPE_RENDER_TARGET);       // TODO由外部设置做选择会不会更好？
 
     TextureAspectFlags aspects =    IsDepthStencilFormat(format) ? TEXTURE_ASPECT_DEPTH_STENCIL :
                                     IsDepthFormat(format) ? TEXTURE_ASPECT_DEPTH :
                                     IsStencilFormat(format) ? TEXTURE_ASPECT_STENCIL : TEXTURE_ASPECT_COLOR;
 
-    bool force2D = extent.width == 1 && extent.height == 1; //TODO 
+    bool force2D = extent.width == 1 && extent.height == 1; // 1x1 纹理强制 2D，避免 Vulkan 对 1D image 的兼容问题
 
     RHITextureInfo textureInfo = {
         .format = format,
         .extent = extent,
         .arrayLayers = arrayLayer,
         .mipLevels = mipLevels,
-        .memoryUsage = MEMORY_USAGE_GPU_ONLY,
+        .memoryUsage = MEMORY_USAGE_GPU_ONLY,           
         .type = resourceType,
         .creationFlag = force2D ? TEXTURE_CREATION_FORCE_2D : TEXTURE_CREATION_NONE};
     texture = EngineContext::RHI()->CreateTexture(textureInfo);
@@ -113,9 +113,10 @@ void Texture::InitRHI()
     // EngineContext::RHI()->GetImmediateCommand()->TextureBarrier({texture, RESOURCE_STATE_UNDEFINED, RESOURCE_STATE_SHADER_RESOURCE});
 }
 
+// 从磁盘加载图片
 void Texture::LoadFromFile()
 {
-    if(textureType == TEXTURE_TYPE_CUBE && paths.size() != 6)
+    if(textureType == TEXTURE_TYPE_CUBE && arrayLayer != 6)
     {
         LOG_DEBUG("Wrong file num with texture type cube!"); 
         return;        
@@ -127,7 +128,7 @@ void Texture::LoadFromFile()
     }
 
     bool initRHI = false;
-    for(uint32_t i = 0; i < paths.size(); i++)
+    for (uint32_t i = 0; i < arrayLayer; i++)
     {
         std::vector<uint8_t> data;
         EngineContext::File()->LoadBinary(paths[i], data);
@@ -142,17 +143,23 @@ void Texture::LoadFromFile()
         // bool hdr = stbi_is_hdr_from_memory(data.data(), data.size());
         // uint32_t size = extent.width * extent.height * (uint32_t)path.size() * sizeof(uint32_t);     //RGBA8，4字节每像素
 
-        if(!initRHI)
+        if (!initRHI)
         {
             initRHI = true;
 
-            extent = {(uint32_t)width, (uint32_t)height, 1};         
+            extent = { (uint32_t)width, (uint32_t)height, 1 };
             mipLevels = (uint32_t)(std::floor(std::log2(std::max(width, height)))) + 1;
 
             InitRHI();
+
+            // 先将整个纹理做布局转换
+            EngineContext::RHI()->GetImmediateCommand()->TextureBarrier(
+                { texture,
+                 RESOURCE_STATE_UNDEFINED, RESOURCE_STATE_TRANSFER_DST,
+                {TEXTURE_ASPECT_COLOR, 0, mipLevels, 0, arrayLayer} });
         }
 
-        // 拷贝纹理内存
+        // 逐层拷贝纹理内存
         RHIBufferInfo bufferInfo = {
             .size = bufferSize,
             .memoryUsage = MEMORY_USAGE_CPU_ONLY,
@@ -160,13 +167,9 @@ void Texture::LoadFromFile()
             .creationFlag = BUFFER_CREATION_PERSISTENT_MAP
         };
         RHIBufferRef stagingBuffer = EngineContext::RHI()->CreateBuffer(bufferInfo);
-        memcpy(stagingBuffer->Map(), pixels, bufferSize);   
-        EngineContext::RHI()->GetImmediateCommand()->TextureBarrier(
-            {texture, 
-            RESOURCE_STATE_UNDEFINED, RESOURCE_STATE_TRANSFER_DST,
-            {TEXTURE_ASPECT_COLOR, 0, mipLevels, i, 1}});      
-        EngineContext::RHI()->GetImmediateCommand()->CopyBufferToTexture(stagingBuffer, 0, texture, {TEXTURE_ASPECT_COLOR, 0, i, 1});
-        
+        memcpy(stagingBuffer->Map(), pixels, bufferSize);
+        EngineContext::RHI()->GetImmediateCommand()->CopyBufferToTexture(stagingBuffer, 0, texture, { TEXTURE_ASPECT_COLOR, 0, i, 1 });
+
         stbi_image_free(pixels);
     }
 

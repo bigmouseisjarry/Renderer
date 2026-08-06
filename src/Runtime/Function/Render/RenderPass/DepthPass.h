@@ -3,7 +3,6 @@
 #include "Function/Render/RHI/RHIStructs.h"
 #include "Function/Render/RenderPass/RenderPass.h"
 #include "MeshPass.h"
-#include "RenderPass.h"
 
 class DepthPass : public MeshPass
 {

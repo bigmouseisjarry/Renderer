@@ -18,7 +18,7 @@
 #include <unordered_map>
 #include <vector>
 
-typedef struct BindlessResourceInfo
+struct BindlessResourceInfo
 {
     ResourceType resourceType = RESOURCE_TYPE_NONE;
 
@@ -29,9 +29,9 @@ typedef struct BindlessResourceInfo
 
 	uint64_t bufferOffset = 0;	// 仅buffer使用
 	uint64_t bufferRange = 0;
-} BindlessResourceInfo;
+};
 
-typedef struct VolumeLightTextures
+struct VolumeLightTextures
 {
     TextureRef diffuseTex;       // 需要缓存G-Buffer信息才能做烘焙？
     TextureRef normalTex;
@@ -42,7 +42,7 @@ typedef struct VolumeLightTextures
     TextureRef irradianceTex;
     TextureRef depthTex;
     
-} VolumeLightTextures;
+};
 
 enum BindlessSlot
 {

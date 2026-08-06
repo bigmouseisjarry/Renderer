@@ -22,7 +22,7 @@ enum RenderPassMaskBits
 
 	PASS_MASK_MAX_ENUM = 0x7FFFFFFF,	//
 };
-typedef uint32_t RenderPassMasks;
+using RenderPassMasks = uint32_t;
 
 // 约等于shaderlab文件的抽象，拆成了Material+索引各个shader文件
 // 到底应该如何抽象材质类？不是不能参考，但是太复杂了
@@ -176,7 +176,7 @@ private:
 
     EnableAssetEditourUI()
 };
-typedef std::shared_ptr<Material> MaterialRef;
+using MaterialRef = std::shared_ptr<Material> ;
 
 
 

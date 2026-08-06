@@ -12,7 +12,7 @@
 // 声明各类在GPU和CPU间传递信息的数据结构
 // 注意buffer的字节对齐问题
 
-typedef struct GlobalIconInfo           //图标的bindless索引
+struct GlobalIconInfo           // 图标的bindless索引
 {
     // uint32_t documentationIcon;
     // uint32_t worldIcon;
@@ -31,9 +31,9 @@ typedef struct GlobalIconInfo           //图标的bindless索引
     // uint32_t atmosphericFogIcon;
     // uint32_t skyAtmosphereIcon;
 
-} GlobalIconInfo;
+};
 
-typedef struct RenderGlobalSetting
+struct RenderGlobalSetting
 {
     uint32_t skyboxMaterialID = 0;      //天空盒的材质ID
     uint32_t clusterInspectMode = 0;    //cluster渲染使用的模式
@@ -44,9 +44,9 @@ typedef struct RenderGlobalSetting
 
     GlobalIconInfo icons;
     
-} RenderGlobalSetting;
+};
 
-typedef struct CameraInfo 
+struct CameraInfo 
 {
     Mat4 view;
     Mat4 proj;
@@ -74,9 +74,9 @@ typedef struct CameraInfo
 
     Frustum frustum;    //视锥，用于计算剔除
 
-} CameraInfo;
+};
 
-typedef struct ObjectInfo
+struct ObjectInfo
 {
     Mat4 model;
     Mat4 prevModel;                 //前一帧的model矩阵
@@ -96,9 +96,9 @@ typedef struct ObjectInfo
 
     Vec4 debugData;                 //仅debug使用
 
-} ObjectInfo;
+};
 
-typedef struct VertexInfo
+struct VertexInfo
 {
     uint32_t positionID;
     uint32_t normalID;
@@ -109,9 +109,9 @@ typedef struct VertexInfo
     uint32_t boneWeightID;
     uint32_t _padding;
     
-} VertexInfo;
+};
 
-typedef struct MaterialInfo 
+struct MaterialInfo 
 {
     //固定槽位///////////////////////////////
     float roughness;
@@ -135,19 +135,20 @@ typedef struct MaterialInfo
     std::array<float, 8> floats;
     std::array<Vec4, 8> colors;
 
-    std::array<uint32_t, 8> texture2D;      //额外的纹理使用的下标，一共支持每材质8个2d纹理，
-    std::array<uint32_t, 4> textureCube;    //4个cube纹理
-    std::array<uint32_t, 4> texture3D;      //4个3d纹理
+    // 额外的纹理使用的下标，一共支持每材质
+    std::array<uint32_t, 8> texture2D;      // 8个2d纹理
+    std::array<uint32_t, 4> textureCube;    // 4个cube纹理
+    std::array<uint32_t, 4> texture3D;      // 4个3d纹理
 
-} MaterialInfo;
+};
 
-typedef struct LightClusterIndex
+struct LightClusterIndex
 {
     uint32_t lightID;  
                
-} LightClusterIndex;
+};
 
-typedef struct DirectionalLightInfo 
+struct DirectionalLightInfo 
 {
     Mat4 view;
     Mat4 proj;
@@ -155,7 +156,7 @@ typedef struct DirectionalLightInfo
     Vec3 pos;
     float _padding0;
     Vec3 dir;
-    float depth;                //平行光源级联的划分深度，对齐Vec4
+    float depth;                // 该级 cascade 的划分深度
 
     Vec3 color;
     float intencity;            //前三维为颜色，最后一维强度
@@ -167,9 +168,9 @@ typedef struct DirectionalLightInfo
     Frustum frustum;            //视锥，用于计算剔除      
     BoundingSphere sphere;
 
-} DirectionalLightInfo;
+};
 
-typedef struct PointLightInfo
+struct PointLightInfo
 {
     Mat4 view[6];
     Mat4 proj;
@@ -194,9 +195,9 @@ typedef struct PointLightInfo
     Frustum frustum[6];                     //视锥，用于计算剔除
     BoundingSphere sphere;                  //世界空间包围球，用于计算剔除
 
-} PointLightInfo;
+};
 
-typedef struct DDGISetting
+struct DDGISetting
 {
     Vec3  gridStartPosition;
     float _padding0;
@@ -226,15 +227,15 @@ typedef struct DDGISetting
 
     BoundingBox boundingBox;    //包围盒，世界空间
 
-} DDGISetting;
+};
 
-typedef struct VolumeLightInfo
+struct VolumeLightInfo
 {
     DDGISetting setting;
 
-} VolumeLightInfo;
+};
 
-typedef struct LightSetting 
+struct LightSetting 
 {
     uint32_t directionalLightCnt = 0;
     uint32_t pointshadowedLightCnt = 0;
@@ -249,7 +250,7 @@ typedef struct LightSetting
     
     uint32_t volumeLightIDs[MAX_VOLUME_LIGHT_COUNT] = { 0 };
 
-} LightSetting;
+};
 
 #define DIR_LIGHT_OFFSET        (0)
 #define POINT_LIGHT_OFFSET      (DIR_LIGHT_OFFSET + DIRECTIONAL_SHADOW_CASCADE_LEVEL * sizeof(DirectionalLightInfo))
@@ -257,22 +258,22 @@ typedef struct LightSetting
 #define LIGHT_SETTING_OFFSET    (VOLUME_LIGHT_OFFSET + MAX_VOLUME_LIGHT_COUNT * sizeof(VolumeLightInfo))
 #define LIGHT_OFFSET_MAX        (LIGHT_SETTING_OFFSET + sizeof(LightSetting))
 
-typedef struct LightInfo
+struct LightInfo
 {
     DirectionalLightInfo directionalLights[DIRECTIONAL_SHADOW_CASCADE_LEVEL];
     PointLightInfo pointLights[MAX_POINT_LIGHT_COUNT];
     VolumeLightInfo volumeLights[MAX_VOLUME_LIGHT_COUNT];
 
     LightSetting lightSetting;
-} LightInfo;
+};
 
-typedef struct LightIndex
+struct LightIndex
 {
     uint32_t index;             //光源索引信息，索引LightInfo内的实际光源信息  
 
-} LightIndex;
+};
 
-typedef struct GizmoBoxInfo 
+struct GizmoBoxInfo 
 {
     Vec3 center;
     float _padding0;
@@ -280,24 +281,24 @@ typedef struct GizmoBoxInfo
     float _padding1;
     Vec4 color;
 
-} GizmoBoxInfo;
+};
 
-typedef struct GizmoSphereInfo 
+struct GizmoSphereInfo 
 {
     Vec3 center;
     float radious;
     Vec4 color;
 
-} GizmoSphereInfo;
+};
 
-typedef struct GizmoLineInfo 
+struct GizmoLineInfo 
 {
     Vec3 from;
     float _padding0;
     Vec3 to;
     float _padding1;
     Vec4 color;
-} GizmoLineInfo;
+};
 
 struct GizmoBillboardInfo 
 {
@@ -308,7 +309,7 @@ struct GizmoBillboardInfo
     Vec4 color;
 };
 
-typedef struct GizmoDrawData    // 间接绘制Gizmo信息
+struct GizmoDrawData    // 间接绘制Gizmo信息
 { 
     RHIIndexedIndirectCommand command[4];
     GizmoBoxInfo boxes[MAX_GIZMO_PRIMITIVE_COUNT];
@@ -316,9 +317,9 @@ typedef struct GizmoDrawData    // 间接绘制Gizmo信息
     GizmoLineInfo lines[MAX_GIZMO_PRIMITIVE_COUNT];
     GizmoBillboardInfo worldBillboards[MAX_GIZMO_PRIMITIVE_COUNT];
 
-} GizmoDrawData;
+};
 
-typedef struct MeshClusterInfo
+struct MeshClusterInfo
 {
     uint32_t vertexID;		// 到实际的顶点buffer索引     
     uint32_t indexID;
@@ -327,9 +328,9 @@ typedef struct MeshClusterInfo
 
     BoundingSphere sphere;
 
-} MeshClusterInfo;
+};
 
-typedef struct MeshClusterGroupInfo
+struct MeshClusterGroupInfo
 {
     uint32_t clusterID[CLUSTER_GROUP_SIZE]; 
 
@@ -340,9 +341,9 @@ typedef struct MeshClusterGroupInfo
 
     BoundingSphere sphere;
     
-} MeshClusterGroupInfo;
+};
 
-typedef struct MeshCardInfo     // 单个Card的全部信息
+struct MeshCardInfo     // 单个Card的全部信息
 {
 	Vec3 viewPosition;          // 物体空间相机位置
 	float _padding0;
@@ -363,10 +364,10 @@ typedef struct MeshCardInfo     // 单个Card的全部信息
     UVec2 sampleAtlasOffset = UVec2::Zero();    // 当存在尺寸变换时，光栅化和光照计算的任务会在新的范围计算
 	UVec2 sampleAtlasExtent = UVec2::Zero();    // 但采样数据还是先保持旧范围（避免更新延迟导致短暂变黑），直到光照计算一次后再更新
 
-} MeshCardInfo;
+};
 
 // 存储每个card最后在GPU端被使用的帧数，每帧回读来决定本帧的更新优先级
-typedef std::array<int32_t, MAX_PER_FRAME_OBJECT_SIZE * 6> MeshCardReadBack;
+using MeshCardReadBack = std::array<int32_t, MAX_PER_FRAME_OBJECT_SIZE * 6>;
 
 // typedef struct AnimatedTransformInfo 
 // {
@@ -376,7 +377,7 @@ typedef std::array<int32_t, MAX_PER_FRAME_OBJECT_SIZE * 6> MeshCardReadBack;
 
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-typedef struct IndirectSetting
+struct IndirectSetting
 {
     uint32_t processSize = 0;               // 本轮需要处理的全部batch/cluster/cluster group数目
     uint32_t pipelineStateSize = 0;         // 本轮处理的不同管线状态的数目
@@ -387,7 +388,7 @@ typedef struct IndirectSetting
     uint32_t occlusionCull = 0;             // 遮蔽剔除数目，由GPU端计算写入
     uint32_t _padding1;
 
-} IndirectSetting;
+};
 
 // 下面的全部间接绘制都包括两个缓冲：
 // 1. 存储提交给GPU剔除的，待绘制的全部几何的索引信息，以及一些统计信息
@@ -396,52 +397,52 @@ typedef struct IndirectSetting
 
 //Indirect Mesh Draw///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-typedef struct IndirectMeshDrawInfo
+struct IndirectMeshDrawInfo
 {
     uint32_t objectID = 0;			        // 物体的实例索引
     uint32_t commandID = 0;				    // 使用的间接绘制指令的下标
 
-} IndirectMeshDrawInfo;
+};
 
-typedef struct IndirectMeshDrawDatas        // 提交给GPU的待剔除信息
+struct IndirectMeshDrawDatas        // 提交给GPU的待剔除信息
 {
     IndirectSetting setting;
 
     IndirectMeshDrawInfo draws[MAX_PER_FRAME_OBJECT_SIZE];	    
 
-} DrawClusterGroupDatas;
+};
 
-typedef struct IndirectMeshDrawCommands     // 提交给GPU的间接绘制指令信息，被剔除的资源会置instanceCount为零；
+struct IndirectMeshDrawCommands     // 提交给GPU的间接绘制指令信息，被剔除的资源会置instanceCount为零；
 {                                           // 整个buffer再给mesh pass调用绘制
     RHIIndirectCommand commands[MAX_PER_FRAME_OBJECT_SIZE];
 
-} IndirectMeshDrawCommands; 
+}; 
 
 //Indirect Cluster Draw///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-typedef struct IndirectClusterDrawInfo       // 此处是提交给GPU进行剔除的数据，在cluster的剔除完成后还会重新构建一个全局缓冲GlobalClusterDrawInfos存实际绘制的信息
+struct IndirectClusterDrawInfo       // 此处是提交给GPU进行剔除的数据，在cluster的剔除完成后还会重新构建一个全局缓冲GlobalClusterDrawInfos存实际绘制的信息
 {
     uint32_t objectID = 0;                  // 每个cluster对应的物体的实例索引
     uint32_t clusterID = 0;                 // 对cluster的索引
     uint32_t commandID = 0;				    // 使用的间接绘制指令的下标，其实也是管线状态下标
     uint32_t _padding;
 
-} IndirectClusterDrawInfo;
+};
 
-typedef struct MeshClusterDrawInfo
+struct MeshClusterDrawInfo
 {
     uint32_t objectID = 0;                  // 每个cluster对应的物体的实例索引
     uint32_t clusterID = 0;                 // 对cluster的索引
 
-} MeshClusterDrawInfo;
+};
 
-typedef struct IndirectClusterDrawDatas
+struct IndirectClusterDrawDatas
 {
     IndirectSetting setting;
 
     IndirectClusterDrawInfo draws[MAX_PER_FRAME_CLUSTER_SIZE];	    // 待剔除的全部cluster信息，可能来自于CPU端初始化，也可能来自于group剔除时在GPU端添加
                                                       
-} IndirectClusterDrawDatas;
+};
 
 // typedef struct GlobalClusterDrawInfos
 // {
@@ -449,7 +450,7 @@ typedef struct IndirectClusterDrawDatas
 
 // } GlobalClusterDrawInfos;
 
-typedef struct IndirectClusterDrawCommands			           
+struct IndirectClusterDrawCommands			           
 {
     RHIIndirectCommand command[MAX_PER_PASS_PIPELINE_STATE_COUNT];	// 间接绘制指令，每个不同的管线状态都需要一个命令
     //uint32_t    vertexCount;		= CLUSTER_TRIANGLE_SIZE * 3
@@ -457,26 +458,26 @@ typedef struct IndirectClusterDrawCommands
     //uint32_t    firstVertex;		= 0
     //uint32_t    firstInstance;	= 该管线状态下的全局起始cluster信息索引（上面的GlobalClusterDrawInfos），已考虑到最大cluster数目来计算偏移
                                                         
-} IndirectClusterDrawCommands;
+};
 
 //Indirect Cluster Group Draw///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-typedef struct IndirectClusterGroupDrawInfo 
+struct IndirectClusterGroupDrawInfo 
 {
     uint32_t objectID = 0;                  // 每个cluster group对应的物体的实例索引
     uint32_t clusterGroupID = 0;            // 对cluster group的索引
     uint32_t commandID = 0;				    // 使用的间接绘制指令的下标，其实也是管线状态下标
     uint32_t _padding;
 
-} IndirectClusterGroupDrawInfo;
+};
 
-typedef struct IndirectClusterGroupDrawDatas
+struct IndirectClusterGroupDrawDatas
 {
     IndirectSetting setting;
 
     IndirectClusterGroupDrawInfo draws[MAX_PER_FRAME_CLUSTER_GROUP_SIZE];	    
 
-} IndirectClusterGroupDrawDatas;
+};
 
 // cluster group经过剔除处理后得到的是cluster的绘制信息，直接填在上面的DrawClusterBuffer里
 

@@ -15,6 +15,9 @@ enum TextureType{
     TEXTURE_TYPE_MAX_ENUM,  //
 };
 
+// 定位有两个
+// 第一: 由文件资产加载而来的纹理，定位是SRV
+// 第二: 
 class Texture : public Asset
 {
 public:
@@ -31,6 +34,7 @@ public:
     TextureType GetTextureType()                                { return textureType; }
 
     RHITextureRef texture;
+    // 全量的SRV
     RHITextureViewRef textureView;
 
     void SetData(void* data, uint32_t size);        // TODO
@@ -68,4 +72,4 @@ private:
 
     EnableAssetEditourUI()
 };
-typedef std::shared_ptr<Texture> TextureRef;
+using TextureRef = std::shared_ptr<Texture>;
