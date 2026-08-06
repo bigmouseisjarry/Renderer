@@ -32,8 +32,6 @@ using RHITopLevelAccelerationStructureRef = std::shared_ptr<class RHITopLevelAcc
 using RHIBottomLevelAccelerationStructureRef = std::shared_ptr<class RHIBottomLevelAccelerationStructure> ;
 using RHIRootSignatureRef = std::shared_ptr<class RHIRootSignature> ;
 using RHIDescriptorSetRef = std::shared_ptr<class RHIDescriptorSet> ;
-// TODO: 准备放弃
-using RHIRenderPassRef = std::shared_ptr<class RHIRenderPass> ;
 using RHIGraphicsPipelineRef = std::shared_ptr<class RHIGraphicsPipeline> ;
 using RHIComputePipelineRef = std::shared_ptr<class RHIComputePipeline> ;
 using RHIRayTracingPipelineRef = std::shared_ptr<class RHIRayTracingPipeline> ;
@@ -62,7 +60,6 @@ enum RHIResourceType : uint32_t	// 此处的倒序也是有效的析构顺序
 	RHI_ROOT_SIGNATURE,
 	RHI_DESCRIPTOR_SET,
 	
-	RHI_RENDER_PASS,
 	RHI_GRAPHICS_PIPELINE,
 	RHI_COMPUTE_PIPELINE,
 	RHI_RAY_TRACING_PIPELINE,
@@ -1049,18 +1046,6 @@ struct RHIRenderingInfo
 	RenderingFlags renderingFlags = 0;
 
 	uint32_t multiviewCount = 0;
-};
-
-struct RHIRenderPassInfo
-{
-	std::array<AttachmentInfo, MAX_RENDER_TARGETS> colorAttachments = {};
-	AttachmentInfo depthStencilAttachment = {};
-
-	Extent2D extent = {0, 0};
-	uint32_t layers = 1;
-
-	uint32_t multiviewCount = 0;	
-
 };
 
 struct RHIRootSignatureInfo	

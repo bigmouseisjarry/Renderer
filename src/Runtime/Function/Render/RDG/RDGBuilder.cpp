@@ -354,52 +354,52 @@ void RDGBuilder::PrepareDescriptorSet(RDGPassNodeRef pass)
     }
 }
 
-void RDGBuilder::PrepareRenderTarget(RDGRenderPassNodeRef pass, RHIRenderPassInfo& renderPassInfo)
-{
-    renderPassInfo.multiviewCount = pass->multiviewCount;
-    pass->ForEachTexture([&](RDGTextureEdgeRef edge, RDGTextureNodeRef texture){
-
-        if(edge->IsOutput()) return;                            // 作为output声明时不需要view
-        if(!(edge->asColor || edge->asDepthStencil)) return;    // render target单独处理
-        RHITextureViewRef view = RDGTextureViewPool::Get()->Allocate({
-            .texture = Resolve(texture),
-            .format = texture->info.format,
-            .viewType = edge->viewType,
-            .subresource = edge->subresource}).textureView;
-        pass->pooledViews.push_back(view);
-
-        // 填充颜色附件
-        if(edge->asColor)
-        {
-            renderPassInfo.extent = {texture->info.extent.width, texture->info.extent.height};
-            renderPassInfo.layers = pass->multiviewCount > 0 ? 1 :                      // 启用multiview特性时，textureview的layer还是多个，framebuffer强制为1
-                edge->subresource.layerCount > 0 ? edge->subresource.layerCount : 1;
-
-            renderPassInfo.colorAttachments[edge->binding] = {
-                .textureView = view,
-                .loadOp = edge->loadOp,
-                .storeOp = edge->storeOp,
-                .clearColor = edge->clearColor,
-            };
-        }
-
-        // 填充深度/模板附件
-        else if (edge->asDepthStencil) 
-        {
-            renderPassInfo.extent = {texture->info.extent.width, texture->info.extent.height};
-            renderPassInfo.layers = pass->multiviewCount > 0 ? 1 :
-                edge->subresource.layerCount > 0 ? edge->subresource.layerCount : 1;
-
-            renderPassInfo.depthStencilAttachment = {
-                .textureView = view,
-                .loadOp = edge->loadOp,
-                .storeOp = edge->storeOp,
-                .clearDepth = edge->clearDepth,
-                .clearStencil = edge->clearStencil
-            };
-        }
-    });
-}
+//void RDGBuilder::PrepareRenderTarget(RDGRenderPassNodeRef pass, RHIRenderPassInfo& renderPassInfo)
+//{
+//    renderPassInfo.multiviewCount = pass->multiviewCount;
+//    pass->ForEachTexture([&](RDGTextureEdgeRef edge, RDGTextureNodeRef texture){
+//
+//        if(edge->IsOutput()) return;                            // 作为output声明时不需要view
+//        if(!(edge->asColor || edge->asDepthStencil)) return;    // render target单独处理
+//        RHITextureViewRef view = RDGTextureViewPool::Get()->Allocate({
+//            .texture = Resolve(texture),
+//            .format = texture->info.format,
+//            .viewType = edge->viewType,
+//            .subresource = edge->subresource}).textureView;
+//        pass->pooledViews.push_back(view);
+//
+//        // 填充颜色附件
+//        if(edge->asColor)
+//        {
+//            renderPassInfo.extent = {texture->info.extent.width, texture->info.extent.height};
+//            renderPassInfo.layers = pass->multiviewCount > 0 ? 1 :                      // 启用multiview特性时，textureview的layer还是多个，framebuffer强制为1
+//                edge->subresource.layerCount > 0 ? edge->subresource.layerCount : 1;
+//
+//            renderPassInfo.colorAttachments[edge->binding] = {
+//                .textureView = view,
+//                .loadOp = edge->loadOp,
+//                .storeOp = edge->storeOp,
+//                .clearColor = edge->clearColor,
+//            };
+//        }
+//
+//        // 填充深度/模板附件
+//        else if (edge->asDepthStencil) 
+//        {
+//            renderPassInfo.extent = {texture->info.extent.width, texture->info.extent.height};
+//            renderPassInfo.layers = pass->multiviewCount > 0 ? 1 :
+//                edge->subresource.layerCount > 0 ? edge->subresource.layerCount : 1;
+//
+//            renderPassInfo.depthStencilAttachment = {
+//                .textureView = view,
+//                .loadOp = edge->loadOp,
+//                .storeOp = edge->storeOp,
+//                .clearDepth = edge->clearDepth,
+//                .clearStencil = edge->clearStencil
+//            };
+//        }
+//    });
+//}
 
 void RDGBuilder::PrepareRenderingTarget(RDGRenderPassNodeRef pass, RHIRenderingInfo& renderingInfo)
 {

@@ -1269,150 +1269,150 @@ void VulkanRHIDescriptorSet::Destroy()
 
 //管线状态 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-VulkanRHIRenderPass::VulkanRHIRenderPass(const RHIRenderPassInfo& info, VulkanRHIBackend& backend)
-: RHIRenderPass(info)
-{
-    // 无论是vkpipeline需要预创建兼容的pass，还是RDG每帧创建renderpass，都导致了需要在RHI层做池化？
+//VulkanRHIRenderPass::VulkanRHIRenderPass(const RHIRenderPassInfo& info, VulkanRHIBackend& backend)
+//: RHIRenderPass(info)
+//{
+//    // 无论是vkpipeline需要预创建兼容的pass，还是RDG每帧创建renderpass，都导致了需要在RHI层做池化？
+//
+//    // 创建renderpass
+//    std::vector<VkImageView> imageViews;
+//    VulkanRenderPassAttachments renderPassAttachments = {};
+//    renderPassAttachments.viewMask = 0; 
+//    if(info.multiviewCount != 0)
+//    {
+//        for(int i = 0; i < info.multiviewCount; i++)
+//            renderPassAttachments.viewMask |= 1 << i;
+//    }
+//
+//    for(uint32_t i = 0; i < info.colorAttachments.size(); i++)
+//    {
+//        if(info.colorAttachments[i].textureView == nullptr) break;  // attachment不允许中间有间隔的空元素，检查到有空就停止
+//        
+//        renderPassAttachments.colorAttachments.push_back({
+//            .format = VulkanUtil::RHIFormatToVkFormat(info.colorAttachments[i].textureView->GetInfo().format),
+//            .samples = VK_SAMPLE_COUNT_1_BIT,
+//            .loadOp = VulkanUtil::AttachmentLoadOpToVk(info.colorAttachments[i].loadOp),
+//            .storeOp = VulkanUtil::AttachmentStoreOpToVk(info.colorAttachments[i].storeOp),
+//        });
+//        imageViews.push_back(ResourceCast(info.colorAttachments[i].textureView)->GetHandle());
+//    }
+//    if(info.depthStencilAttachment.textureView != nullptr)
+//    {
+//        renderPassAttachments.depthStencilAttachment = {
+//            .format = VulkanUtil::RHIFormatToVkFormat(info.depthStencilAttachment.textureView->GetInfo().format),
+//            .samples = VK_SAMPLE_COUNT_1_BIT,
+//            .loadOp = VulkanUtil::AttachmentLoadOpToVk(info.depthStencilAttachment.loadOp),
+//            .storeOp = VulkanUtil::AttachmentStoreOpToVk(info.depthStencilAttachment.storeOp),
+//        };
+//        imageViews.push_back(ResourceCast(info.depthStencilAttachment.textureView)->GetHandle());
+//    }
+//    handle = Backend()->FindOrCreateVkRenderPass(renderPassAttachments);
+//
+//    // 创建framebuffer
+//    VkFramebufferCreateInfo framebufferInfo = {};
+//    framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+//    framebufferInfo.renderPass = handle;
+//    framebufferInfo.attachmentCount = (uint32_t)imageViews.size();
+//    framebufferInfo.pAttachments = imageViews.data();
+//    framebufferInfo.width = info.extent.width;
+//    framebufferInfo.height = info.extent.height;
+//    framebufferInfo.layers = info.layers;
+//
+//    frameBuffer = Backend()->FindOrCreateVkFramebuffer(framebufferInfo);
+//}
+//
+//void VulkanRHIRenderPass::Destroy()
+//{
+//    // 池化统一删除
+//    // vkDestroyFramebuffer(Backend()->GetLogicalDevice(), frameBuffer, nullptr);
+//}
 
-    // 创建renderpass
-    std::vector<VkImageView> imageViews;
-    VulkanRenderPassAttachments renderPassAttachments = {};
-    renderPassAttachments.viewMask = 0; 
-    if(info.multiviewCount != 0)
-    {
-        for(int i = 0; i < info.multiviewCount; i++)
-            renderPassAttachments.viewMask |= 1 << i;
-    }
-
-    for(uint32_t i = 0; i < info.colorAttachments.size(); i++)
-    {
-        if(info.colorAttachments[i].textureView == nullptr) break;  // attachment不允许中间有间隔的空元素，检查到有空就停止
-        
-        renderPassAttachments.colorAttachments.push_back({
-            .format = VulkanUtil::RHIFormatToVkFormat(info.colorAttachments[i].textureView->GetInfo().format),
-            .samples = VK_SAMPLE_COUNT_1_BIT,
-            .loadOp = VulkanUtil::AttachmentLoadOpToVk(info.colorAttachments[i].loadOp),
-            .storeOp = VulkanUtil::AttachmentStoreOpToVk(info.colorAttachments[i].storeOp),
-        });
-        imageViews.push_back(ResourceCast(info.colorAttachments[i].textureView)->GetHandle());
-    }
-    if(info.depthStencilAttachment.textureView != nullptr)
-    {
-        renderPassAttachments.depthStencilAttachment = {
-            .format = VulkanUtil::RHIFormatToVkFormat(info.depthStencilAttachment.textureView->GetInfo().format),
-            .samples = VK_SAMPLE_COUNT_1_BIT,
-            .loadOp = VulkanUtil::AttachmentLoadOpToVk(info.depthStencilAttachment.loadOp),
-            .storeOp = VulkanUtil::AttachmentStoreOpToVk(info.depthStencilAttachment.storeOp),
-        };
-        imageViews.push_back(ResourceCast(info.depthStencilAttachment.textureView)->GetHandle());
-    }
-    handle = Backend()->FindOrCreateVkRenderPass(renderPassAttachments);
-
-    // 创建framebuffer
-    VkFramebufferCreateInfo framebufferInfo = {};
-    framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-    framebufferInfo.renderPass = handle;
-    framebufferInfo.attachmentCount = (uint32_t)imageViews.size();
-    framebufferInfo.pAttachments = imageViews.data();
-    framebufferInfo.width = info.extent.width;
-    framebufferInfo.height = info.extent.height;
-    framebufferInfo.layers = info.layers;
-
-    frameBuffer = Backend()->FindOrCreateVkFramebuffer(framebufferInfo);
-}
-
-void VulkanRHIRenderPass::Destroy()
-{
-    // 池化统一删除
-    // vkDestroyFramebuffer(Backend()->GetLogicalDevice(), frameBuffer, nullptr);
-}
-
-VulkanRHIGraphicsPipeline::VulkanRHIGraphicsPipeline(const RHIGraphicsPipelineInfo& info, VulkanRHIBackend& backend)
-: RHIGraphicsPipeline(info)
-{
-    // 描述符 push constant
-    std::vector<VkPushConstantRange> pushConstants;
-    std::vector<VkDescriptorSetLayout> descriptorSetLayouts;
-    for(const auto& pushConstant : info.rootSignature->GetInfo().GetPushConstants())
-    {
-        pushConstants.push_back(VulkanUtil::GetPushConstantInfo(pushConstant));
-    }
-    for(const auto& setInfo : ResourceCast(info.rootSignature)->GetSetInfos())
-    {
-        descriptorSetLayouts.push_back(setInfo.layout);
-    }
-    pipelineLayout = VulkanUtil::CreatePipelineLayout(backend.GetLogicalDevice(), descriptorSetLayouts, pushConstants);
-
-    // 着色器
-    std::vector<VkPipelineShaderStageCreateInfo> shaderStages;
-    if(info.vertexShader)   shaderStages.push_back(ResourceCast(info.vertexShader)->GetShaderStageCreateInfo());
-    if(info.geometryShader) shaderStages.push_back(ResourceCast(info.geometryShader)->GetShaderStageCreateInfo());
-    if(info.fragmentShader) shaderStages.push_back(ResourceCast(info.fragmentShader)->GetShaderStageCreateInfo());
-
-    // renderPass
-    // 创建管线时需要指定一个renderPass，但是又没有一个严格的一一对应关系，使用时只需要renderPass彼此兼容
-    // 又一处设计失败？
-    uint32_t attachmentSize = 0;
-    VulkanRenderPassAttachments renderPassAttachments = {};
-    renderPassAttachments.viewMask = info.viewMask; 
-    for(uint32_t i = 0; i < info.colorAttachmentFormats.size(); i++)
-    {
-        if(info.colorAttachmentFormats[i] == FORMAT_UKNOWN) break;
-        attachmentSize++;
-        
-        renderPassAttachments.colorAttachments.push_back({
-            .format = VulkanUtil::RHIFormatToVkFormat(info.colorAttachmentFormats[i]),
-            .samples = VK_SAMPLE_COUNT_1_BIT,
-            .loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-            .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
-        });
-    }
-    renderPassAttachments.depthStencilAttachment = {
-        .format = VulkanUtil::RHIFormatToVkFormat(info.depthStencilAttachmentFormat),
-        .samples = VK_SAMPLE_COUNT_1_BIT,
-        .loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-        .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
-    };
-    VkRenderPass renderPass = Backend()->FindOrCreateVkRenderPass(renderPassAttachments);
-
-
-    // 光栅固定管线状态
-    VkPipelineVertexInputStateCreateInfo vertexInputInfo    = GetInputStateCreateInfo(info.vertexInputState);
-    VkPipelineInputAssemblyStateCreateInfo inputAssembly    = GetPipelineInputAssemblyStateCreateInfo(info.primitiveType);
-    VkPipelineViewportStateCreateInfo viewportState         = GetPipelineViewportStateCreateInfo();
-    VkPipelineRasterizationStateCreateInfo rasterizer       = GetPipelineRasterizationStateCreateInfo(info.rasterizerState);
-    VkPipelineMultisampleStateCreateInfo multisampling      = GetPipelineMultisampleStateCreateInfo();
-    VkPipelineColorBlendStateCreateInfo colorBlending       = GetPipelineColorBlendStateCreateInfo(info.blendState, attachmentSize);
-    VkPipelineDepthStencilStateCreateInfo depthStencil      = GetPipelineDepthStencilStateCreateInfo(info.depthStencilState);
-    VkPipelineDynamicStateCreateInfo dynamicState           = GetPipelineDynamicStateCreateInfo();
-
-    GetDynamicInputStateCreateInfo(info.vertexInputState);
-
-
-    VkGraphicsPipelineCreateInfo pipelineInfo = {};
-    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-    pipelineInfo.pVertexInputState = &vertexInputInfo;
-    pipelineInfo.pInputAssemblyState = &inputAssembly;
-    pipelineInfo.pViewportState = &viewportState;
-    pipelineInfo.pRasterizationState = &rasterizer;
-    pipelineInfo.pMultisampleState = &multisampling;
-    pipelineInfo.pDepthStencilState = &depthStencil;
-    pipelineInfo.pColorBlendState = &colorBlending;
-    pipelineInfo.pDynamicState = &dynamicState; 
-    pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;  
-    pipelineInfo.basePipelineIndex = -1;
-    pipelineInfo.stageCount = (uint32_t)shaderStages.size();
-	pipelineInfo.pStages = shaderStages.data();
-    pipelineInfo.layout = pipelineLayout;
-    pipelineInfo.renderPass = renderPass;  
-	pipelineInfo.subpass = 0;
-
-    if (vkCreateGraphicsPipelines(backend.GetLogicalDevice(), VK_NULL_HANDLE, 1, &pipelineInfo, VK_NULL_HANDLE, &handle) != VK_SUCCESS) 
-    {
-        LOG_FATAL("Failed to create graphics pipeline!");
-    }
-
-}
+//VulkanRHIGraphicsPipeline::VulkanRHIGraphicsPipeline(const RHIGraphicsPipelineInfo& info, VulkanRHIBackend& backend)
+//: RHIGraphicsPipeline(info)
+//{
+//    // 描述符 push constant
+//    std::vector<VkPushConstantRange> pushConstants;
+//    std::vector<VkDescriptorSetLayout> descriptorSetLayouts;
+//    for(const auto& pushConstant : info.rootSignature->GetInfo().GetPushConstants())
+//    {
+//        pushConstants.push_back(VulkanUtil::GetPushConstantInfo(pushConstant));
+//    }
+//    for(const auto& setInfo : ResourceCast(info.rootSignature)->GetSetInfos())
+//    {
+//        descriptorSetLayouts.push_back(setInfo.layout);
+//    }
+//    pipelineLayout = VulkanUtil::CreatePipelineLayout(backend.GetLogicalDevice(), descriptorSetLayouts, pushConstants);
+//
+//    // 着色器
+//    std::vector<VkPipelineShaderStageCreateInfo> shaderStages;
+//    if(info.vertexShader)   shaderStages.push_back(ResourceCast(info.vertexShader)->GetShaderStageCreateInfo());
+//    if(info.geometryShader) shaderStages.push_back(ResourceCast(info.geometryShader)->GetShaderStageCreateInfo());
+//    if(info.fragmentShader) shaderStages.push_back(ResourceCast(info.fragmentShader)->GetShaderStageCreateInfo());
+//
+//    // renderPass
+//    // 创建管线时需要指定一个renderPass，但是又没有一个严格的一一对应关系，使用时只需要renderPass彼此兼容
+//    // 又一处设计失败？
+//    uint32_t attachmentSize = 0;
+//    VulkanRenderPassAttachments renderPassAttachments = {};
+//    renderPassAttachments.viewMask = info.viewMask; 
+//    for(uint32_t i = 0; i < info.colorAttachmentFormats.size(); i++)
+//    {
+//        if(info.colorAttachmentFormats[i] == FORMAT_UKNOWN) break;
+//        attachmentSize++;
+//        
+//        renderPassAttachments.colorAttachments.push_back({
+//            .format = VulkanUtil::RHIFormatToVkFormat(info.colorAttachmentFormats[i]),
+//            .samples = VK_SAMPLE_COUNT_1_BIT,
+//            .loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+//            .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+//        });
+//    }
+//    renderPassAttachments.depthStencilAttachment = {
+//        .format = VulkanUtil::RHIFormatToVkFormat(info.depthStencilAttachmentFormat),
+//        .samples = VK_SAMPLE_COUNT_1_BIT,
+//        .loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+//        .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+//    };
+//    VkRenderPass renderPass = Backend()->FindOrCreateVkRenderPass(renderPassAttachments);
+//
+//
+//    // 光栅固定管线状态
+//    VkPipelineVertexInputStateCreateInfo vertexInputInfo    = GetInputStateCreateInfo(info.vertexInputState);
+//    VkPipelineInputAssemblyStateCreateInfo inputAssembly    = GetPipelineInputAssemblyStateCreateInfo(info.primitiveType);
+//    VkPipelineViewportStateCreateInfo viewportState         = GetPipelineViewportStateCreateInfo();
+//    VkPipelineRasterizationStateCreateInfo rasterizer       = GetPipelineRasterizationStateCreateInfo(info.rasterizerState);
+//    VkPipelineMultisampleStateCreateInfo multisampling      = GetPipelineMultisampleStateCreateInfo();
+//    VkPipelineColorBlendStateCreateInfo colorBlending       = GetPipelineColorBlendStateCreateInfo(info.blendState, attachmentSize);
+//    VkPipelineDepthStencilStateCreateInfo depthStencil      = GetPipelineDepthStencilStateCreateInfo(info.depthStencilState);
+//    VkPipelineDynamicStateCreateInfo dynamicState           = GetPipelineDynamicStateCreateInfo();
+//
+//    GetDynamicInputStateCreateInfo(info.vertexInputState);
+//
+//
+//    VkGraphicsPipelineCreateInfo pipelineInfo = {};
+//    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+//    pipelineInfo.pVertexInputState = &vertexInputInfo;
+//    pipelineInfo.pInputAssemblyState = &inputAssembly;
+//    pipelineInfo.pViewportState = &viewportState;
+//    pipelineInfo.pRasterizationState = &rasterizer;
+//    pipelineInfo.pMultisampleState = &multisampling;
+//    pipelineInfo.pDepthStencilState = &depthStencil;
+//    pipelineInfo.pColorBlendState = &colorBlending;
+//    pipelineInfo.pDynamicState = &dynamicState; 
+//    pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;  
+//    pipelineInfo.basePipelineIndex = -1;
+//    pipelineInfo.stageCount = (uint32_t)shaderStages.size();
+//	pipelineInfo.pStages = shaderStages.data();
+//    pipelineInfo.layout = pipelineLayout;
+//    pipelineInfo.renderPass = renderPass;  
+//	pipelineInfo.subpass = 0;
+//
+//    if (vkCreateGraphicsPipelines(backend.GetLogicalDevice(), VK_NULL_HANDLE, 1, &pipelineInfo, VK_NULL_HANDLE, &handle) != VK_SUCCESS) 
+//    {
+//        LOG_FATAL("Failed to create graphics pipeline!");
+//    }
+//
+//}
 
 VulkanRHIGraphicsPipeline::VulkanRHIGraphicsPipeline(const RHIGraphicsPipelineInfo& info, VulkanRHIBackend& backend, void*)
 	: RHIGraphicsPipeline(info)

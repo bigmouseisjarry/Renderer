@@ -270,35 +270,6 @@ public:
 
 //管线状态 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-// TODO：准备抛弃
-class RHIRenderPass : public RHIResource	// 在vulkan里相当于renderpass和framebuffer的整体抽象
-{
-public:
-	RHIRenderPass(const RHIRenderPassInfo& info) 
-	: RHIResource(RHI_RENDER_PASS) 
-	, info(info)
-	{}
-
-	const RHIRenderPassInfo& GetInfo() { return info; }
-
-protected:
-	RHIRenderPassInfo info;
-};
-
-//class RHIRendering : public RHIResource
-//{
-//public:
-//	RHIRendering(const RHIRenderingInfo& info)
-//	:RHIResource(RHI_RENDERING),
-//	info(info)
-//	{}
-//
-//	const RHIRenderingInfo& GetInfo()const { return info; }
-//
-//protected:
-//	RHIRenderingInfo info;
-//};
-
 class RHIGraphicsPipeline : public RHIResource
 {
 public:

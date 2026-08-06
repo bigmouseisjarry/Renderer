@@ -1,7 +1,6 @@
 #include "VulkanRHI.h"
 #include "Function/Global/EngineContext.h"
 #include "Function/Render/RHI/VulkanRHI/VulkanUtil.h"
-// #include "GLFW/glfw3.h"
 #include <SDL3/SDL.h>
 #include "VulkanRHIResource.h"
 #include "Function/Render/RHI/RHIResource.h"
@@ -13,7 +12,6 @@
 
 #include <cassert>
 #include <cstddef>
-// #include <imgui_impl_glfw.h>
 #include <imgui_impl_sdl3.h>
 #include <imgui_impl_vulkan.h>
 #include "ImGuizmo.h"
@@ -62,8 +60,8 @@ void VulkanRHIBackend::Destroy()
     
     RHIBackend::Destroy();
 
-    renderPassPool.Clear();
-    frameBufferPool.Clear();
+    //renderPassPool.Clear();
+    //frameBufferPool.Clear();
     vkDestroyDescriptorPool(logicalDevice, descriptorPool, nullptr);
 
     vmaDestroyAllocator(memoryAllocator);
@@ -319,14 +317,6 @@ RHIRootSignatureRef VulkanRHIBackend::CreateRootSignature(const RHIRootSignature
 }
 
 //管线状态 ////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-RHIRenderPassRef VulkanRHIBackend::CreateRenderPass(const RHIRenderPassInfo& info)
-{
-    RHIRenderPassRef renderPass = std::make_shared<VulkanRHIRenderPass>(info, *this);
-    RegisterResource(renderPass);
-
-    return renderPass;
-}
 
 RHIGraphicsPipelineRef VulkanRHIBackend::CreateGraphicsPipeline(const RHIGraphicsPipelineInfo& info) 
 { 
@@ -852,109 +842,6 @@ void VulkanRHIBackend::CreateImmediateCommand()
     immediateCommand = std::make_shared<RHICommandListImmediate>(info);
 }
 
-VkRenderPass VulkanRHIBackend::CreateVkRenderPass(const VulkanRenderPassAttachments& info)
-{
-    bool hasDepth = (info.depthStencilAttachment.format != VK_FORMAT_UNDEFINED);
-    std::vector<VkAttachmentDescription> attachments;
-    std::vector<VkAttachmentReference> colorReferences;
-    VkAttachmentReference depthReference = {};
-
-    for(const VkAttachmentDescription& attachment : info.colorAttachments)  attachments.push_back(attachment);
-    for(VkAttachmentDescription& attachment : attachments) 
-    {
-        attachment.stencilLoadOp = attachment.loadOp;   // 写死
-        attachment.stencilStoreOp = attachment.storeOp;
-        attachment.initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        attachment.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    }
-    if(hasDepth) 
-    {
-        VkAttachmentDescription attachment = info.depthStencilAttachment;
-        attachment.stencilLoadOp = attachment.loadOp;   // 写死
-        attachment.stencilStoreOp = attachment.storeOp;
-        attachment.initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-        attachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-
-        attachments.push_back(attachment);
-    }
-
-    for(uint32_t i = 0; i < attachments.size() - 1; i++) colorReferences.push_back({ i, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL });
-	VkAttachmentReference depthAttachmentReference = { (uint32_t)attachments.size() - 1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL };
-
-    // 不支持subpass了 艹
-    VkSubpassDescription subpass = {};
-    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-    subpass.colorAttachmentCount = (uint32_t)colorReferences.size();
-    subpass.pColorAttachments = colorReferences.data();
-    subpass.pDepthStencilAttachment = hasDepth ? &depthAttachmentReference : nullptr;
-    subpass.inputAttachmentCount = 0;
-    subpass.pInputAttachments = nullptr;
-    subpass.preserveAttachmentCount = 0;
-    subpass.pPreserveAttachments = nullptr;
-    subpass.pResolveAttachments = nullptr;
-
-    // 屏障在外面显式的添加 不在pass里加了？
-    // std::vector<VkSubpassDependency> subpassDependencies(2);
-    // subpassDependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL;
-    // subpassDependencies[0].dstSubpass = 0;
-    // subpassDependencies[0].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
-    // subpassDependencies[0].srcAccessMask = VK_ACCESS_MEMORY_READ_BIT;
-    // subpassDependencies[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-    // subpassDependencies[0].srcStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
-    // subpassDependencies[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
-
-    // subpassDependencies[1].srcSubpass = 0;
-    // subpassDependencies[1].dstSubpass = VK_SUBPASS_EXTERNAL;
-    // subpassDependencies[1].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
-    // subpassDependencies[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-    // subpassDependencies[1].dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
-    // subpassDependencies[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    // subpassDependencies[1].dstStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
-
-    VkRenderPassCreateInfo renderPassInfo = {};
-    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-    renderPassInfo.attachmentCount = static_cast<uint32_t>(attachments.size());
-    renderPassInfo.pAttachments = attachments.data();
-    renderPassInfo.subpassCount = 1;
-    renderPassInfo.pSubpasses = &subpass;
-    renderPassInfo.dependencyCount = 0;
-    renderPassInfo.pDependencies = nullptr;
-
-    VkRenderPassMultiviewCreateInfo multiviewInfo = {};
-    multiviewInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_MULTIVIEW_CREATE_INFO;
-    multiviewInfo.subpassCount = 1;
-    multiviewInfo.pViewMasks = &info.viewMask;
-    multiviewInfo.correlationMaskCount = 1;
-    multiviewInfo.pCorrelationMasks = &info.viewMask;       // 指定视图共享相同的固定管线渲染状态
-    if(info.viewMask != 0)
-        renderPassInfo.pNext = &multiviewInfo;
-
-    VkRenderPass renderPass;
-    if (vkCreateRenderPass(logicalDevice, &renderPassInfo, nullptr, &renderPass) != VK_SUCCESS) 
-    {
-        LOG_FATAL("Failed to create render pass!");
-    }
-
-    // {
-    //     ScopeLock lock(sync);
-    //     renderPassMap.insert({info, renderPass});
-    // }
-    return renderPass;
-}
-
-VkFramebuffer VulkanRHIBackend::CreateVkFramebuffer(const VkFramebufferCreateInfo& info)
-{
-    VkFramebuffer frameBuffer;
-    if (vkCreateFramebuffer(logicalDevice, &info, nullptr, &frameBuffer) != VK_SUCCESS) 
-    {
-        LOG_FATAL("Failed to create framebuffer!");
-    }
-
-    return frameBuffer;
-}
-
-
-
 
 void TextureBarrier(VkCommandBuffer commandBuffer, const RHITextureBarrier& barrier)
 {
@@ -1407,46 +1294,6 @@ void VulkanRHICommandContext::BeginRendering(const RHIRenderingInfo& rendering)
 void VulkanRHICommandContext::EndRendering()
 {
     vkCmdEndRendering(handle);
-}
-
-void VulkanRHICommandContext::BeginRenderPass(RHIRenderPassRef renderPass)
-{
-    std::vector<VkClearValue> clearValues;
-    for(uint32_t i = 0; i < MAX_RENDER_TARGETS; i++) 
-    {
-        auto& attachment = ResourceCast(renderPass)->GetInfo().colorAttachments[i];
-        if(attachment.textureView == nullptr) break;
-
-        VkClearValue clearValue = {};
-        clearValue.color = { {attachment.clearColor.r, attachment.clearColor.g, 
-                                    attachment.clearColor.b, attachment.clearColor.a} };
-        clearValues.push_back(clearValue);
-    }
-    const auto& depthAttachment = ResourceCast(renderPass)->GetInfo().depthStencilAttachment;
-    if(depthAttachment.textureView != nullptr)
-    {
-        VkClearValue clearValue = {};
-        clearValue.depthStencil = { depthAttachment.clearDepth, depthAttachment.clearStencil };
-        clearValues.push_back(clearValue);
-    }
-
-    VkRenderPassBeginInfo renderPassInfo{};
-    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    renderPassInfo.renderPass = ResourceCast(renderPass)->GetHandle();
-    renderPassInfo.framebuffer = ResourceCast(renderPass)->GetFrameBuffer();
-    renderPassInfo.renderArea.offset = { 0, 0 };
-    renderPassInfo.renderArea.extent = VulkanUtil::ExtentToVk(ResourceCast(renderPass)->GetInfo().extent);
-    renderPassInfo.clearValueCount = (uint32_t)clearValues.size();
-    renderPassInfo.pClearValues = clearValues.data();
-
-    vkCmdBeginRenderPass(handle, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
-    this->renderPass = ResourceCast(renderPass).get();
-}  
-
-void VulkanRHICommandContext::EndRenderPass() 
-{
-    vkCmdEndRenderPass(handle);
-    this->renderPass = nullptr;
 }
 
 void VulkanRHICommandContext::SetViewport(Offset2D min, Offset2D max) 

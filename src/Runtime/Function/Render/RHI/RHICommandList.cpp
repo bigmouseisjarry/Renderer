@@ -111,13 +111,6 @@ void RHICommandList::PopEvent()
     else ADD_COMMAND(PopEvent);
 }
 
-//void RHICommandList::BeginRendering(RHIRenderingRef rendering)
-//{
-//    COMMANDLIST_DEBUG_OUTPUT();
-//    if (info.byPass)info.context->BeginRendering(rendering);
-//    else ADD_COMMAND(BeginRendering, rendering);
-//}
-
 void RHICommandList::BeginRendering(const RHIRenderingInfo& rendering)
 {
     COMMANDLIST_DEBUG_OUTPUT();
@@ -130,20 +123,6 @@ void RHICommandList::EndRendering()
     COMMANDLIST_DEBUG_OUTPUT();
     if (info.byPass) info.context->EndRendering();
     else ADD_COMMAND(EndRendering);
-}
-
-void RHICommandList::BeginRenderPass(RHIRenderPassRef renderPass) 
-{
-    COMMANDLIST_DEBUG_OUTPUT();
-    if(info.byPass) info.context->BeginRenderPass(renderPass);
-    else ADD_COMMAND(BeginRenderPass, renderPass);
-}
-
-void RHICommandList::EndRenderPass()
-{
-    COMMANDLIST_DEBUG_OUTPUT();
-    if(info.byPass) info.context->EndRenderPass();
-    else ADD_COMMAND(EndRenderPass);
 }
 
 void RHICommandList::SetViewport(Offset2D min, Offset2D max)
@@ -370,10 +349,6 @@ void RHICommandPopEvent::Execute(RHICommandContextRef context) { context->PopEve
 void RHICommandBeginRendering::Execute(RHICommandContextRef context) { context->BeginRendering(rendering); }
 
 void RHICommandEndRendering::Execute(RHICommandContextRef context) { context->EndRendering(); }
-
-void RHICommandBeginRenderPass::Execute(RHICommandContextRef context) { context->BeginRenderPass(renderPass); }
-
-void RHICommandEndRenderPass::Execute(RHICommandContextRef context) { context->EndRenderPass(); }
 
 void RHICommandSetViewport::Execute(RHICommandContextRef context) { context->SetViewport(min, max); }
 

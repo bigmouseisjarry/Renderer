@@ -295,22 +295,6 @@ private:
 
 //管线状态 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-class VulkanRHIRenderPass : public RHIRenderPass
-{
-public:
-	VulkanRHIRenderPass(const RHIRenderPassInfo& info, VulkanRHIBackend& backend);
-
-	const VkRenderPass& GetHandle() { return handle; }
-	const VkFramebuffer& GetFrameBuffer() { return frameBuffer; }
-
-	virtual void Destroy() override final;
-	virtual void* RawHandle() override final { return handle; };
-
-private:
-	VkRenderPass handle;
-	VkFramebuffer frameBuffer;
-};
-
 class VulkanRHIGraphicsPipeline : public RHIGraphicsPipeline
 {
 public:
@@ -475,13 +459,6 @@ struct VulkanResourceTraits<RHICommandPool>
 {
 	typedef VulkanRHICommandPool ConcreteType;
 	typedef std::shared_ptr<VulkanRHICommandPool> ConcretePointerType;
-};
-
-template<>
-struct VulkanResourceTraits<RHIRenderPass>
-{
-	typedef VulkanRHIRenderPass ConcreteType;
-	typedef std::shared_ptr<VulkanRHIRenderPass> ConcretePointerType;
 };
 
 template<>

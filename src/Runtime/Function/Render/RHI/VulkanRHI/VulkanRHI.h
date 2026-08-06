@@ -1,6 +1,5 @@
 #pragma once
 
-#include "Function/Render/RHI/VulkanRHI/VulkanRHICache.h"
 #include "VulkanUtil.h"
 #include "VulkanRHIResource.h"
 #include "Function/Render/RHI/RHI.h"
@@ -74,9 +73,6 @@ public:
 
     //管线状态 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-	// TODO: 准备放弃
-    virtual RHIRenderPassRef CreateRenderPass(const RHIRenderPassInfo& info) override final;
-
     virtual RHIGraphicsPipelineRef CreateGraphicsPipeline(const RHIGraphicsPipelineInfo& info) override final;
 
     virtual RHIComputePipelineRef CreateComputePipeline(const RHIComputePipelineInfo& info) override final;
@@ -102,12 +98,6 @@ public:
     inline VkDevice GetLogicalDevice() const            { return logicalDevice; }
     inline VmaAllocator GetMemoryAllocator() const      { return memoryAllocator; }
     inline VkDescriptorPool GetDescriptorPool() const   { return descriptorPool; }
-
-    VkRenderPass FindOrCreateVkRenderPass(const VulkanRenderPassAttachments& info) { return renderPassPool.Allocate(info).pass; }
-    VkRenderPass CreateVkRenderPass(const VulkanRenderPassAttachments& info);
-
-    VkFramebuffer FindOrCreateVkFramebuffer(const VkFramebufferCreateInfo& info) { return frameBufferPool.Allocate(info).frameBuffer; }
-    VkFramebuffer CreateVkFramebuffer(const VkFramebufferCreateInfo& info);
 
     VkPhysicalDeviceRayTracingPipelinePropertiesKHR GetRayTracingPipelineProperties() { return rayTracingPipelineProperties; }
 
@@ -140,10 +130,6 @@ private:
 
     // 描述符池
     VkDescriptorPool descriptorPool;
-
-    // 池化的renderPass和frameBuffer
-    VkRenderPassCache renderPassPool;
-    VkFramebufferCache frameBufferPool;
 
     // 立即模式命令队列
     RHICommandContextImmediateRef immediateCommandContext;
@@ -202,10 +188,6 @@ public:
 
 	virtual void EndRendering() override final;
 
-    virtual void BeginRenderPass(RHIRenderPassRef renderPass) override final;  
-
-	virtual void EndRenderPass() override final;
-
     virtual void SetViewport(Offset2D min, Offset2D max) override final;
 
     virtual void SetScissor(Offset2D min, Offset2D max) override final;
@@ -259,7 +241,7 @@ private:
     VkCommandBuffer handle;
     VulkanRHICommandPool* pool;
 
-    VulkanRHIRenderPass* renderPass;                // 运行时状态，随指令变化
+    // VulkanRHIRenderPass* renderPass;                // 运行时状态，随指令变化
     VulkanRHIGraphicsPipeline* graphicsPipeline;
     VulkanRHIComputePipeline* computePipeline;
     VulkanRHIRayTracingPipeline* rayTraycingPipeline;

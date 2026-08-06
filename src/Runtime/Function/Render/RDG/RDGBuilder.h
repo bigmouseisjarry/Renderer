@@ -77,7 +77,7 @@ private:
     void CreateInputBarriers(RDGPassNodeRef pass);
     void CreateOutputBarriers(RDGPassNodeRef pass);
     void PrepareDescriptorSet(RDGPassNodeRef pass);
-    void PrepareRenderTarget(RDGRenderPassNodeRef pass, RHIRenderPassInfo& renderPassInfo);
+    // void PrepareRenderTarget(RDGRenderPassNodeRef pass, RHIRenderPassInfo& renderPassInfo);
     void PrepareRenderingTarget(RDGRenderPassNodeRef pass, RHIRenderingInfo& renderingInfo);
     void ReleaseResource(RDGPassNodeRef pass);
     void ExecutePass(RDGRenderPassNodeRef pass);

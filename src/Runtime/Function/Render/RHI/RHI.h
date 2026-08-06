@@ -2,8 +2,6 @@
 
 #include "Function/Render/RHI/RHIStructs.h"
 #include "RHIResource.h"
-
-//#include <GLFW/glfw3.h>
 #include <SDL3/SDL.h>
 #include <array>
 #include <cstdint>
@@ -42,15 +40,11 @@ public:
 
     //ImGui ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-    // virtual void InitImGui(GLFWwindow* window) = 0;
-
     virtual void InitImGui(SDL_Window* window) = 0;
 
     //基本资源 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
     virtual RHIQueueRef GetQueue(const RHIQueueInfo& info) = 0;
-
-    // virtual RHISurfaceRef CreateSurface(GLFWwindow* window) = 0;
 
     virtual RHISurfaceRef CreateSurface(SDL_Window* window) = 0;
 
@@ -84,14 +78,7 @@ public:
 
     //管线状态 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-    // virtual RHIRenderingRef CreateRendering(const RHIRenderingInfo& info) = 0;
-
-    // 这里创建的每个后端图形api需要的开始渲染对象，比如Vlukan后端就是VkRenderingInfoKHR
-    // 后续可以将指针改成一个简单的uint64(由指针强转而来)句柄。
-    // virtual void* CreateRendering(const RHIRenderingInfo& info) = 0;
-
-    // TODO: 准备放弃
-    virtual RHIRenderPassRef CreateRenderPass(const RHIRenderPassInfo& info) = 0;
+    // 开始渲染将不再作为后端的一种资源来做存储
 
     virtual RHIGraphicsPipelineRef CreateGraphicsPipeline(const RHIGraphicsPipelineInfo& info) = 0;
 
@@ -175,11 +162,6 @@ public:
     virtual void BeginRendering(const RHIRenderingInfo& rendering) = 0;
 
     virtual void EndRendering() = 0;
-
-    // TODO：准备放弃
-    virtual void BeginRenderPass(RHIRenderPassRef renderPass) = 0;   //也可以运行时FindOrCreate相应的renderpass和framebuffer等，很多东西可以做中心化的查找表统一管理状态
-
-	virtual void EndRenderPass() = 0;
 
     virtual void SetViewport(Offset2D min, Offset2D max) = 0;
 

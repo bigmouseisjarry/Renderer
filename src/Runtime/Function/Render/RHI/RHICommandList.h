@@ -79,11 +79,6 @@ public:
 
 	void PopEvent();
 
-    // TDOD: 准备放弃
-    void BeginRenderPass(RHIRenderPassRef renderPass);
-
-	void EndRenderPass();
-
     void BeginRendering(const RHIRenderingInfo& rendering);
 
     void EndRendering();
@@ -342,28 +337,6 @@ struct RHICommandPopEvent : public RHICommand
     virtual void Execute(RHICommandContextRef context) override final;
 };
 
-struct RHICommandBeginRenderPass : public RHICommand 
-{
-    RHIRenderPassRef renderPass;
-
-    RHICommandBeginRenderPass(RHIRenderPassRef renderPass) 
-    : renderPass(renderPass)
-    {}
-
-    virtual void Execute(RHICommandContextRef context) override final;
-};
-
-//struct RHICommandBeginRendering : public RHICommand
-//{
-//    RHIRenderingRef rendering;
-//
-//    RHICommandBeginRendering(RHIRenderingRef rendering)
-//        : rendering(rendering)
-//    {}
-//
-//    virtual void Execute(RHICommandContextRef context) override final;
-//};
-
 struct RHICommandBeginRendering : public RHICommand
 {
     RHIRenderingInfo rendering;
@@ -378,13 +351,6 @@ struct RHICommandBeginRendering : public RHICommand
 struct RHICommandEndRendering : public RHICommand
 {
     RHICommandEndRendering() {}
-
-    virtual void Execute(RHICommandContextRef context) override final;
-};
-
-struct RHICommandEndRenderPass : public RHICommand 
-{
-    RHICommandEndRenderPass() {}
 
     virtual void Execute(RHICommandContextRef context) override final;
 };

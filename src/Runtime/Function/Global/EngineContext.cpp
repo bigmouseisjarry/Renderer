@@ -61,7 +61,7 @@ std::shared_ptr<EngineContext> EngineContext::Init()
 void EngineContext::MainLoopInternal()
 {
     bool exit = false;
-    while (!exit) 
+    for(;;)
     {
         UpdateTimers();
         eventSystem->Tick();
@@ -71,8 +71,8 @@ void EngineContext::MainLoopInternal()
             ENGINE_TIME_SCOPE(EngineContext::SystemTick);
 
             // 还可以使用输入状态双缓冲来解决输入竞态问题
-            // inputSystem->Tick();  // glfw多线程？
-            exit = inputSystem->Tick();  
+            exit = inputSystem->Tick();
+            if (exit) break;
 
             EngineContext::ThreadPool()->AddQueuedWork([this](){
                 worldManager->Tick(deltaTime);

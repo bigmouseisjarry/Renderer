@@ -86,7 +86,6 @@ public:
     static const std::shared_ptr<RenderSystem>& Render()                   { return context->renderSystem; }
     static const std::shared_ptr<EditorSystem>& Editor()                   { return context->editorSystem; }
     static const std::shared_ptr<InputSystem>& Input()                     { return context->inputSystem; }
-    // static const std::shared_ptr<InputSystem>& Input()                  { return context->inputSystem; }
     static const std::shared_ptr<EventSystem>& Event()                     { return context->eventSystem; }
 
 private:
@@ -99,7 +98,6 @@ private:
     std::shared_ptr<RenderResourceManager> renderResourceManger;
     std::shared_ptr<RenderSystem> renderSystem;
     std::shared_ptr<EditorSystem> editorSystem;
-    // std::shared_ptr<InputSystem> inputSystem;
     std::shared_ptr<InputSystem> inputSystem;
     std::shared_ptr<EventSystem> eventSystem;
 
