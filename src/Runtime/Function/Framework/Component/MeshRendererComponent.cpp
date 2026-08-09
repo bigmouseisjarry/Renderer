@@ -62,9 +62,12 @@ void MeshRendererComponent::InitResource()
         currentModels.resize(submeshCount);
         prevModels.resize(submeshCount);
         objectInfos.resize(submeshCount);  
+        // 为每个 submesh 分配
         while(objectIDs.size() < submeshCount)
         {
+            // GPU全局 OBJECTS 缓冲索引
             objectIDs.push_back(EngineContext::RenderResource()->AllocateObjectID());   // TODO 需要保证连续
+            // Surface Cache card起始ID（6张card）
             meshCardIDs.push_back(EngineContext::RenderResource()->AllocateMeshCardID());
         }
 
@@ -84,7 +87,7 @@ void MeshRendererComponent::InitResource()
                 .sphere = model->Submesh(i).mesh->sphere,
                 .box = model->Submesh(i).mesh->box,
                 .localScale = localScale,
-                .debugData = Vec4::Zero()
+                .debugData = Vec4::Zero(),
             };
         }
     }

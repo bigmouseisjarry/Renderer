@@ -89,6 +89,7 @@ void SkyboxComponent::OnUpdate(float deltaTime)
     Quaternion rotation = Quaternion::Identity();
 
     Mat4 transform = Mat4::Identity();
+    // 3X3的矩阵 从 (0,0)位置开始
     transform.block<3,3>(0,0) = rotation.toRotationMatrix() * scale.asDiagonal();
     transform.block<3,1>(0,3) = position;
 

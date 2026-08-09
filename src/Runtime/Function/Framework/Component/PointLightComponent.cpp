@@ -71,6 +71,7 @@ void PointLightComponent::UpdateLightInfo()
             info.view[5] = Math::LookAt(info.pos, info.pos - Vec3::UnitZ(), -Vec3::UnitY());
 
             info.proj = Math::Perspective(Math::ToRadians(90.0f), 1.0f, near, far);
+            // 点光源的采样中，uv的计算我们并不需要关心，我们只要保证看的方向一致即可
             //info.proj(1, 1) *= -1;	//Vulkan的NDC的Y坐标是向下的，通常要转一次，这下不转了？？
 
             for(int i = 0; i < 6; i++)

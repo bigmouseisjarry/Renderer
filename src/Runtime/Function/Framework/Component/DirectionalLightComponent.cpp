@@ -80,35 +80,43 @@ void DirectionalLightComponent::UpdateCascades()
 	// 计算划分，取对数划分和平均划分加权作为结果
 	for (int i = 0; i < DIRECTIONAL_SHADOW_CASCADE_LEVEL; i++) 
 	{
+		// 归一化位置 0.25 0.5 0.75 1.0
 		float p = (i + 1) / (float)(DIRECTIONAL_SHADOW_CASCADE_LEVEL);
+		// 对数划分
+		// 从 minZ * (maxZ/minZ)^0 到 minZ * (maxZ/minZ)^1
 		float log = minZ * std::pow(ratio, p);
+		// 均匀划分
 		float uniform = minZ + range * p;
+		// 加权混合并归一化
 		float d = cascadeSplitLambda * (log - uniform) + uniform;
 		cascadeSplits[i] = (d - nearClip) / clipRange;
 	}
 
-	// Calculate orthographic projection matrix for each cascade
+	// 上一级 cascade 的远分割面（即当前级的近分割面）
 	float lastSplitDist = 0.0;
 	for (int i = 0; i < DIRECTIONAL_SHADOW_CASCADE_LEVEL; i++)
 	{
+		// 当前级 cascade 的远分割面
 		float splitDist = cascadeSplits[i];
 
+		// Vulkan NDC 视锥的8个角点
 		Vec3 frustumCorners[8] = 
 		{
+			// 近
 			Vec3(-1.0f,  1.0f, 0.0f),
 			Vec3(1.0f,  1.0f, 0.0f),
 			Vec3(1.0f, -1.0f, 0.0f),
 			Vec3(-1.0f, -1.0f, 0.0f),
+			// 远
 			Vec3(-1.0f,  1.0f,  1.0f),
 			Vec3(1.0f,  1.0f,  1.0f),
 			Vec3(1.0f, -1.0f,  1.0f),
 			Vec3(-1.0f, -1.0f,  1.0f),
 		};
 
-		// Project frustum corners into world space
 		// 将相机视线台体的八个顶点转到世界空间
 		Mat4 invCam = camera->GetInvViewProjectionMatrix();
-		Mat4 fuck = invCam.inverse();
+		// Mat4 fuck = invCam.inverse();
 		for (uint32_t j = 0; j < 8; j++) 
 		{
 			Vec4 invCorner = invCam * Vec4(frustumCorners[j].x(), frustumCorners[j].y(), frustumCorners[j].z(), 1.0f);
@@ -118,8 +126,11 @@ void DirectionalLightComponent::UpdateCascades()
 		// 计算台体四条斜边的世界空间方向向量，将台体的上下表面偏移一定比例来得到划分后的台体
 		for (uint32_t j = 0; j < 4; j++) 
 		{
+			// 近角到远角的方向
 			Vec3 dist = frustumCorners[j + 4] - frustumCorners[j];
+			// 新远角
 			frustumCorners[j + 4] = frustumCorners[j] + (dist * splitDist);
+			// 新近角
 			frustumCorners[j] = frustumCorners[j] + (dist * lastSplitDist);
 		}
 

@@ -64,10 +64,31 @@ public:
             //         a.depthStencilState == b.depthStencilState;
             return a.info == b.info;
         }
-
+        
+        // MurmurHash64A是针对POD做内存hash，在这个过程中info的shared_ptr和vertex都不可以参与
         struct Hash {
+            struct Flat {
+                void* vs; void* gs; void* fs; void* rs;
+                // VertexInputStateInfo            vertexInputState;
+                PrimitiveType                   primitiveType;
+                RHIRasterizerStateInfo          rasterizerState;
+                RHIBlendStateInfo               blendState;
+                RHIDepthStencilStateInfo        depthStencilState;
+                std::array<RHIFormat, MAX_RENDER_TARGETS> colorAttachmentFormats;
+                RHIFormat                       depthStencilAttachmentFormat;
+                uint32_t                        viewMask;
+            };
             size_t operator()(const Key& a) const {
-                return  MurmurHash64A(&a.info, sizeof(RHIGraphicsPipelineInfo), 0);
+                const RHIGraphicsPipelineInfo& i = a.info;
+                Flat flat = {
+                      i.vertexShader.get(), i.geometryShader.get(),
+                      i.fragmentShader.get(), i.rootSignature.get(),
+                      // i.vertexInputState, 
+                      i.primitiveType, i.rasterizerState,
+                      i.blendState, i.depthStencilState,
+                      i.colorAttachmentFormats, i.depthStencilAttachmentFormat, i.viewMask
+                };
+                return  MurmurHash64A(&flat, sizeof(Flat), 0);
             }
         };
     };

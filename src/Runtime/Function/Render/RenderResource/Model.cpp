@@ -157,7 +157,8 @@ void Model::OnLoadAsset()
             submesh.meshClusterID = EngineContext::RenderResource()->AllocateMeshClusterID(meshClusterInfos.size());
             EngineContext::RenderResource()->SetMeshClusterInfo(meshClusterInfos, submesh.meshClusterID.begin);
 
-            for(auto& clusterGroup : submesh.virtualMesh->clusterGroups)    // cluster group信息
+            // cluster group信息
+            for(auto& clusterGroup : submesh.virtualMesh->clusterGroups)    
             {
                 MeshClusterGroupInfo groupInfo = {};
                 for(uint32_t j = 0; j < clusterGroup->clusters.size(); j++) groupInfo.clusterID[j] = clusterGroup->clusters[j] + submesh.meshClusterID.begin;  // 本地偏移加全局偏移
@@ -267,6 +268,7 @@ bool Model::LoadFromFile(std::string path)
         // });
     }  
     // EngineContext::ThreadPool()->WaitAllIdle();
+    // 不再需要了
     textureMap.clear();
 
     // 统计信息
@@ -414,6 +416,8 @@ void Model::ProcessMesh(aiMesh* mesh, const aiScene* scene, int index)
     for (uint32_t i = 0; i < mesh->mNumFaces; i++)
     {
         aiFace face = mesh->mFaces[i];
+        // 每一个面只可以是三角形
+        assert(face.mNumIndices == 3);
         for (uint32_t j = 0; j < face.mNumIndices; j++)
         {
             submesh->index[j + tempCnt] = face.mIndices[j];
@@ -435,9 +439,10 @@ void Model::ProcessMesh(aiMesh* mesh, const aiScene* scene, int index)
     }
     else if (processSetting.tangentSpace)   
     {
-        if( submesh->normal.size() == 0 ||
-            submesh->position.size() == 0 ||
-            submesh->texCoord.size() == 0)      // 必须要有这些数据才能生成
+        if (submesh->position.size() == 0 ||
+            submesh->normal.size() == 0 ||
+            submesh->texCoord.size() == 0 ||
+            submesh->index.size() == 0)      // 必须要有这些数据才能生成
         {
             ENGINE_LOG_INFO("Try to generate tangent space but missing necesscary datas!");
         }
@@ -467,6 +472,7 @@ void Model::ProcessMesh(aiMesh* mesh, const aiScene* scene, int index)
             materials[index]->SetNormal(normal);
             //materials[index]->SetSpecular(specular);
 
+            // ARM的获取不稳健
             materials[index]->SetARM(specular); // ? TODO
 
             // aiColor4D color4;
@@ -520,7 +526,8 @@ void Model::ProcessMesh(aiMesh* mesh, const aiScene* scene, int index)
     // 处理mesh名称
     submesh->name = std::string(mesh->mName.C_Str());
 
-    // 优化缓存
+    // 这里的优化缓存为什么注释掉了？是有问题还是觉得没有什么性能提升？
+    // 顶点缓存优化
     // MeshOptimizor::OptimizeMesh(submesh);
 
     // 添加到mesh asset

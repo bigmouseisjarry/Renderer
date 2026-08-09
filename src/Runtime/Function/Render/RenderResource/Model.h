@@ -46,7 +46,7 @@ private:
     EndSerailize              
 };
 
-typedef struct ModelProcessSetting
+struct ModelProcessSetting
 {
     bool smoothNormal = false;                  // 生成平滑法线
     bool flipUV = false;                        // 翻转UV
@@ -71,7 +71,7 @@ private:
     SerailizeEntry(forcePngTexture)
     EndSerailize
 
-}ModelProcessSetting;
+};
 
 struct SubmeshData
 {
@@ -85,8 +85,10 @@ struct SubmeshData
     VertexBufferRef vertexBuffer;                               // GPU端的顶点和索引缓冲，既可能存储单个submesh的全部顶点和索引，也可能存储其全部cluster合并后的数据
     IndexBufferRef indexBuffer;
 
-    IndexRange meshClusterID = { 0, 0 };            // 提交的一组cluster的ID范围
-    IndexRange meshClusterGroupID = { 0, 0 };       // 提交的一组cluster group的ID范围
+    // 表示该 submesh 的 cluster / cluster group 在 GPU 全局缓冲 MESH_CLUSTERS[] / MESH_CLUSTER_GROUPS[] 中的连续范围
+    // e.g meshClusterID = {128, 64} 表示该 submesh 的 64 个 cluster 存储在全局缓冲的 128~191 号槽位
+    IndexRange meshClusterID = { 0, 0 };            
+    IndexRange meshClusterGroupID = { 0, 0 };       
 
     RHIBottomLevelAccelerationStructureRef blas;
 };
@@ -151,6 +153,6 @@ private:
 
     EnableAssetEditourUI()
 };
-typedef std::shared_ptr<Model> ModelRef;
+using ModelRef = std::shared_ptr<Model> ;
 
 

@@ -9,8 +9,8 @@ GraphicsPipelineCache::CachedPipeline GraphicsPipelineCache::Allocate(const RHIG
     GraphicsPipelineCache::CachedPipeline ret;
 
     auto iter = cachedPipelines.find(info);
-    if(iter != cachedPipelines.end())
-    return iter->second;
+    if (iter != cachedPipelines.end())
+        return iter->second;
     
     if(!IsValid(info))
     {
@@ -18,7 +18,7 @@ GraphicsPipelineCache::CachedPipeline GraphicsPipelineCache::Allocate(const RHIG
         return { nullptr };
     }
 
-    // LOG_DEBUG("RHIGraphicsPipeline not found in cache, creating new.");
+    SPDLOG_DEBUG("RHIGraphicsPipeline not found in cache, creating new.\n current cachedPipelines size {}", cachedPipelines.size());
     ret = {
         .pipeline = EngineContext::RHI()->CreateGraphicsPipeline(info)
     };

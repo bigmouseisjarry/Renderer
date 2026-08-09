@@ -24,7 +24,7 @@ enum RenderPassMaskBits
 };
 using RenderPassMasks = uint32_t;
 
-// 约等于shaderlab文件的抽象，拆成了Material+索引各个shader文件
+// 约等于Unity 的 shaderlab文件的抽象，拆成了Material+索引各个shader文件
 // 到底应该如何抽象材质类？不是不能参考，但是太复杂了
 // 目前选择不提供完整的光栅管线状态设置，仅设置材质的参数信息和着色器信息，（以及对应的延迟/前向管线？）
 // TODO 给材质提供Uniform buffer？也只需要bindless就可以实现
@@ -103,6 +103,7 @@ public:
     void SetCastShadow(bool shadow)                         { castShadow = shadow; }
 
 protected:
+    // 材质参数
     Vec4 diffuse = Vec4::Ones();
     Vec4 emission = Vec4::Zero();
 
@@ -126,6 +127,7 @@ protected:
     std::array<TextureRef, 4> textureCube;
     std::array<TextureRef, 4> texture3D;
 
+    // 着色器引用
     ShaderRef vertexShader;                                     // 材质使用的着色器，若为空则可能使用各个pass的默认着色器
     ShaderRef geometryShader;
     ShaderRef fragmentShader;
@@ -133,6 +135,7 @@ protected:
     void Update();
 
 protected:
+    // 渲染管线设置
     uint32_t renderQueue = 1000;                                // 用于指示渲染顺序
     RenderPassMasks renderPassMask = PASS_MASK_DEFERRED_PASS;   // 用于指示和标记特定pass，方便对应的mesh pass收集
 
@@ -147,6 +150,7 @@ protected:
     bool castShadow = true;                                     // 是否加入阴影pass渲染
     
 
+    // GPU 数据
     MaterialInfo materialInfo;      // 提交给GPU的信息和下标ID
     uint32_t materialID;
 

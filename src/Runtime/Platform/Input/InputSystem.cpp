@@ -149,10 +149,10 @@ void InputSystem::ProcessEvent(const SDL_Event & event)
         m_Mouse.wheelUpPressed = (m_Mouse.wheelDelta > 0.0f);
     }
 
-	if (m_Mouse.deltaX != 0 || m_Mouse.deltaY != 0)
-	{
-		SPDLOG_INFO("Mouse motion: deltaX = {}, deltaY = {}", m_Mouse.deltaX, m_Mouse.deltaY);
-	}
+	//if (m_Mouse.deltaX != 0 || m_Mouse.deltaY != 0)
+	//{
+	//	SPDLOG_INFO("Mouse motion: deltaX = {}, deltaY = {}", m_Mouse.deltaX, m_Mouse.deltaY);
+	//}
 }
 
 void InputSystem::EndFrame()

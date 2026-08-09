@@ -23,6 +23,13 @@ Mat4 Transform::GetMatrix() const
     // model.translate(position);
     // return model.matrix();
 
+    // M = | R·S  T |
+    //     | 0     1 |
+
+    // R = rotation.toRotationMatrix()   (3×3 旋转矩阵)
+    // S = scale.asDiagonal()             (3×3 对角缩放矩阵)
+    // T = position                       (3×1 平移向量)
+
     Mat4 transform = Mat4::Identity();
     transform.block<3,3>(0,0) = rotation.toRotationMatrix() * scale.asDiagonal();
     transform.block<3,1>(0,3) = position;

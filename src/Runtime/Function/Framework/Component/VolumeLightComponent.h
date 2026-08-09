@@ -65,7 +65,7 @@ private:
     float normalBias = 0.25f;
     float energyPreservation = 1.0f;                    // 能量守恒系数，防止光爆掉
     float depthSharpness = 50.0f;
-    float blendWeight = 0.95f;
+    float blendWeight = 0.95f;                  // 历史帧辐照度的混合权重
     bool visibilityTest = true;
     bool infiniteBounce = true;
     bool randomOrientation = true;

@@ -49,7 +49,7 @@ public:
 
 private:
 	void InitResource();
-	int updateTicks = 0;	//GPU端数据已经更新的帧数，需要至少更新FRAMES_IN_FLIGHT次
+	int updateTicks = 0;	// GPU端数据已经更新的帧数，需要至少更新FRAMES_IN_FLIGHT次,确保所有在飞帧都读到新数据
 	ModelRef model;
     std::vector<MaterialRef> materials;
 	std::vector<ObjectInfo> objectInfos;

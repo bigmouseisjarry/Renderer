@@ -16,17 +16,38 @@ RHIBackendRef GlobalRHIBackend();   // TODO 避免模板类的循环引用
 
 // 对顶点数据如何进行抽象? ////////////////////////////////////////////////////////////////////////////////////
 
-// 如何组织顶点数据? 	顶点数据的通道数不应该固定;  单buffer内逐vertex的多通道 / 多buffer各一个通道,绑定多个stream
-// 顶点数据输入?  		Vertex buffer / Vertex buffer + Storage buffer(动画) / Storage buffer(间接绘制) 
-// 动画到底该怎么计算?  纹理 / Storage buffer / 计算好放到Vertex buffer(光追?) 
+// 如何组织顶点数据? 	顶点数据的通道数不应该固定，应该一个通道一个buffer:  
+//      每个通道一个独立 buffer，绑定多个vertex stream       (SoA) 
+//      一个 buffer 内交错存储所有通道，逐vertex 连续        (AoS)
 
-// 一组顶点可能在多个mesh pass里被多个不同的着色器渲染,例如阴影pass(depth only pass)和G-buffer pass
-// 1. 固定mesh pass的着色器,那么需要固定顶点输入,如UE的顶点工厂里提供position only和position and normal流来做depth only着色器的输入;那么如何处理顶点动画等?  	(UE使用的方法,用顶点工厂做屏蔽)
-// 2. 各个mesh pass允许override着色器,只固定输出,可以提供更灵活的绘制;更复杂的着色器管理,合批等处理?
+// 顶点数据输入?  		
+//      Vertex buffer                               (传统管线，通过 layout(location=N) in) 
+//      Vertex buffer + Storage buffer(动画)        (静态顶点用 VB，动画数据用 SSBO)
+//      Storage buffer(间接绘制)                    (完全不用 VB，顶点从 SSBO 读取)
+
+// 动画到底该怎么计算?  
+//      纹理                                  (把骨骼变换矩阵存到纹理，vertex shader 纹理采样)
+//      Storage buffer                        (变换矩阵存 SSBO)
+//      计算好放到Vertex buffer(光追?)        (CPU/GPU 先算好变形后的顶点，写入 VB)
+
+// 同一个 mesh 在不同 pass 需要不同顶点输入,例如阴影pass(depth only pass)和G-buffer pass
+// 1. 固定mesh pass的着色器,那么需要固定顶点输入:
+//      每个 pass 有自己的 shader，shader固定顶点输入；顶点工厂提供多种输入流（如 阴影pass所需的position-only 和 G-buffer pass 所需的full）
+//      UE 的方法：FVertexFactory 提供 FLocalVertexBuffer 的不同流
+// 
+// 2. 各个mesh pass允许override着色器,只固定输出,可以提供更灵活的绘制;
+//      更复杂的着色器管理,合批等处理
+
 // 为了兼容不同的顶点输入，有限的几个办法：
-// 1. 每种布局写一个shader（不现实）；
-// 2. 单个shader，使用变体来做区别（UE抽象了permutation数组，Unity在ShaderLab里声明和处理，都需要管理多次编译）
-// 3. 固定顶点输入，通过buffer传参来告知各通道是否有效，包装一层函数来做顶点信息获取（实测Vulkan验证层会报错不影响运行，可以用dynamic input state规避报错）
+// 1. 每种布局写一个shader:
+//      组合爆炸，不现实；
+// 
+// 2. 单个shader，使用变体来做区别
+//      (UE抽象了permutation数组，Unity在ShaderLab里声明和处理，都需要管理多次编译)
+// 
+// 3. 固定顶点输入，通过buffer传参来告知各通道是否有效，包装一层函数来做顶点信息获取
+//      (实测Vulkan验证层会报错不影响运行，可以用dynamic input state规避报错)
+// 
 // 4. 放弃顶点输入，全部走Storage buffer，甚至Index buffer也可以放弃
 
 // 一个mesh也可能经virtual mesh的处理等,间接绘制使用完全不同的一套专用的路径?
@@ -38,12 +59,13 @@ RHIBackendRef GlobalRHIBackend();   // TODO 避免模板类的循环引用
 // 在bindless，indirect，raytracing，meshshader之类新技术的视角下 Vertex buffer实在是鸡肋无比
 // 缺点：renderdoc等无法调试，移动端不支持，在NV等有特定的顶点处理硬件的GPU上会有少量的性能损失
 // 优点：SRV,UAV资源的访问读取太重要了；使用空的顶点输入也更有利于PSO的绘制合并做batch
+// https://github.com/KhronosGroup/Vulkan-Docs/blob/main/proposals/VK_EXT_device_generated_commands.adoc#vk_ext_device_generated_commands
 // ……再进一步的把管线状态信息设置等也像indirect draw一样支持到compute里，真正意义上的GPU-Driven？
 
 // ///////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 // UE的处理可以参考Engine\Shaders\Private\LocalVertexBuffer.ush, FLocalVertexBuffer, FCableSceneProxy等文件
-// https://www.cnblogs.com/timlly/p/15092257.html
+// https://www.cnblogs.com/timlly/p/15092257.html (8.2.4和8.2.5)
 // UE使用了一个顶点工厂Vertex Factory来对顶点输入进行抽象,每一个cpp的顶点工厂对应一个ush着色器文件(include)
 // 顶点工厂规定了一个顶点输入的基本规范,此外还有permutation来辅助着色器的定义(#define宏控制哪些输入流在着色器有效)
 // 由primitive scene proxy负责: 创建顶点工厂对象-初始化顶点缓冲的内容-将顶点缓冲绑定给顶点工厂-每帧内,将顶点工厂和材质等信息打包成FMeshBatch(动态路径)交给FMeshElementCollector,进行后续绘制处理
@@ -98,7 +120,7 @@ private:
 
     uint32_t vertexNum = 0;
 };
-typedef std::shared_ptr<VertexBuffer> VertexBufferRef;
+using VertexBufferRef = std::shared_ptr<VertexBuffer> ;
 
 class IndexBuffer
 {
@@ -118,7 +140,7 @@ public:
 private:
     uint32_t indexNum = 0;
 };
-typedef std::shared_ptr<IndexBuffer> IndexBufferRef;
+using IndexBufferRef = std::shared_ptr<IndexBuffer>;
 
 template<typename Type>
 class Buffer

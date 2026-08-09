@@ -232,7 +232,6 @@ struct DDGISetting
 struct VolumeLightInfo
 {
     DDGISetting setting;
-
 };
 
 struct LightSetting 
@@ -332,6 +331,7 @@ struct MeshClusterInfo
 
 struct MeshClusterGroupInfo
 {
+    // 该 group 包含的 cluster 的全局索引数组
     uint32_t clusterID[CLUSTER_GROUP_SIZE]; 
 
     uint32_t clusterSize;

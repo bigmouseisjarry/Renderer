@@ -34,6 +34,7 @@ void VolumeLightComponent::OnUpdate(float deltaTime)
 			updateCnts[i]++;
 			if (updateCnts[i] >= updateFrequences[i])
 			{
+                // 本帧该部分需要更新
 				updateCnts[i] = 0; 
                 shouldUpdate[i] = true;
 
