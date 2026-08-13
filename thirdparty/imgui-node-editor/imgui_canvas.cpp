@@ -408,13 +408,13 @@ void ImGuiEx::Canvas::EnterLocalSpace()
 {
     // Prepare ImDrawList for drawing in local coordinate system:
     //   - determine visible part of the canvas
-    //   - start unique draw command
+    //   - start unique draw GraphicsCommand
     //   - add clip rect matching canvas size
-    //   - record current command index
+    //   - record current GraphicsCommand index
     //   - record current vertex write index
 
     // Determine visible part of the canvas. Make it before
-    // adding new command, to avoid round rip where command
+    // adding new GraphicsCommand, to avoid round rip where GraphicsCommand
     // is removed in PopClipRect() and added again next PushClipRect().
     ImGui::PushClipRect(m_WidgetPosition, m_WidgetPosition + m_WidgetSize, true);
     auto clipped_clip_rect = m_DrawList->_ClipRectStack.back();
@@ -429,16 +429,16 @@ void ImGuiEx::Canvas::EnterLocalSpace()
     m_DrawListCommadBufferSize       = ImMax(m_DrawList->CmdBuffer.Size, 0);
     m_DrawListStartVertexIndex       = m_DrawList->_VtxCurrentIdx + ImVtxOffsetRef(m_DrawList);
 
-    // Make sure we do not share draw command with anyone. We don't want to mess
+    // Make sure we do not share draw GraphicsCommand with anyone. We don't want to mess
     // with someones clip rectangle.
 
     // #FIXME:
     //     This condition is not enough to avoid when user choose
     //     to use channel splitter.
     //
-    //     To deal with Suspend()/Resume() calls empty draw command
+    //     To deal with Suspend()/Resume() calls empty draw GraphicsCommand
     //     is always added then splitter is active. Otherwise
-    //     channel merger will collapse our draw command one with
+    //     channel merger will collapse our draw GraphicsCommand one with
     //     different clip rectangle.
     //
     //     More investigation is needed. To get to the bottom of this.
@@ -554,7 +554,7 @@ void ImGuiEx::Canvas::LeaveLocalSpace()
         }
     }
 
-    // Remove sentinel draw command if present
+    // Remove sentinel draw GraphicsCommand if present
     if (m_DrawListCommadBufferSize > 0)
     {
         if (m_DrawList->CmdBuffer.size() > m_DrawListCommadBufferSize && m_DrawList->CmdBuffer[m_DrawListCommadBufferSize].UserCallback == ImDrawCallback_ImCanvas)

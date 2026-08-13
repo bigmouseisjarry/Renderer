@@ -258,7 +258,7 @@ bool Model::LoadFromFile(std::string path)
     for(int i = 0; i < processMeshes.size(); i++)
     {
         aiMesh* mesh = processMeshes[i];
-        ENGINE_LOG_INFO("[{}/{}] Start processing mesh [{}]. ", i, processMeshes.size(), mesh->mName.C_Str());   // scene->mNumMeshes ?
+        // ENGINE_LOG_INFO("[{}/{}] Start processing mesh [{}]. ", i, processMeshes.size(), mesh->mName.C_Str());   // scene->mNumMeshes ?
 
         ProcessMesh(mesh, scene, i);
 

@@ -1490,7 +1490,7 @@ void RenderPrimitivesEx(const _Renderer& renderer, ImDrawList& draw_list, const 
     unsigned int idx          = 0;
     renderer.Init(draw_list);
     while (prims) {
-        // find how many can be reserved up to end of current draw command's limit
+        // find how many can be reserved up to end of current draw GraphicsCommand's limit
         unsigned int cnt = ImMin(prims, (MaxIdx<ImDrawIdx>::Value - draw_list._VtxCurrentIdx) / renderer.VtxConsumed);
         // make sure at least this many elements can be rendered to avoid situations where at the end of buffer this slow path is not taken all the time
         if (cnt >= ImMin(64u, prims)) {
@@ -1509,7 +1509,7 @@ void RenderPrimitivesEx(const _Renderer& renderer, ImDrawList& draw_list, const 
                 prims_culled = 0;
             }
             cnt = ImMin(prims, (MaxIdx<ImDrawIdx>::Value - 0/*draw_list._VtxCurrentIdx*/) / renderer.VtxConsumed);
-            // reserve new draw command
+            // reserve new draw GraphicsCommand
             draw_list.PrimReserve(cnt * renderer.IdxConsumed, cnt * renderer.VtxConsumed);
         }
         prims -= cnt;

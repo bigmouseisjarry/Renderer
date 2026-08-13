@@ -6,6 +6,13 @@ target("renderer")
     set_languages("c++20")
     set_kind("binary")
     add_files("src/**.cpp", "thirdparty/**.cpp", "thirdparty/**.c")
+    add_files("thirdparty/lemon/lemon/arg_parser.cc",
+              "thirdparty/lemon/lemon/base.cc",
+              "thirdparty/lemon/lemon/color.cc",
+              "thirdparty/lemon/lemon/lp_base.cc",
+              "thirdparty/lemon/lemon/lp_skeleton.cc",
+              "thirdparty/lemon/lemon/random.cc",
+              "thirdparty/lemon/lemon/bits/windows.cc")
     add_headerfiles("src/**.h", "src/**.hpp")
     add_extrafiles("Asset/BuildIn/Shader/**.comp",
                     "Asset/BuildIn/Shader/**.glsl",
@@ -36,8 +43,15 @@ target("renderer")
                     "thirdparty/NRD/Source",
                     "Asset/BuildIn/Shader/nrd",
                     "thirdparty/ShaderMake",
+                    "thirdparty/lemon",
                     "thirdparty/MathLib")                
     add_packages("vulkansdk", "libsdl3","imgui", "stb", "assimp", "cereal", "spdlog", "eventpp", "meshoptimizer", "metis", "mikktspace", "eigen", "stduuid")
+    if is_plat("windows") then
+        add_defines("WIN32")
+        add_syslinks("ole32")
+    else
+        add_syslinks("pthread")
+    end
 
 --
 -- If you want to known more usage about xmake, please see https://xmake.io

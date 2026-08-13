@@ -516,12 +516,12 @@ void BuildParentClusters(
     float error = MeshOptimizor::SimplifyMesh(tempMesh, 0.25f, 1e50, tempIndex);        //减面
     if ((float)tempIndex.size() / prevIndexSize > 0.9)  // 完全减不下去再中断
     {
-        printf("ERROR SimplifyMesh at level [%d], rate [%f], indexCnt [%d]\n", clusterGroup->mipLevel + 1, (float)tempIndex.size() / prevIndexSize, prevIndexSize);
+        // printf("ERROR SimplifyMesh at level [%d], rate [%f], indexCnt [%d]\n", clusterGroup->mipLevel + 1, (float)tempIndex.size() / prevIndexSize, prevIndexSize);
         clusterGroup->lodBound = parentLodBound;
         clusterGroup->parentLodError = 1000.0f;
         return; 
      }
-    printf("SimplifyMesh at level [%d], rate [%f], indexCnt [%d]\n", clusterGroup->mipLevel + 1, (float)tempIndex.size() / prevIndexSize, prevIndexSize);
+    // printf("SimplifyMesh at level [%d], rate [%f], indexCnt [%d]\n", clusterGroup->mipLevel + 1, (float)tempIndex.size() / prevIndexSize, prevIndexSize);
     parentLodError = std::max(parentLodError, sqrt(error));
 
     MeshRef parentMesh = std::make_shared<Mesh>(*tempMesh.get(), tempIndex);

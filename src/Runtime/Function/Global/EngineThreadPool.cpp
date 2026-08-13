@@ -17,8 +17,8 @@ void EngineThreadPool::Init()
 uint32_t EngineThreadPool::ThreadFrameIndex()
 {
     uint32_t currentThreadID = PlatformProcess::GetThreadID();
-    if(currentThreadID == mainThreadID) return EngineContext::CurrentFrameIndex();
-    return threadFrameIndex;
+    if(currentThreadID == mainThreadID) return EngineContext::CurrentFrameIndex();      // 主线程直接用当前帧索引
+    return threadFrameIndex;                                                            // 工作线程用录制时捕获的帧索引
 }
 
 uint32_t EngineThreadPool::ThreadPreviousFrameIndex()

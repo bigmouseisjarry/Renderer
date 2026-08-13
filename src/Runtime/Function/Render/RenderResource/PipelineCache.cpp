@@ -9,8 +9,10 @@ GraphicsPipelineCache::CachedPipeline GraphicsPipelineCache::Allocate(const RHIG
     GraphicsPipelineCache::CachedPipeline ret;
 
     auto iter = cachedPipelines.find(info);
-    if (iter != cachedPipelines.end())
+    if (iter != cachedPipelines.end()) {
+        // SPDLOG_INFO("RHIGraphicsPipeline found in cache, creating new.\n current cachedPipelines size {}", cachedPipelines.size());
         return iter->second;
+    }
     
     if(!IsValid(info))
     {
@@ -18,11 +20,11 @@ GraphicsPipelineCache::CachedPipeline GraphicsPipelineCache::Allocate(const RHIG
         return { nullptr };
     }
 
-    SPDLOG_DEBUG("RHIGraphicsPipeline not found in cache, creating new.\n current cachedPipelines size {}", cachedPipelines.size());
     ret = {
         .pipeline = EngineContext::RHI()->CreateGraphicsPipeline(info)
     };
     cachedPipelines[info] = ret;
+    SPDLOG_INFO("RHIGraphicsPipeline not found in cache, creating new.\n current cachedPipelines size {}", cachedPipelines.size());
     
     return ret;
 }

@@ -36,7 +36,7 @@ void RHICommandList::Execute(RHIFenceRef waitFence, RHISemaphoreRef waitSemaphor
 {
     if (!info.byPass) 
     {
-        // LOG_DEBUG("Recording command list in delay mode.");
+        // LOG_DEBUG("Recording GraphicsCommand list in delay mode.");
         for (int32_t i = 0; i < commands.size(); i++) 
         {
             commands[i]->Execute(info.context);

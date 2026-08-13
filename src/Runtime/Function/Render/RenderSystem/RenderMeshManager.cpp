@@ -32,7 +32,7 @@ void RenderMeshManager::PrepareMeshPass()
     ENGINE_TIME_SCOPE(RenderMeshManager::PrepareMeshPass);
 
     // 回读上一帧的统计数据
-    auto cullingPass = std::dynamic_pointer_cast<GPUCullingPass>(EngineContext::Render()->GetPasses()[GPU_CULLING_PASS]);
+    std::shared_ptr<GPUCullingPass> cullingPass = std::dynamic_pointer_cast<GPUCullingPass>(EngineContext::Render()->GetPasses()[GPU_CULLING_PASS]);
     if(cullingPass) cullingPass->CollectStatisticDatas();   
 
     // 遍历场景，获取绘制信息

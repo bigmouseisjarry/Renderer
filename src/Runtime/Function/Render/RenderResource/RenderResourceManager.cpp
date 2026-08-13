@@ -26,8 +26,10 @@ void RenderResourceManager::Destroy()
 
 uint32_t RenderResourceManager::AllocateBindlessID(const BindlessResourceInfo& resoruceInfo, BindlessSlot slot)
 {
+    // 全局Bindless分配id
     uint32_t index = bindlessIDAlloctor[slot].Allocate();
 
+    // 更新所有帧（e.g.当前的全部两个帧）的对应描述符绑定信息
     for(auto& resource : perFrameResources)
     {
         resource.descriptorSet->UpdateDescriptor({

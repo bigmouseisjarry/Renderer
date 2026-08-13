@@ -53,11 +53,11 @@ void EditorUIPass::InitImGuiStyle()
 	//{
  //       RHIQueueRef queue           = EngineContext::RHI()->GetQueue({.type = QUEUE_TYPE_GRAPHICS, .index = 0});
  //       RHICommandPoolRef pool      = EngineContext::RHI()->CreateCommandPool({ queue });  
- //       RHICommandListRef command   = pool->CreateCommandList(true);
- //       command->BeginCommand();
- //       command->ImGuiCreateFontsTexture();
- //       command->EndCommand();
- //       command->Execute();
+ //       RHICommandListRef GraphicsCommand   = pool->CreateCommandList(true);
+ //       GraphicsCommand->BeginCommand();
+ //       GraphicsCommand->ImGuiCreateFontsTexture();
+ //       GraphicsCommand->EndCommand();
+ //       GraphicsCommand->Execute();
  //       queue->WaitIdle();
 
 	//	ImGui_ImplVulkan_DestroyFontUploadObjects();

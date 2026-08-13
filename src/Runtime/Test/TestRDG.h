@@ -144,11 +144,11 @@
 //         fences[frameIndex]->Wait();
 //         RHITextureRef swapchainTexture = swapchain->GetNewFrame(nullptr, startSemaphores[frameIndex]); 
 
-//         RHICommandListRef command = commands[frameIndex];
-//         command->BeginCommand();
+//         RHICommandListRef GraphicsCommand = commands[frameIndex];
+//         GraphicsCommand->BeginCommand();
 
 //         {
-//             RDGBuilder rdgBuilder = RDGBuilder(command);
+//             RDGBuilder rdgBuilder = RDGBuilder(GraphicsCommand);
 
 //             RDGTextureHandle finalColor = rdgBuilder.CreateTexture("Final Color Texture")
 //                 .Exetent({windowsExtent.width, windowsExtent.height, 1})
@@ -228,11 +228,11 @@
 //                 .DepthStencil(depth, ATTACHMENT_LOAD_OP_CLEAR, ATTACHMENT_STORE_OP_STORE, 1.0f, 0)
 //                 .Execute([&](RDGPassContext context) {
 
-//                     RHICommandListRef command = context.command;                                            
-//                     command->SetViewport({0, 0}, windowsOffset);
-//                     command->SetScissor({0, 0}, windowsOffset); 
-//                     command->SetGraphicsPipeline(graphicsPipeline);
-//                     command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);   
+//                     RHICommandListRef GraphicsCommand = context.GraphicsCommand;                                            
+//                     GraphicsCommand->SetViewport({0, 0}, windowsOffset);
+//                     GraphicsCommand->SetScissor({0, 0}, windowsOffset); 
+//                     GraphicsCommand->SetGraphicsPipeline(graphicsPipeline);
+//                     GraphicsCommand->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);   
 
 //                     // 直接绘制
 //                     if(false)
@@ -241,11 +241,11 @@
 //                         {
 //                             VertexBufferRef vertexBuffer = model->GetVertexBuffer(i);
 //                             IndexBufferRef indexBuffer = model->GetIndexBuffer(i);
-//                             // command->BindVertexBuffer(vertexBuffer->buffer, 0, 0);     // 也可以用绑定的方式绘制
-//                             // command->BindIndexBuffer(indexBuffer->buffer, 0);
-//                             // command->DrawIndexed(indexBuffer->IndexNum(), 1, 0, 0, i + 1); 
+//                             // GraphicsCommand->BindVertexBuffer(vertexBuffer->buffer, 0, 0);     // 也可以用绑定的方式绘制
+//                             // GraphicsCommand->BindIndexBuffer(indexBuffer->buffer, 0);
+//                             // GraphicsCommand->DrawIndexed(indexBuffer->IndexNum(), 1, 0, 0, i + 1); 
 
-//                             command->Draw(indexBuffer->IndexNum(), 1, 0, i + 1);    
+//                             GraphicsCommand->Draw(indexBuffer->IndexNum(), 1, 0, i + 1);    
 //                         } 
 //                     }   
 
@@ -265,7 +265,7 @@
 //                             }); 
 //                         } 
 //                         memcpy(indirectBuffer->Map(), indirectCommands.data(), indirectCommands.size() * sizeof(RHIIndirectCommand));
-//                         command->DrawIndirect(indirectBuffer, 0, indirectCommands.size());
+//                         GraphicsCommand->DrawIndirect(indirectBuffer, 0, indirectCommands.size());
 //                     }
                                  
 //                 })
@@ -282,10 +282,10 @@
 //                 .Read(0, 5, 0, setting)
 //                 .Execute([&](RDGPassContext context) {       
 
-//                     RHICommandListRef command = context.command; 
-//                     command->SetComputePipeline(computePipeline);
-//                     command->BindDescriptorSet(context.descriptors[0], 0);
-//                     command->Dispatch(  windowsExtent.width / 16, 
+//                     RHICommandListRef GraphicsCommand = context.GraphicsCommand; 
+//                     GraphicsCommand->SetComputePipeline(computePipeline);
+//                     GraphicsCommand->BindDescriptorSet(context.descriptors[0], 0);
+//                     GraphicsCommand->Dispatch(  windowsExtent.width / 16, 
 //                                         windowsExtent.height / 16, 
 //                                         1);
 //                 })
@@ -303,8 +303,8 @@
 //             //     RDGBufferPool::Get()->AllocatedSize(), RDGTexturePool::Get()->AllocatedSize(), RDGTextureViewPool::Get()->AllocatedSize());
 //         }
          
-//         command->EndCommand();
-//         command->Execute(fences[frameIndex], startSemaphores[frameIndex], finishSemaphores[frameIndex]);
+//         GraphicsCommand->EndCommand();
+//         GraphicsCommand->Execute(fences[frameIndex], startSemaphores[frameIndex], finishSemaphores[frameIndex]);
 
 //         swapchain->Present(finishSemaphores[frameIndex]);   
 //     }

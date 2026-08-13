@@ -10,7 +10,7 @@
 // #include <time.h>
 
 // //-----------------------------------------------------------------------------
-// // Configuration. TODO - move these to command-line flags
+// // Configuration. TODO - move these to GraphicsCommand-line flags
 
 // bool g_testAll = false;
 
@@ -553,7 +553,7 @@
 
 //   if(argc < 2)
 //   {
-//     printf("(No test hash given on command line, testing Murmur3_x86_32.)\n");
+//     printf("(No test hash given on GraphicsCommand line, testing Murmur3_x86_32.)\n");
 //   }
 //   else
 //   {

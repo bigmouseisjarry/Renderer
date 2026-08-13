@@ -907,7 +907,7 @@ void ExeCompile()
 
         string outputFile = taskData.outputFileWithoutExt + g_OutputExt;
 
-        // Building command line
+        // Building GraphicsCommand line
         ostringstream cmd;
         {
             #ifdef _WIN32 // workaround for Windows
@@ -1159,7 +1159,7 @@ void ExeCompile()
             if (result == 0)
                 isSucceeded = true;
 
-            // Retry if count > 0 and failed to execute child sub-process or command shell (posix only)
+            // Retry if count > 0 and failed to execute child sub-process or GraphicsCommand shell (posix only)
             else if (g_TaskRetryCount > 0 && (childProcessError || commandShellError))
                 willRetry = true;
         }
@@ -1591,7 +1591,7 @@ int32_t main(int32_t argc, const char** argv)
     signal(SIGBREAK, SignalHandler);
 #endif
 
-    // Parse command line
+    // Parse GraphicsCommand line
 #if DEVMODE
     const char* self = argv[0];
 #endif

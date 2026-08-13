@@ -94,6 +94,7 @@ void RenderSurfaceCacheManager::InitCache(const SurfaceCacheTask& task)
         Vec3::UnitZ(),
         -Vec3::UnitZ(),
     };
+
     static const Vec3 up[3] = {
         Vec3::UnitY(),
         Vec3::UnitX(),
@@ -117,10 +118,12 @@ void RenderSurfaceCacheManager::InitCache(const SurfaceCacheTask& task)
 
     for(int face = 0; face < 6; face++)  // 初始化每个card的视角信息，前后上下右左
     {
+        // 该card视角方向下extent的宽小于高，旋转对应的up方向
         bool rotate =   ((face == 0 || face == 1) && (extent.z() < extent.y())) ||
                         ((face == 2 || face == 3) && (extent.z() < extent.x())) ||
                         ((face == 4 || face == 5) && (extent.x() < extent.y()));
         IVec3 viewAxis = rotate ? rotateAxis[face / 2] : axis[face / 2];
+        // 相机看向包围盒中心，所以 viewDirection 是反方向
         Vec3 viewDirection  = -direction[face];
         Vec3 viewUp         = rotate ? rotateUp[face / 2] : up[face / 2];
 
@@ -181,6 +184,7 @@ void RenderSurfaceCacheManager::UpdateSurfaceCache()
     {
         ENGINE_TIME_SCOPE(RenderSurfaceCacheManager::Rasterize);
 
+        // 光栅化预算
         int32_t rasterizeBuget = MAX_SURFACE_CACHE_RASTERIZE_SIZE * MAX_SURFACE_CACHE_RASTERIZE_SIZE;
         for(auto& task : tasks) 
         {
@@ -234,10 +238,12 @@ void RenderSurfaceCacheManager::UpdateSurfaceCache()
                             prevRange = range;
                             range = newRange;
 
+                            // 保存为旧的采样位置
                             card.sampleAtlasOffset = prevRange->offset + padding;
                             card.sampleAtlasExtent = prevRange->extent - padding;
                         }
-                        else {
+                        else 
+                        {
                             prevRange = nullptr;
                             range = newRange;
 
@@ -245,6 +251,7 @@ void RenderSurfaceCacheManager::UpdateSurfaceCache()
                             card.sampleAtlasExtent = range->extent - padding;
                         }
 
+                        // 光栅化指向新空间
                         card.atlasOffset = range->offset + padding;
                         card.atlasExtent = range->extent - padding;
                         entry.directLightings.clear();  // 清空光照相关数据
@@ -300,6 +307,7 @@ void RenderSurfaceCacheManager::UpdateSurfaceCache()
             auto& card = cards[meashCardID];
             if(!entry.valid) continue;
 
+            // 预算不足一个 tile，直接退出
             if(directLightingBuget < SURFACE_CACHE_DIRECT_LIGHTING_TILE_SIZE * SURFACE_CACHE_DIRECT_LIGHTING_TILE_SIZE) break;
             {
                 auto& range = entry.atlasRange;

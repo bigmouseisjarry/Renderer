@@ -487,7 +487,7 @@ void RDGBuilder::ExecutePass(RDGRenderPassNodeRef pass)
 
     CreateInputBarriers(pass);
 
-    // command->BeginRenderPass(renderPass);
+    // GraphicsCommand->BeginRenderPass(renderPass);
 	command->BeginRendering(renderingInfo);
 
     RDGPassContext context = {
@@ -500,7 +500,7 @@ void RDGBuilder::ExecutePass(RDGRenderPassNodeRef pass)
     context.passIndex[2] = pass->passIndex[2];
     pass->execute(context);
 
-    // command->EndRenderPass();
+    // GraphicsCommand->EndRenderPass();
     command->EndRendering();
 
     CreateOutputBarriers(pass);

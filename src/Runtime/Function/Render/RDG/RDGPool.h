@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Function/Global/Definations.h"
 #include "Function/Render/RHI/RHIStructs.h"
 #include "MurmurHash2.h"
 
@@ -13,7 +14,6 @@
 // 包括buffer texture textureView等
 // 录制每个pass的命令时会申请此处的实际RHI资源，录制完成后再将资源归还给池子
 
-// renderPass和frameBuffer是在RHI层实现的池化
 // TODO 目前并没有做池化后的GC，冗余资源没有定期删除
 
 class RDGBufferPool
@@ -220,7 +220,7 @@ public:
 
     static std::shared_ptr<RDGDescriptorSetPool> Get(uint32_t index)    // 描述符池需要FRAMES_IN_FLIGHT每帧一个，不然下一帧修改可能影响上一帧还未完成的渲染！！！
     {                                                                   
-        static std::shared_ptr<RDGDescriptorSetPool> pool[3];
+        static std::shared_ptr<RDGDescriptorSetPool> pool[FRAMES_IN_FLIGHT];
         if(pool[index] == nullptr) pool[index] = std::make_shared<RDGDescriptorSetPool>();
         return pool[index];
     }

@@ -1,5 +1,4 @@
 #pragma once
-
 #include "Core/DependencyGraph/DependencyGraph.h"
 #include "Function/Global/Definations.h"
 #include "Function/Render/RenderPass/MeshPass.h"
@@ -22,12 +21,9 @@ class RenderSystem
 public:
     void Init();
     void Destroy() {}
-    //void InitGLFW();
-    //void DestroyGLFW();
     void InitSDL();
     void DestroySDL();
 
-    //bool Tick();
     void Tick();
     void BuildRDG();
     void ExecuteRDG();
@@ -40,7 +36,6 @@ public:
     const bool IsPassEnabled(PassType passType) { if(passes[passType] && passes[passType]->IsEnabled()) return true; return false; }
     void SetPassEnabled(PassType passType, bool enable) { if(passes[passType]) passes[passType]->SetEnable(enable); }
 
-    // GLFWwindow* GetWindow()         { return window; }
 	SDL_Window* GetWindow()      { return window; }
     Extent2D GetWindowsExtent()     { return WINDOW_EXTENT; }
     Extent2D GetHalfWindowsExtent() { return HALF_WINDOW_EXTENT; }
@@ -56,15 +51,12 @@ public:
     DependencyGraphRef GetRDGDependenctyGraph()                                 { return rdgDependencyGraph; }
 
 private:
-    // GLFWwindow* window;
 	SDL_Window* window;
-    
 
     std::array<RDGBuilderRef, FRAMES_IN_FLIGHT> rdgBuilders;
 
     RHIBackendRef backend;
     RHISurfaceRef surface;
-	// RHISurfaceRef sdlSurface;
     RHIQueueRef queue;
     RHISwapchainRef swapchain;
     RHICommandPoolRef pool;
@@ -72,9 +64,12 @@ private:
 
     struct PerFrameCommonResource 
     {
-        RHICommandListRef command;
+        RHICommandListRef GraphicsCommand;
+        RHICommandListRef ComputeCommand;
+        
         RHISemaphoreRef startSemaphore;
         RHISemaphoreRef finishSemaphore;
+
         RHIFenceRef fence;
     };
     std::array<PerFrameCommonResource, FRAMES_IN_FLIGHT> perFrameCommonResources;

@@ -31,11 +31,6 @@ std::shared_ptr<EngineContext> EngineContext::Init()
 
     context->renderSystem = std::make_shared<RenderSystem>();
     context->renderSystem->InitSDL();
-    // context->renderSystem->InitGLFW();
-
-    //context->inputSystem = std::make_shared<InputSystem>();
-    //context->inputSystem->Init();
-    //context->inputSystem->InitGLFW();
 
 	context->inputSystem = std::make_shared<InputSystem>();
     
@@ -108,7 +103,6 @@ void EngineContext::DestroyInternal()
     threadPool->Destroy();
     logSystem->Destroy();
     eventSystem->Destroy();
-    // renderSystem->DestroyGLFW();
 	renderSystem->DestroySDL();
 }
 

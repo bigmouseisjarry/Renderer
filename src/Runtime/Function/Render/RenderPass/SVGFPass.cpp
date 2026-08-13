@@ -255,12 +255,12 @@ void SVGFPass::Build(RDGBuilder& builder)
             //         SVGFSetting newSetting = setting;
             //         newSetting.round = context.passIndex[0];
 
-            //         RHICommandListRef command = context.command; 
-            //         command->SetComputePipeline(computePipeline[4]);
-            //         command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);   
-            //         command->BindDescriptorSet(context.descriptors[1], 1);
-            //         command->PushConstants(&newSetting, sizeof(SVGFSetting), SHADER_FREQUENCY_COMPUTE);
-            //         command->Dispatch(  Math::CeilDivide(EngineContext::Render()->GetWindowsExtent().width, 16), 
+            //         RHICommandListRef GraphicsCommand = context.GraphicsCommand; 
+            //         GraphicsCommand->SetComputePipeline(computePipeline[4]);
+            //         GraphicsCommand->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);   
+            //         GraphicsCommand->BindDescriptorSet(context.descriptors[1], 1);
+            //         GraphicsCommand->PushConstants(&newSetting, sizeof(SVGFSetting), SHADER_FREQUENCY_COMPUTE);
+            //         GraphicsCommand->Dispatch(  Math::CeilDivide(EngineContext::Render()->GetWindowsExtent().width, 16), 
             //                             Math::CeilDivide(EngineContext::Render()->GetWindowsExtent().height, 16), 
             //                             1);
             //     })

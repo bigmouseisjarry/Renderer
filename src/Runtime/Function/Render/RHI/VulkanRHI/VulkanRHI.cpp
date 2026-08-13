@@ -181,6 +181,10 @@ void VulkanRHIBackend::InitImGui(SDL_Window* window)
     initInfo.UseDynamicRendering = true;
     // initInfo.ColorAttachmentFormat = VulkanUtil::RHIFormatToVkFormat(EngineContext::Render()->GetColorFormat());
 
+    initInfo.CheckVkResultFn = [](VkResult err) {
+        if (err != VK_SUCCESS) LOG_FATAL("ImGui Vulkan error: %d", (int)err);
+        };
+
     std::vector<VkFormat> colorFormats = { VulkanUtil::RHIFormatToVkFormat(EngineContext::Render()->GetColorFormat()) };
 
     initInfo.PipelineInfoMain.Subpass = 0;
@@ -804,17 +808,18 @@ void VulkanRHIBackend::CreateMemoryAllocator()
 
 void VulkanRHIBackend::CreateDescriptorPool()
 {
+
     std::vector<VkDescriptorPoolSize> descriptorPoolSizes = {
-        { VK_DESCRIPTOR_TYPE_SAMPLER, 4096 },
-        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4096 },
-        { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 4096 },
-        { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 4096 },
-        { VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 4096 },
-        { VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, 4096 },
-        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 4096 },
-        { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4096 },
-        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 4096 },
-        { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 4096 },
+          { VK_DESCRIPTOR_TYPE_SAMPLER,                     4096 },
+          { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,      4096 },
+          { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,               4096 },
+          { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,               4096 },
+          { VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER,        4096 },
+          { VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER,        4096 },
+          { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,              4096 },
+          { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,              4096 },
+          { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,      4096 },
+          { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC,      4096 },
     };
 
     //描述符池信息

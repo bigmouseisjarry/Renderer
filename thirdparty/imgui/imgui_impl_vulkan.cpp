@@ -60,9 +60,9 @@
 //  2024-01-19: [Helpers] Vulkan: Fixed vkAcquireNextImageKHR() validation errors in VulkanSDK 1.3.275 by allocating one extra semaphore than in-flight frames. (#7236)
 //  2024-01-11: Vulkan: Fixed vkMapMemory() calls unnecessarily using full buffer size (#3957). Fixed MinAllocationSize handing (#7189).
 //  2024-01-03: Vulkan: Added MinAllocationSize field in ImGui_ImplVulkan_InitInfo to workaround zealous "best practice" validation layer. (#7189, #4238)
-//  2024-01-03: Vulkan: Stopped creating command pools with VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT as we don't reset them.
+//  2024-01-03: Vulkan: Stopped creating GraphicsCommand pools with VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT as we don't reset them.
 //  2023-11-29: Vulkan: Fixed mismatching allocator passed to vkCreateCommandPool() vs vkDestroyCommandPool(). (#7075)
-//  2023-11-10: *BREAKING CHANGE*: Removed parameter from ImGui_ImplVulkan_CreateFontsTexture(): backend now creates its own command-buffer to upload fonts.
+//  2023-11-10: *BREAKING CHANGE*: Removed parameter from ImGui_ImplVulkan_CreateFontsTexture(): backend now creates its own GraphicsCommand-buffer to upload fonts.
 //              *BREAKING CHANGE*: Removed ImGui_ImplVulkan_DestroyFontUploadObjects() which is now unnecessary as we create and destroy those objects in the backend.
 //              ImGui_ImplVulkan_CreateFontsTexture() is automatically called by NewFrame() the first time.
 //              You can call ImGui_ImplVulkan_CreateFontsTexture() again to recreate the font atlas texture.
@@ -604,7 +604,7 @@ void ImGui_ImplVulkan_RenderDrawData(ImDrawData* draw_data, VkCommandBuffer comm
     ImVec2 clip_off = draw_data->DisplayPos;         // (0,0) unless using multi-viewports
     ImVec2 clip_scale = draw_data->FramebufferScale; // (1,1) unless using retina display which are often (2,2)
 
-    // Render command lists
+    // Render GraphicsCommand lists
     // (Because we merged all buffers into a single one, we maintain our own offset into them)
     VkDescriptorSet last_desc_set = VK_NULL_HANDLE;
     int global_vtx_offset = 0;
@@ -815,7 +815,7 @@ void ImGui_ImplVulkan_UpdateTexture(ImTextureData* tex)
             vkUnmapMemory(v->Device, upload_buffer_memory);
         }
 
-        // Start command buffer
+        // Start GraphicsCommand buffer
         {
             err = vkResetCommandPool(v->Device, bd->TexCommandPool, 0);
             check_vk_result(err);
@@ -876,7 +876,7 @@ void ImGui_ImplVulkan_UpdateTexture(ImTextureData* tex)
             vkCmdPipelineBarrier(bd->TexCommandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, use_barrier);
         }
 
-        // End command buffer
+        // End GraphicsCommand buffer
         {
             VkSubmitInfo end_info = {};
             end_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -1127,7 +1127,7 @@ bool ImGui_ImplVulkan_CreateDeviceObjects()
     if (create_main_pipeline)
         ImGui_ImplVulkan_CreateMainPipeline(&v->PipelineInfoMain);
 
-    // Create command pool/buffer for texture upload
+    // Create GraphicsCommand pool/buffer for texture upload
     if (!bd->TexCommandPool)
     {
         VkCommandPoolCreateInfo info = {};
@@ -1784,9 +1784,9 @@ void ImGui_ImplVulkanH_CreateOrResizeWindow(VkInstance instance, VkPhysicalDevic
     ImGui_ImplVulkanH_CreateWindowSwapChain(physical_device, device, wd, allocator, width, height, min_image_count, image_usage);
     ImGui_ImplVulkanH_CreateWindowCommandBuffers(physical_device, device, wd, queue_family, allocator);
 
-    // FIXME: to submit the command buffer, we need a queue. In the examples folder, the ImGui_ImplVulkanH_CreateOrResizeWindow function is called
+    // FIXME: to submit the GraphicsCommand buffer, we need a queue. In the examples folder, the ImGui_ImplVulkanH_CreateOrResizeWindow function is called
     // before the ImGui_ImplVulkan_Init function, so we don't have access to the queue yet. Here we have the queue_family that we can use to grab
-    // a queue from the device and submit the command buffer. It would be better to have access to the queue as suggested in the FIXME below.
+    // a queue from the device and submit the GraphicsCommand buffer. It would be better to have access to the queue as suggested in the FIXME below.
     VkCommandPool command_pool;
     VkCommandPoolCreateInfo pool_info = {};
     pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
@@ -1850,7 +1850,7 @@ void ImGui_ImplVulkanH_CreateOrResizeWindow(VkInstance instance, VkPhysicalDevic
     err = vkResetCommandPool(device, command_pool, 0);
     check_vk_result(err);
 
-    // Destroy command buffer and fence and command pool
+    // Destroy GraphicsCommand buffer and fence and GraphicsCommand pool
     vkFreeCommandBuffers(device, command_pool, 1, &command_buffer);
     vkDestroyCommandPool(device, command_pool, allocator);
     vkDestroyFence(device, fence, allocator);

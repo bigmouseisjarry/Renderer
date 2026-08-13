@@ -15,7 +15,7 @@
 #include <unordered_set>
 #include <vector>
 
-// 由component提交给manager的绘制SurfaceCache所需信息
+// 由component提交给manager的绘制SurfaceCache所需信息，与submesh一一对应
 struct SurfaceCacheTask 
 {
     uint32_t meshCardID;    // 起始值

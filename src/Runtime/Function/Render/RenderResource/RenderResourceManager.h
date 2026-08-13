@@ -216,14 +216,18 @@ private:
     {
         RHIDescriptorSetRef descriptorSet;
 
-        ArrayBuffer<LightClusterIndex, LIGHT_CLUSTER_NUM * MAX_LIGHTS_PER_CLUSTER> lightClusterIndexBuffer;                     // 每帧都完全重构的buffer                              
-        ArrayBuffer<MeshClusterDrawInfo, MAX_PER_FRAME_CLUSTER_SIZE * MAX_SUPPORTED_MESH_PASS_COUNT> clusterDrawInfoBuffer;     // 上一帧还在渲染时下一帧也可能在录制了，因此对每一帧有单独的buffer
+        // 每帧都完全重构的buffer  
+        // 上一帧还在渲染时下一帧也可能在录制了，因此对每一帧有单独的buffer
+        
+        ArrayBuffer<LightClusterIndex, LIGHT_CLUSTER_NUM * MAX_LIGHTS_PER_CLUSTER> lightClusterIndexBuffer;                     // ClusterLightingPass (Compute写入)                                
+        ArrayBuffer<MeshClusterDrawInfo, MAX_PER_FRAME_CLUSTER_SIZE * MAX_SUPPORTED_MESH_PASS_COUNT> clusterDrawInfoBuffer;     // GPUCullingPass(Compute写入)
     
-        Buffer<CameraInfo> cameraBuffer;                                    // 有固定槽位分配的buffer，且更新频率高
+        // 有固定槽位分配的buffer，且更新频率高
+        Buffer<CameraInfo> cameraBuffer;                                    
         ArrayBuffer<ObjectInfo, MAX_PER_FRAME_OBJECT_SIZE> objectBuffer;
         ArrayBuffer<MeshCardInfo, MAX_PER_FRAME_OBJECT_SIZE * 6> meshCardBuffer;
         Buffer<LightInfo> lightBuffer;
-        Buffer<GizmoDrawData> gizmoBuffer = Buffer<GizmoDrawData>(RESOURCE_TYPE_RW_BUFFER | RESOURCE_TYPE_INDIRECT_BUFFER);
+        Buffer<GizmoDrawData> gizmoBuffer = Buffer<GizmoDrawData>(RESOURCE_TYPE_RW_BUFFER | RESOURCE_TYPE_INDIRECT_BUFFER);     // GizmoPass
     };
     std::array<PerFrameResource, FRAMES_IN_FLIGHT> perFrameResources;
 
@@ -233,13 +237,15 @@ private:
         RHIRootSignatureRef samplerRootSignature;
         RHIDescriptorSetRef samplerDescriptorSet;
 
-        Buffer<RenderGlobalSetting> globalSettingBuffer;                    // 有固定槽位分配的buffer，且更新频率低
-        Buffer<MeshCardReadBack> cardUpdateBuffer = Buffer<MeshCardReadBack>(RESOURCE_TYPE_RW_BUFFER); // 需要每帧更新，但是都用同一个
-        Buffer<MeshCardReadBack> cardReadbackBuffer = Buffer<MeshCardReadBack>(RESOURCE_TYPE_RW_BUFFER, MEMORY_USAGE_GPU_TO_CPU); 
+        // 有固定槽位分配的buffer，且更新频率低
+        Buffer<RenderGlobalSetting> globalSettingBuffer;                    
         ArrayBuffer<MeshClusterInfo, MAX_PER_FRAME_CLUSTER_SIZE> meshClusterBuffer;
         ArrayBuffer<MeshClusterGroupInfo, MAX_PER_FRAME_CLUSTER_SIZE> meshClusterGroupBuffer;
         ArrayBuffer<MaterialInfo, MAX_PER_FRAME_RESOURCE_SIZE> materialBuffer;
         ArrayBuffer<VertexInfo, MAX_PER_FRAME_RESOURCE_SIZE> vertexBuffer;
+
+        Buffer<MeshCardReadBack> cardUpdateBuffer = Buffer<MeshCardReadBack>(RESOURCE_TYPE_RW_BUFFER); // 需要每帧更新，但是都用同一个
+        Buffer<MeshCardReadBack> cardReadbackBuffer = Buffer<MeshCardReadBack>(RESOURCE_TYPE_RW_BUFFER, MEMORY_USAGE_GPU_TO_CPU); 
  
         TextureRef lightClusterGridTexture;                                 // 纹理不会有冲突
         std::array<TextureRef, DIRECTIONAL_SHADOW_CASCADE_LEVEL> dirShadowTextures;        

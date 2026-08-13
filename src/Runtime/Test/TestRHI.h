@@ -330,54 +330,54 @@
 //         fences[frameIndex]->Wait();
 //         RHITextureRef swapchainTexture = swapchain->GetNewFrame(nullptr, startSemaphores[frameIndex]);      
 
-//         RHICommandListRef command = commands[frameIndex];
-//         command->BeginCommand();
+//         RHICommandListRef GraphicsCommand = commands[frameIndex];
+//         GraphicsCommand->BeginCommand();
         
 //         if(!initResource)
 //         {
 //             initResource = true;
-//             // command->BufferBarrier({indexBuffer, RESOURCE_STATE_UNDEFINED, RESOURCE_STATE_INDEX_BUFFER});
-//             // command->BufferBarrier({vertexBuffer, RESOURCE_STATE_UNDEFINED, RESOURCE_STATE_VERTEX_BUFFER});
-//             // command->BufferBarrier({rwBuffer, RESOURCE_STATE_UNDEFINED, RESOURCE_STATE_UNORDERED_ACCESS});
-//             command->TextureBarrier({colorTexture, RESOURCE_STATE_UNDEFINED, RESOURCE_STATE_COLOR_ATTACHMENT});
-//             command->TextureBarrier({depthTexture, RESOURCE_STATE_UNDEFINED, RESOURCE_STATE_DEPTH_STENCIL_ATTACHMENT});
+//             // GraphicsCommand->BufferBarrier({indexBuffer, RESOURCE_STATE_UNDEFINED, RESOURCE_STATE_INDEX_BUFFER});
+//             // GraphicsCommand->BufferBarrier({vertexBuffer, RESOURCE_STATE_UNDEFINED, RESOURCE_STATE_VERTEX_BUFFER});
+//             // GraphicsCommand->BufferBarrier({rwBuffer, RESOURCE_STATE_UNDEFINED, RESOURCE_STATE_UNORDERED_ACCESS});
+//             GraphicsCommand->TextureBarrier({colorTexture, RESOURCE_STATE_UNDEFINED, RESOURCE_STATE_COLOR_ATTACHMENT});
+//             GraphicsCommand->TextureBarrier({depthTexture, RESOURCE_STATE_UNDEFINED, RESOURCE_STATE_DEPTH_STENCIL_ATTACHMENT});
 //         }     
 
 //         {
-//             command->PushEvent("RHI Render Pass", {0.0f, 0.0f, 0.0f});
+//             GraphicsCommand->PushEvent("RHI Render Pass", {0.0f, 0.0f, 0.0f});
 
-//             command->BeginRenderPass(renderPass);
-//             command->SetViewport({0, 0}, windowsOffset);
-//             command->SetScissor({0, 0}, windowsOffset); 
-//             command->SetGraphicsPipeline(graphicsPipeline);
-//             command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);
-//             // command->BindDescriptorSet(descriptor1, 1);
-//             // command->PushConstants(&pushConstants, 128, SHADER_FREQUENCY_GRAPHICS);
+//             GraphicsCommand->BeginRenderPass(renderPass);
+//             GraphicsCommand->SetViewport({0, 0}, windowsOffset);
+//             GraphicsCommand->SetScissor({0, 0}, windowsOffset); 
+//             GraphicsCommand->SetGraphicsPipeline(graphicsPipeline);
+//             GraphicsCommand->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);
+//             // GraphicsCommand->BindDescriptorSet(descriptor1, 1);
+//             // GraphicsCommand->PushConstants(&pushConstants, 128, SHADER_FREQUENCY_GRAPHICS);
 //             for(uint32_t i = 0; i < model->GetSubmeshCount(); i++)
 //             {
 //                 VertexBufferRef vertexBuffer = model->GetVertexBuffer(i);
 //                 IndexBufferRef indexBuffer = model->GetIndexBuffer(i);
-//                 // command->BindVertexBuffer(vertexBuffer->buffer, 0, 0);
-//                 // command->BindIndexBuffer(indexBuffer->buffer, 0);
-//                 // command->DrawIndexed(indexBuffer->IndexNum(), 1, 0, 0, i + 1); 
+//                 // GraphicsCommand->BindVertexBuffer(vertexBuffer->buffer, 0, 0);
+//                 // GraphicsCommand->BindIndexBuffer(indexBuffer->buffer, 0);
+//                 // GraphicsCommand->DrawIndexed(indexBuffer->IndexNum(), 1, 0, 0, i + 1); 
 
-//                 command->Draw(indexBuffer->IndexNum(), 1, 0, i + 1);
+//                 GraphicsCommand->Draw(indexBuffer->IndexNum(), 1, 0, i + 1);
 //             }  
-//             command->EndRenderPass();
+//             GraphicsCommand->EndRenderPass();
 
-//             command->TextureBarrier({colorTexture, RESOURCE_STATE_COLOR_ATTACHMENT, RESOURCE_STATE_TRANSFER_SRC});
-//             command->TextureBarrier({swapchainTexture, RESOURCE_STATE_PRESENT, RESOURCE_STATE_TRANSFER_DST});
-//             command->CopyTexture(   colorTexture, {TEXTURE_ASPECT_COLOR, 0, 0, 1}, 
+//             GraphicsCommand->TextureBarrier({colorTexture, RESOURCE_STATE_COLOR_ATTACHMENT, RESOURCE_STATE_TRANSFER_SRC});
+//             GraphicsCommand->TextureBarrier({swapchainTexture, RESOURCE_STATE_PRESENT, RESOURCE_STATE_TRANSFER_DST});
+//             GraphicsCommand->CopyTexture(   colorTexture, {TEXTURE_ASPECT_COLOR, 0, 0, 1}, 
 //                                     swapchainTexture, {TEXTURE_ASPECT_COLOR, 0, 0, 1});
-//             command->TextureBarrier({colorTexture, RESOURCE_STATE_TRANSFER_SRC, RESOURCE_STATE_COLOR_ATTACHMENT});
-//             command->TextureBarrier({swapchainTexture, RESOURCE_STATE_TRANSFER_DST, RESOURCE_STATE_PRESENT});
+//             GraphicsCommand->TextureBarrier({colorTexture, RESOURCE_STATE_TRANSFER_SRC, RESOURCE_STATE_COLOR_ATTACHMENT});
+//             GraphicsCommand->TextureBarrier({swapchainTexture, RESOURCE_STATE_TRANSFER_DST, RESOURCE_STATE_PRESENT});
 
-//             command->PopEvent();
+//             GraphicsCommand->PopEvent();
 //         }
 
 
-//         command->EndCommand();
-//         command->Execute(fences[frameIndex], startSemaphores[frameIndex], finishSemaphores[frameIndex]);
+//         GraphicsCommand->EndCommand();
+//         GraphicsCommand->Execute(fences[frameIndex], startSemaphores[frameIndex], finishSemaphores[frameIndex]);
 
 //         swapchain->Present(finishSemaphores[frameIndex]);       
 //     }
