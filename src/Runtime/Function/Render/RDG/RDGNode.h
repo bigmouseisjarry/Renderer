@@ -2,7 +2,7 @@
 
 #include "Function/Render/RDG/RDGEdge.h"
 #include "Function/Render/RHI/RHICommandList.h"
-#include "RDGHandle.h"
+#include "Function/Render/RDG/RDGHandle.h"
 #include "Core/DependencyGraph/DependencyGraph.h"
 #include "Function/Render/RHI/RHIStructs.h"
 
@@ -36,7 +36,7 @@ enum RDGResourceNodeType
     RDG_RESOURCE_NODE_TYPE_MAX_ENUM,    //
 };
 
-typedef struct RDGPassContext
+struct RDGPassContext
 {
     RHICommandListRef command;
     RDGBuilder* builder;
@@ -44,11 +44,11 @@ typedef struct RDGPassContext
 
     uint32_t passIndex[3] = { 0, 0, 0};
 
-} RDGPassContext;
+};
 
-typedef std::function<void(RDGPassContext)> RDGPassExecuteFunc;
+using RDGPassExecuteFunc = std::function<void(RDGPassContext)> ;
 
-class RDGNode : public DependencyGraph::Node
+class RDGNode : public DependencyGraphNode
 {
 public:
     RDGNode(std::string name) 
@@ -60,7 +60,7 @@ public:
 private:
     std::string name;
 };
-typedef RDGNode* RDGNodeRef;
+using RDGNodeRef = RDGNode* ;
 
 // 资源节点/////////////////////////////////////////////////////////////////////////////////////
 
@@ -80,7 +80,7 @@ protected:
     RDGResourceNodeType nodeType;
     bool isImported = false;
 };
-typedef RDGResourceNode* RDGResourceNodeRef;
+using RDGResourceNodeRef = RDGResourceNode*;
 
 // 纹理节点
 class RDGTextureNode : public RDGResourceNode
@@ -89,8 +89,6 @@ public:
     RDGTextureNode(std::string name) 
     : RDGResourceNode(name, RDG_RESOURCE_NODE_TYPE_TEXTURE) 
     {}
-
-    void ForEachPass(const std::function<void(RDGTextureEdgeRef, class RDGPassNode*)>& func);
 
     RDGTextureHandle GetHandle() { return RDGTextureHandle(ID()); } 
 
@@ -105,7 +103,7 @@ private:
     friend class RDGTextureBuilder;
     friend class RDGBuilder;
 };
-typedef RDGTextureNode* RDGTextureNodeRef;
+using RDGTextureNodeRef = RDGTextureNode*;
 
 // 缓冲节点
 class RDGBufferNode : public RDGResourceNode
@@ -114,8 +112,6 @@ public:
     RDGBufferNode(std::string name) 
     : RDGResourceNode(name, RDG_RESOURCE_NODE_TYPE_BUFFER) 
     {}
-
-    void ForEachPass(const std::function<void(RDGBufferEdgeRef, class RDGPassNode*)>& func);
 
     RDGBufferHandle GetHandle() { return RDGBufferHandle(ID()); }
 
@@ -130,7 +126,7 @@ private:
     friend class RDGBufferBuilder;
     friend class RDGBuilder;
 };
-typedef RDGBufferNode* RDGBufferNodeRef;
+using RDGBufferNodeRef = RDGBufferNode*;
 
 // pass节点/////////////////////////////////////////////////////////////////////////////////////
 
@@ -153,8 +149,6 @@ public:
     inline bool Before(RDGPassNode* other)  { return ID() < other->ID(); }    // 假定所有pass的添加顺序就是执行顺序
     inline bool After(RDGPassNode* other)   { return ID() > other->ID(); }
 
-    void ForEachTexture(const std::function<void(RDGTextureEdgeRef, RDGTextureNodeRef)>& func);
-    void ForEachBuffer(const std::function<void(RDGBufferEdgeRef, RDGBufferNodeRef)>& func);
 
     RDGPassNodeType NodeType() { return nodeType; }
 
@@ -171,7 +165,7 @@ protected:
 
     friend class RDGBuilder;
 };
-typedef RDGPassNode* RDGPassNodeRef;
+using RDGPassNodeRef = RDGPassNode* ;
 
 
 class RDGRenderPassNode : public RDGPassNode
@@ -190,7 +184,7 @@ private:
     friend class RDGRenderPassBuilder;
     friend class RDGBuilder;
 };
-typedef RDGRenderPassNode* RDGRenderPassNodeRef;
+using RDGRenderPassNodeRef = RDGRenderPassNode*;
 
 class RDGComputePassNode : public RDGPassNode
 {
@@ -207,7 +201,7 @@ private:
     friend class RDGComputePassBuilder;
     friend class RDGBuilder;
 };
-typedef RDGComputePassNode* RDGComputePassNodeRef;
+using RDGComputePassNodeRef = RDGComputePassNode*;
 
 class RDGRayTracingPassNode : public RDGPassNode
 {
@@ -224,7 +218,7 @@ private:
     friend class RDGRayTracingPassBuilder;
     friend class RDGBuilder;
 };
-typedef RDGRayTracingPassNode* RDGRayTracingPassNodeRef;
+using RDGRayTracingPassNodeRef = RDGRayTracingPassNode*;
 
 class RDGPresentPassNode : public RDGPassNode
 {
@@ -238,7 +232,7 @@ private:
     friend class RDGPresentPassBuilder;
     friend class RDGBuilder;
 };
-typedef RDGPresentPassNode* RDGPresentPassNodeRef;
+using RDGPresentPassNodeRef = RDGPresentPassNode* ;
 
 class RDGCopyPassNode : public RDGPassNode
 {
@@ -254,28 +248,68 @@ private:
     friend class RDGCopyPassBuilder;
     friend class RDGBuilder;
 };
-typedef RDGCopyPassNode* RDGCopyPassNodeRef;
+using RDGCopyPassNodeRef = RDGCopyPassNode*;
 
 // 依赖图/////////////////////////////////////////////////////////////////////////////////////
 
-class RDGDependencyGraph : public DependencyGraph
+class RDGDependencyGraph
 {
 public: 
+    RDGDependencyGraph() { graph = DependencyGraph::Create(); }
+    ~RDGDependencyGraph() { if (graph) DependencyGraph::Destroy(graph); }
+    RDGDependencyGraph(const RDGDependencyGraph&) = delete;
+    RDGDependencyGraph& operator=(const RDGDependencyGraph&) = delete;
+
+    // 节点创建
+    RDGTextureNodeRef CreateTextureNode(std::string name);
+    RDGBufferNodeRef  CreateBufferNode(std::string name);
+    RDGRenderPassNodeRef   CreateRenderPassNode(std::string name);
+    RDGComputePassNodeRef  CreateComputePassNode(std::string name);
+    RDGRayTracingPassNodeRef CreateRayTracingPassNode(std::string name);
+    RDGPresentPassNodeRef  CreatePresentPassNode(std::string name);
+    RDGCopyPassNodeRef     CreateCopyPassNode(std::string name);
+
+    // 边连接
     void Link(RDGPassNodeRef from, RDGTextureNodeRef to, RDGTextureEdgeRef edge);
     void Link(RDGTextureNodeRef from, RDGPassNodeRef to, RDGTextureEdgeRef edge);
     void Link(RDGPassNodeRef from, RDGBufferNodeRef to, RDGBufferEdgeRef edge);
     void Link(RDGBufferNodeRef from, RDGPassNodeRef to, RDGBufferEdgeRef edge);
 
+    // 类型化节点查询
+    RDGTextureNodeRef GetTextureNode(DAGID id);
+    RDGBufferNodeRef  GetBufferNode(DAGID id);
+    RDGPassNodeRef    GetPassNode(DAGID id);
+
+    uint32_t TextureNodeCount() const { return textureNodeMap.size(); }
+    uint32_t BufferNodeCount() const { return bufferNodeMap.size(); }
+    uint32_t PassNodeCount() const { return passNodeMap.size(); }
+
+    uint32_t EdgeCount() { return graph->edge_count(); }
+
+    void ForEachTextureNode(const std::function<void(RDGTextureNodeRef)>& func);
+    void ForEachBufferNode(const std::function<void(RDGBufferNodeRef)>& func);
+    void ForEachPassNode(const std::function<void(RDGPassNodeRef)>& func);
+
+    void ForEachEdge(const std::function<void(DependencyGraphNode* from, DependencyGraphNode* to, DependencyGraphEdge* edge)>& func);
+
+    // 遍历：遍历某资源关联的所有 pass
     void ForEachPass(RDGTextureNodeRef texture, const std::function<void(RDGTextureEdgeRef, RDGPassNodeRef)>& func);
     void ForEachPass(RDGBufferNodeRef buffer, const std::function<void(RDGBufferEdgeRef, RDGPassNodeRef)>& func);
+
+    // 遍历：遍历某 pass 关联的所有资源
     void ForEachTexture(RDGPassNodeRef pass, const std::function<void(RDGTextureEdgeRef, RDGTextureNodeRef)>& func);
     void ForEachBuffer(RDGPassNodeRef pass, const std::function<void(RDGBufferEdgeRef, RDGBufferNodeRef)>& func);
 
-private:    // 避免重复构建这个列表，比上面的快一些
-    std::unordered_map<RDGPassNodeRef, std::vector<std::pair<RDGTextureEdgeRef, RDGTextureNodeRef>>> passTextures;
-    std::unordered_map<RDGPassNodeRef, std::vector<std::pair<RDGBufferEdgeRef, RDGBufferNodeRef>>> passBuffers;
+    DependencyGraph* GetGraph() { return graph; }
 
-    std::unordered_map<RDGTextureNodeRef, std::vector<std::pair<RDGTextureEdgeRef, RDGPassNodeRef>>> texturePasses;
-    std::unordered_map<RDGBufferNodeRef, std::vector<std::pair<RDGBufferEdgeRef, RDGPassNodeRef>>> bufferPasses;
+private:  
+
+    // 图的本体
+    DependencyGraph* graph = nullptr;
+
+    // 图中存的id 与 RDG中的资源对应
+    std::unordered_map<DAGID, RDGTextureNodeRef>  textureNodeMap;
+    std::unordered_map<DAGID, RDGBufferNodeRef>   bufferNodeMap;
+    std::unordered_map<DAGID, RDGPassNodeRef>     passNodeMap;
 };
-typedef std::shared_ptr<RDGDependencyGraph> RDGDependencyGraphRef;
+using RDGDependencyGraphRef = std::shared_ptr<RDGDependencyGraph>;

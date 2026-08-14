@@ -48,7 +48,7 @@ public:
     inline std::shared_ptr<RenderLightManager> GetLightManager()                { return lightManager; }
     inline std::shared_ptr<RenderSurfaceCacheManager> GetSurfaceCacheManager()  { return surfaceCacheManager; }
     RenderGlobalSetting* GetGlobalSetting()                                     { return &globalSetting; }
-    DependencyGraphRef GetRDGDependenctyGraph()                                 { return rdgDependencyGraph; }
+    RDGDependencyGraphRef GetRDGDependenctyGraph()                                   { return rdgDependencyGraph; }
 
 private:
 	SDL_Window* window;
@@ -74,7 +74,7 @@ private:
     };
     std::array<PerFrameCommonResource, FRAMES_IN_FLIGHT> perFrameCommonResources;
     RenderGlobalSetting globalSetting = {};
-    DependencyGraphRef rdgDependencyGraph;
+    RDGDependencyGraphRef rdgDependencyGraph;
 
     std::array<std::shared_ptr<RenderPass>, PASS_TYPE_MAX_CNT> passes;
     std::array<std::shared_ptr<MeshPass>, MESH_PASS_TYPE_MAX_CNT> meshPasses;

@@ -537,7 +537,7 @@ void RDGGraphWidget::UIInternel(bool* open)
     static std::vector<GraphLink> links; 
     static std::unordered_map<std::string, GraphNode*> passNodesMap;
     static std::unordered_map<std::string, GraphNode*> resourceNodesMap;
-    static std::unordered_map<uint32_t, GraphNode*> rdgNodeIdToNodes;   // 此处的ID是dependency graph的id，多个重名的会用同一个
+    static std::unordered_map<DAGID, GraphNode*> rdgNodeIdToNodes;   // 此处的ID是dependency graph的id，多个重名的会用同一个
     static bool autoUpdate = false;
     static int autoUpdateCount = 0;
     
@@ -550,7 +550,7 @@ void RDGGraphWidget::UIInternel(bool* open)
     static ed::LinkId contextLinkId;
 
     static uint32_t currentFrameIndex = 0;
-    static DependencyGraphRef rdgDependencyGraph = nullptr;
+    static RDGDependencyGraphRef rdgDependencyGraph = nullptr;
     static ed::EditorContext* context = nullptr;
     if(context == nullptr)
     {
@@ -587,15 +587,15 @@ void RDGGraphWidget::UIInternel(bool* open)
         ImGui::SameLine();
         ImGui::Checkbox("Auto update every 100 frames", &autoUpdate);
 
-        ImGui::Text("Resource count: %d / %d, imported count: %d / %d", 
+        ImGui::Text("Resource count: %d / %d, imported count: %d / %d",
             (int)resourceNodes.size(),
-            (int)rdgDependencyGraph->GetNodes<RDGResourceNode>().size(),
+            (int)(rdgDependencyGraph->TextureNodeCount() + rdgDependencyGraph->BufferNodeCount()),
             importedUniqueResourceCount,
             importedResourceCount);
         
         ImGui::Text("Pass count: %d / %d",
             (int)passNodes.size(), 
-            (int)rdgDependencyGraph->GetNodes<RDGPassNode>().size());
+            (int)rdgDependencyGraph->PassNodeCount());
 
         ImGui::Text("Resource pool allocated count: %d(buffer) / %d(texture) / %d(view) / %d(descriptor set)", 
             RDGBufferPool::Get()->AllocatedSize(), 
@@ -603,8 +603,6 @@ void RDGGraphWidget::UIInternel(bool* open)
             RDGTextureViewPool::Get()->AllocatedSize(),
             RDGDescriptorSetPool::Get(currentFrameIndex)->AllocatedSize());
 
-        
-        
         if(init)
         {
             passNodes.clear();
@@ -616,12 +614,14 @@ void RDGGraphWidget::UIInternel(bool* open)
             importedResourceCount = 0;
             importedUniqueResourceCount = 0;
             
-            links.reserve(rdgDependencyGraph->GetEdges().size());
+            links.reserve(rdgDependencyGraph->EdgeCount());
 
             // 初始化资源结点信息
-            auto nodes0 = rdgDependencyGraph->GetNodes<RDGResourceNode>();
-            resourceNodes.reserve(nodes0.size());
-            for(auto& resourceNode : nodes0)
+            std::vector<RDGResourceNodeRef> allResources;
+            rdgDependencyGraph->ForEachTextureNode([&](RDGTextureNodeRef node) { allResources.push_back(node); });
+            rdgDependencyGraph->ForEachBufferNode([&](RDGBufferNodeRef node) { allResources.push_back(node); });
+            resourceNodes.reserve(allResources.size());
+            for(auto& resourceNode : allResources)
             {
                 if(resourceNode->IsImported()) importedResourceCount++;
 
@@ -667,10 +667,11 @@ void RDGGraphWidget::UIInternel(bool* open)
             }
 
             // 初始化pass结点信息    
-            auto nodes1 = rdgDependencyGraph->GetNodes<RDGPassNode>();
-            passNodes.reserve(nodes1.size());
+            std::vector<RDGPassNodeRef> allPasses;
+            rdgDependencyGraph->ForEachPassNode([&](RDGPassNodeRef node) { allPasses.push_back(node); });
+            passNodes.reserve(allPasses.size());
             GraphNode* previousPassNode = nullptr;
-            for(auto& passNode : nodes1)
+            for(auto& passNode : allPasses)
             {
                 std::regex pattern0("\\s\\[\\d+\\]\\[\\d+\\]");
                 std::regex pattern1("\\s\\[\\d+\\]");
@@ -718,56 +719,59 @@ void RDGGraphWidget::UIInternel(bool* open)
                     node.inputs.push_back(pin);
 
                     std::set<GraphNode*> inputResources;
-                    for(auto& inEdge : passNode->InEdges<RDGEdge>())
-                    {
-                        GraphNode* resourceNode = rdgNodeIdToNodes[inEdge->From()->ID()];
-                                
-                        if(inputResources.contains(resourceNode)) continue;
-                        inputResources.insert(resourceNode);
 
-                        GraphPin pin = {};
-                        pin.id = pinUniqueId++;
-                        pin.node = &node;
-                        pin.kind = ed::PinKind::Input;
-                        pin.type = PinType::InResource;
+                    passNode->foreach_incoming_edges(
+                        [&](DependencyGraphNode* from, DependencyGraphNode* /*to*/, DependencyGraphEdge* edge)
+                        {
+                            auto rdgEdge = static_cast<RDGEdgeRef>(edge);
+                            GraphNode* resourceNode = rdgNodeIdToNodes[from->ID()];
+                            if (inputResources.contains(resourceNode)) return;    // continue → return
+                            inputResources.insert(resourceNode);
 
-                        GraphLink link = {};
-                        link.id = linkUniqueId++;
-                        link.from = resourceNode->outputs[0].id;
-                        link.to = pin.id;
-                        link.rdgEdge = inEdge;
-                        links.push_back(link);
+                            GraphPin pin = {};
+                            pin.id = pinUniqueId++;
+                            pin.node = &node;
+                            pin.kind = ed::PinKind::Input;
+                            pin.type = PinType::InResource;
 
-                        pin.pinLinks.push_back(&links.back());
-                        resourceNode->outputs[0].pinLinks.push_back(&links.back());
-                        node.inputs.push_back(pin);
-                    }           
+                            GraphLink link = {};
+                            link.id = linkUniqueId++;
+                            link.from = resourceNode->outputs[0].id;
+                            link.to = pin.id;
+                            link.rdgEdge = rdgEdge;
+                            links.push_back(link);
+
+                            pin.pinLinks.push_back(&links.back());
+                            resourceNode->outputs[0].pinLinks.push_back(&links.back());
+                            node.inputs.push_back(pin);
+                        });        
 
                     std::set<GraphNode*> outputResources;
-                    for(auto& outEdge : passNode->OutEdges<RDGEdge>())
-                    {
-                        GraphNode* resourceNode = rdgNodeIdToNodes[outEdge->To()->ID()];
-                                
-                        if(outputResources.contains(resourceNode)) continue;
-                        outputResources.insert(resourceNode);
+                    passNode->foreach_outgoing_edges(
+                        [&](DependencyGraphNode* /*from*/, DependencyGraphNode* to, DependencyGraphEdge* edge)
+                        {
+                            auto rdgEdge = static_cast<RDGEdgeRef>(edge);
+                            GraphNode* resourceNode = rdgNodeIdToNodes[to->ID()];
+                            if (outputResources.contains(resourceNode)) return;
+                            outputResources.insert(resourceNode);
 
-                        GraphPin pin = {};
-                        pin.id = pinUniqueId++;
-                        pin.node = &node;
-                        pin.kind = ed::PinKind::Output;
-                        pin.type = PinType::OutResource;
+                            GraphPin pin = {};
+                            pin.id = pinUniqueId++;
+                            pin.node = &node;
+                            pin.kind = ed::PinKind::Output;
+                            pin.type = PinType::OutResource;
 
-                        GraphLink link = {};
-                        link.id = linkUniqueId++;
-                        link.from = pin.id;
-                        link.to = resourceNode->inputs[0].id;
-                        link.rdgEdge = outEdge;
-                        links.push_back(link);
+                            GraphLink link = {};
+                            link.id = linkUniqueId++;
+                            link.from = pin.id;
+                            link.to = resourceNode->inputs[0].id;
+                            link.rdgEdge = rdgEdge;
+                            links.push_back(link);
 
-                        pin.pinLinks.push_back(&links.back());
-                        resourceNode->inputs[0].pinLinks.push_back(&links.back());
-                        node.outputs.push_back(pin);
-                    }   
+                            pin.pinLinks.push_back(&links.back());
+                            resourceNode->inputs[0].pinLinks.push_back(&links.back());
+                            node.outputs.push_back(pin);
+                        });
 
                     passNodes.push_back(node);
                     passNodesMap[name] = &passNodes.back(); // vector的地址会变，需要预分配尺寸

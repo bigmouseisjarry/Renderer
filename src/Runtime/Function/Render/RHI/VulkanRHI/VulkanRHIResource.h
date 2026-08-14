@@ -298,10 +298,9 @@ private:
 class VulkanRHIGraphicsPipeline : public RHIGraphicsPipeline
 {
 public:
-	// TODO: 准备抛弃
+	// VulkanRHIGraphicsPipeline(const RHIGraphicsPipelineInfo& info, VulkanRHIBackend& backend);
+	// 这是rendering的图形管线实现
 	VulkanRHIGraphicsPipeline(const RHIGraphicsPipelineInfo& info, VulkanRHIBackend& backend);
-	// 这是rendering的图形管线实现，void*参数是为了区分构造函数
-	VulkanRHIGraphicsPipeline(const RHIGraphicsPipelineInfo& info, VulkanRHIBackend& backend, void*);
 
 	VkPipelineLayout GetPipelineLayout() { return pipelineLayout; }
 

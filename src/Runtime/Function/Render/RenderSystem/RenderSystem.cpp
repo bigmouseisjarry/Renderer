@@ -243,7 +243,8 @@ void RenderSystem::ExecuteRDG()
     if(rdgBuilder)
     {
         rdgBuilder->Execute();
-        rdgDependencyGraph = rdgBuilder->GetGraph(); //
+        // 将构建好的图取出来？
+        rdgDependencyGraph = rdgBuilder->GetGraph();
     }
 }
 

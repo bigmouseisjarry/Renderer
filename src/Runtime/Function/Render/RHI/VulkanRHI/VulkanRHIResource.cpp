@@ -1414,7 +1414,7 @@ void VulkanRHIDescriptorSet::Destroy()
 //
 //}
 
-VulkanRHIGraphicsPipeline::VulkanRHIGraphicsPipeline(const RHIGraphicsPipelineInfo& info, VulkanRHIBackend& backend, void*)
+VulkanRHIGraphicsPipeline::VulkanRHIGraphicsPipeline(const RHIGraphicsPipelineInfo& info, VulkanRHIBackend& backend)
 	: RHIGraphicsPipeline(info)
 {
     // 描述符 push constant

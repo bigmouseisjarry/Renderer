@@ -324,9 +324,7 @@ RHIRootSignatureRef VulkanRHIBackend::CreateRootSignature(const RHIRootSignature
 
 RHIGraphicsPipelineRef VulkanRHIBackend::CreateGraphicsPipeline(const RHIGraphicsPipelineInfo& info) 
 { 
-    // 准备转成Rendering方式构建
-    // RHIGraphicsPipelineRef graphicsPipeline = std::make_shared<VulkanRHIGraphicsPipeline>(info, *this);
-    RHIGraphicsPipelineRef graphicsPipeline = std::make_shared<VulkanRHIGraphicsPipeline>(info, *this, nullptr);
+    RHIGraphicsPipelineRef graphicsPipeline = std::make_shared<VulkanRHIGraphicsPipeline>(info, *this);
     RegisterResource(graphicsPipeline);
 
     return graphicsPipeline;

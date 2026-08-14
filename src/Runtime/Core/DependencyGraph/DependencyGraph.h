@@ -1,181 +1,105 @@
 #pragma once
 
 #include <cstdint>
-#include <map>
-#include <memory>
-#include <set>
-#include <unordered_map>
-#include <vector>
+#include <functional>
 
-// 一个低效的DAG实现
-// 可以试试boost库等
+using DAGID = uint64_t;
+class DependencyGraphEdge;
+class DependencyGraphNode
+{
+    friend class DependencyGraphImpl;
+
+public:
+    DependencyGraphNode() = default;
+    using Type = DependencyGraphNode;
+    virtual ~DependencyGraphNode()  = default;
+    // Nodes can't be copied
+    DependencyGraphNode(const Type&)  = delete;
+    virtual void on_insert()  {}
+    virtual void on_remove()  {}
+    const DAGID ID() const  { return id; }
+    uint32_t outgoing_edges() ;
+    uint32_t incoming_edges() ;
+    uint32_t foreach_incoming_edges(std::function<void(DependencyGraphNode* from, DependencyGraphNode* to, DependencyGraphEdge* edge)>) ;
+    uint32_t foreach_outgoing_edges(std::function<void(DependencyGraphNode* from, DependencyGraphNode* to, DependencyGraphEdge* edge)>) ;
+
+    // 遍历正向邻居，即出边指向的节点
+    uint32_t foreach_neighbors(std::function<void(DependencyGraphNode* neig)>) ;
+    uint32_t foreach_neighbors(std::function<void(const DependencyGraphNode* neig)>) const ;
+
+    // 遍历反向邻居，即入边来源的节点
+    uint32_t foreach_inv_neighbors(std::function<void(DependencyGraphNode* inv_neig)>) ;
+    uint32_t foreach_inv_neighbors(std::function<void(const DependencyGraphNode* inv_neig)>) const ;
+
+private:
+    class DependencyGraph* graph;
+    DAGID id;
+};
+
+class DependencyGraphEdge
+{
+    friend class DependencyGraphImpl;
+
+public:
+    DependencyGraphEdge() = default;
+    using Type = DependencyGraphEdge;
+    virtual ~DependencyGraphEdge()  = default;
+    // Edges can't be copied
+    DependencyGraphEdge(const Type&)  = delete;
+    virtual void on_link()  {}
+    virtual void on_unlink()  {}
+    DependencyGraphNode* from() ;
+    DependencyGraphNode* to() ;
+
+protected:
+    class DependencyGraph* graph;
+    DAGID from_node;
+    DAGID to_node;
+};
+
 class DependencyGraph
 {
 public:
-    typedef uint32_t NodeID;
-    typedef uint32_t EdgeID;
-
-    class Edge;
-
-    class Node
-    {
-    public:
-        virtual ~Node() = default;
-
-        inline NodeID ID() { return id; }
-
-        template<typename Type = Edge>
-        inline std::vector<Type*> InEdges() { return graph->InEdges<Type>(ID()); }
-
-        template<typename Type = Edge>
-        inline std::vector<Type*> OutEdges() { return graph->OutEdges<Type>(ID()); }
-
-    private:
-        NodeID id;
-        DependencyGraph* graph;
-
-        friend class DependencyGraph;
-    };
-    typedef Node* NodeRef;
-
-    class Edge
-    {
-    public:
-        virtual ~Edge() = default;
-
-        inline EdgeID ID() { return id; }
-
-        template<typename Type = Node>
-        inline Type* From() { return graph->GetNode<Type>(from); }
-
-        template<typename Type = Node>
-        inline Type* To()   { return graph->GetNode<Type>(to); }
-
-    private:
-        EdgeID id;
-        NodeID from;
-        NodeID to;
-        DependencyGraph* graph;
-
-        friend class DependencyGraph;
-    };
-    typedef Edge* EdgeRef;
-
-public:
-    DependencyGraph() = default;
-    ~DependencyGraph();
-
-    NodeID Insert();
-
-    void Clear();
-
-    void Link(NodeRef from, NodeRef to, EdgeRef edge);
-    
-    void Remove(NodeRef node)                       { return Remove(node->ID()); }         // 删除时会自动删除相关联的边并析构
-    void Remove(NodeID id);
-
-    template<typename Type = Node, typename... Args>
-    Type* CreateNode(Args&&... args) 
-    {
-        Type* node = new Type(std::forward<Args>(args)...);
-        node->id = nodes.size();
-        node->graph = this;
-        nodes.push_back(node);
-
-        outEdges[node->id] = {};
-        inEdges[node->id] = {};
-
-        return node;
-    }
-
-    template<typename Type = Edge, typename... Args>
-    Type* CreateEdge(Args&&... args) 
-    {
-        Type* edge = new Type(std::forward<Args>(args)...);
-        edge->id = edges.size();
-        edge->graph = this;
-        edges.push_back(edge);
-
-        return edge;
-    }
-
-    template<typename Type = Node>
-    inline Type* GetNode(NodeID id) 
-    { 
-        return dynamic_cast<Type*>(nodes[id]); 
-    }
-
-    template<typename Type = Node>
-    inline std::vector<Type*> GetNodes() 
-    { 
-        std::vector<Type*> castNodes;
-        for(auto& node : nodes)
-        {
-            Type* castNode =  dynamic_cast<Type*>(node);
-            if (castNode != nullptr)    castNodes.push_back(castNode);
-        }
-        return castNodes;
-    }
-
-    template<typename Type = Edge>
-    inline Type* GetEdge(EdgeID id) 
-    { 
-        return dynamic_cast<Type*>(edges[id]); 
-    };
-
-    template<typename Type = Edge>
-    inline std::vector<Type*> GetEdges() 
-    { 
-        std::vector<Type*> castEdges;
-        for(auto& edge : edges)
-        {
-            Type* castEdge =  dynamic_cast<Type*>(edge);
-            if (castEdge != nullptr)    castEdges.push_back(castEdge);
-        }
-        return castEdges;
-    }
-
-    template<typename Type = Edge>
-    std::vector<Type*> OutEdges(NodeID id)
-    {
-        std::vector<Type*> edges;
-        for(auto& edgeID : outEdges[id]) 
-        { 
-            Type* edge = dynamic_cast<Type*>(GetEdge(edgeID));
-            if(edge) edges.push_back(edge); 
-        }
-        return  edges;
-    }
-
-    template<typename Type = Edge>
-    std::vector<Type*> InEdges(NodeID id)
-    {
-        std::vector<Type*> edges;
-        for(auto& edgeID : inEdges[id]) 
-        { 
-            Type* edge = dynamic_cast<Type*>(GetEdge(edgeID));
-            if(edge) edges.push_back(edge); 
-        }
-        return  edges;
-    }
-
-    template<typename Type = Edge>
-    std::vector<Type*> OutEdges(NodeRef node)     
-    { 
-        return OutEdges<Type>(node->ID()); 
-    }
-
-    template<typename Type = Edge>
-    std::vector<Type*> InEdges(NodeRef node)      
-    { 
-        return InEdges<Type>(node->ID()); 
-    } 
-
-private:
-    std::vector<EdgeRef> edges; // 所有的顶点和边列表，remove后可能为空
-    std::vector<NodeRef> nodes;
-
-    std::unordered_map<NodeID, std::set<EdgeID>> outEdges;
-    std::unordered_map<NodeID, std::set<EdgeID>> inEdges;
+    using Node = DependencyGraphNode;
+    using Edge = DependencyGraphEdge;
+    static DependencyGraph* Create() ;
+    static void Destroy(DependencyGraph* graph) ;
+    virtual ~DependencyGraph()  = default;
+    virtual DAGID insert(Node* node)  = 0;
+    virtual Node* access_node(DAGID handle)  = 0;
+    virtual bool remove(DAGID node)  = 0;
+    virtual bool remove(Node* node)  = 0;
+    virtual bool clear()  = 0;
+    virtual bool link(Node* from, Node* to, Edge* edge = nullptr)  = 0;
+    virtual Node* from_node(Edge* edge)  = 0;
+    virtual Node* to_node(Edge* edge)  = 0;
+    virtual uint32_t foreach_neighbors(Node* node, std::function<void(Node* neig)>)  = 0;
+    virtual uint32_t foreach_neighbors(DAGID node, std::function<void(Node* neig)>)  = 0;
+    virtual uint32_t foreach_neighbors(const Node* node, std::function<void(const Node* neig)>) const  = 0;
+    virtual uint32_t foreach_neighbors(const DAGID node, std::function<void(const Node* neig)>) const  = 0;
+    virtual uint32_t foreach_inv_neighbors(Node* node, std::function<void(Node* inv_neig)>)  = 0;
+    virtual uint32_t foreach_inv_neighbors(DAGID node, std::function<void(Node* inv_neig)>)  = 0;
+    virtual uint32_t foreach_inv_neighbors(const Node* node, std::function<void(const Node* inv_neig)>) const  = 0;
+    virtual uint32_t foreach_inv_neighbors(const DAGID node, std::function<void(const Node* inv_neig)>) const  = 0;
+    virtual uint32_t outgoing_edges(const Node* node)  = 0;
+    virtual uint32_t outgoing_edges(DAGID id)  = 0;
+    virtual uint32_t foreach_outgoing_edges(DAGID node,std::function<void(Node* from, Node* to, Edge* edge)>)  = 0;
+    virtual uint32_t foreach_outgoing_edges(Node* node,std::function<void(Node* from, Node* to, Edge* edge)>)  = 0;
+    virtual uint32_t incoming_edges(const Node* node)  = 0;
+    virtual uint32_t incoming_edges(DAGID id)  = 0;
+    virtual uint32_t foreach_incoming_edges(Node* node,std::function<void(Node* from, Node* to, Edge* edge)>)  = 0;
+    virtual uint32_t foreach_incoming_edges(DAGID node,std::function<void(Node* from, Node* to, Edge* edge)>)  = 0;
+    virtual uint32_t foreach_edges(std::function<void(Node* from, Node* to, Edge* edge)>)  = 0;
+    virtual uint32_t foreach_nodes(std::function<void(Node* node)>) = 0;
+    virtual uint32_t node_count() = 0;
+    virtual uint32_t edge_count() = 0;
 };
-typedef std::shared_ptr<DependencyGraph> DependencyGraphRef;
+
+inline DependencyGraphNode* DependencyGraphEdge::from() 
+{
+    return graph->access_node(from_node);
+}
+inline DependencyGraphNode* DependencyGraphEdge::to() 
+{
+    return graph->access_node(to_node);
+}

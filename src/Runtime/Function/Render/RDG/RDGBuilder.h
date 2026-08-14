@@ -1,12 +1,10 @@
 #pragma once
-
 #include "Core/DependencyGraph/DependencyGraph.h"
 #include "Core/Log/Log.h"
 #include "Function/Render/RDG/RDGHandle.h"
 #include "Function/Render/RDG/RDGNode.h"
 #include "Function/Render/RHI/RHICommandList.h"
 #include "Function/Render/RHI/RHIStructs.h"
-#include "RDGNode.h"
 
 #include <cstdint>
 #include <memory>
@@ -77,7 +75,6 @@ private:
     void CreateInputBarriers(RDGPassNodeRef pass);
     void CreateOutputBarriers(RDGPassNodeRef pass);
     void PrepareDescriptorSet(RDGPassNodeRef pass);
-    // void PrepareRenderTarget(RDGRenderPassNodeRef pass, RHIRenderPassInfo& renderPassInfo);
     void PrepareRenderingTarget(RDGRenderPassNodeRef pass, RHIRenderingInfo& renderingInfo);
     void ReleaseResource(RDGPassNodeRef pass);
     void ExecutePass(RDGRenderPassNodeRef pass);
@@ -93,7 +90,7 @@ private:
         if(node == nullptr) 
         {
             LOG_DEBUG("Unable to find RDG resource, please check name!");
-            return Handle(UINT32_MAX);
+            return Handle(UINT64_MAX);
         }
         return dynamic_cast<Type>(node)->GetHandle();
     }
@@ -124,7 +121,7 @@ private:
 
     RHICommandListRef command;
 };
-typedef std::shared_ptr<RDGBuilder> RDGBuilderRef;
+using RDGBuilderRef = std::shared_ptr<RDGBuilder>;
 
 class RDGTextureBuilder
 {

@@ -20,7 +20,7 @@ enum RDGEdgeType
     RDG_EDGE_TYPE_MAX_ENUM,    //
 };
 
-class RDGEdge : public DependencyGraph::Edge    
+class RDGEdge : public DependencyGraphEdge    
 {
 public:
     RDGEdge(RDGEdgeType edgeType, RHIResourceState state = RESOURCE_STATE_UNDEFINED)
@@ -39,7 +39,7 @@ public:
 protected:
     RDGEdgeType edgeType;
 };
-typedef RDGEdge* RDGEdgeRef;
+using RDGEdgeRef = RDGEdge*;
 
 
 class RDGTextureEdge : public RDGEdge
@@ -76,7 +76,7 @@ public:
 	float				clearDepth 		= 1.0f;
 	uint32_t			clearStencil 	= 0;
 };
-typedef RDGTextureEdge* RDGTextureEdgeRef;
+using RDGTextureEdgeRef = RDGTextureEdge*;
 
 
 class RDGBufferEdge : public RDGEdge
@@ -103,4 +103,4 @@ public:
     uint32_t index = 0;
     ResourceType type = RESOURCE_TYPE_UNIFORM_BUFFER;
 };
-typedef RDGBufferEdge* RDGBufferEdgeRef;
+using RDGBufferEdgeRef = RDGBufferEdge* ;
