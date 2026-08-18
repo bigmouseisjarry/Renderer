@@ -1,7 +1,9 @@
 #version 460
+#extension GL_EXT_samplerless_texture_functions : enable
 
-layout(set = 0, binding = 0, rgba16f)   uniform image2D IN_COLOR;	   
-layout(set = 0, binding = 1, rgba8)     uniform image2D OUT_COLOR;   
+
+layout(set = 0, binding = 0)   uniform texture2D IN_COLOR;			// SRV
+layout(set = 0, binding = 1, rgba8)     uniform image2D OUT_COLOR;  // UAV
 
 struct ExposureSetting
 {             
@@ -98,7 +100,7 @@ layout (local_size_x = THREAD_SIZE_X,
 void main() 
 {
     ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
-	vec3 color = imageLoad(IN_COLOR, pixel).xyz;
+	vec3 color = texelFetch(IN_COLOR, pixel, 0).xyz;
 
 	float finalExposure = SETTING.exposure / adaptedLuminance;	//使得整个画面的输出光照接近setting.exposure，例如0.5
 	if(SETTING.fixLuminance != 0)

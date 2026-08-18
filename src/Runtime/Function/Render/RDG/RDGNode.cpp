@@ -6,7 +6,7 @@ RDGTextureNodeRef RDGDependencyGraph::CreateTextureNode(std::string name)
 {
     RDGTextureNodeRef node = new RDGTextureNode(name);
     graph->insert(node);
-    textureNodeMap[node->ID()] = node;
+    resources.push_back(node);
     return node;
 }
 
@@ -14,7 +14,7 @@ RDGBufferNodeRef RDGDependencyGraph::CreateBufferNode(std::string name)
 {
     RDGBufferNodeRef node = new RDGBufferNode(name);
     graph->insert(node);
-    bufferNodeMap[node->ID()] = node;
+    resources.push_back(node);
     return node;
 }
 
@@ -22,7 +22,7 @@ RDGRenderPassNodeRef RDGDependencyGraph::CreateRenderPassNode(std::string name)
 {
     RDGRenderPassNodeRef node = new RDGRenderPassNode(name);
     graph->insert(node);
-    passNodeMap[node->ID()] = node;
+    passes.push_back(node);
     return node;
 }
 
@@ -30,7 +30,7 @@ RDGComputePassNodeRef RDGDependencyGraph::CreateComputePassNode(std::string name
 {
     RDGComputePassNodeRef node = new RDGComputePassNode(name);
     graph->insert(node);
-    passNodeMap[node->ID()] = node;
+    passes.push_back(node);
     return node;
 }
 
@@ -38,7 +38,7 @@ RDGRayTracingPassNodeRef RDGDependencyGraph::CreateRayTracingPassNode(std::strin
 {
     RDGRayTracingPassNodeRef node = new RDGRayTracingPassNode(name);
     graph->insert(node);
-    passNodeMap[node->ID()] = node;
+    passes.push_back(node);
     return node;
 }
 
@@ -46,7 +46,7 @@ RDGPresentPassNodeRef RDGDependencyGraph::CreatePresentPassNode(std::string name
 {
     RDGPresentPassNodeRef node = new RDGPresentPassNode(name);
     graph->insert(node);
-    passNodeMap[node->ID()] = node;
+    passes.push_back(node);
     return node;
 }
 
@@ -54,46 +54,47 @@ RDGCopyPassNodeRef RDGDependencyGraph::CreateCopyPassNode(std::string name)
 {
     RDGCopyPassNodeRef node = new RDGCopyPassNode(name);
     graph->insert(node);
-    passNodeMap[node->ID()] = node;
+    passes.push_back(node);
     return node;
 }
 
 RDGTextureNodeRef RDGDependencyGraph::GetTextureNode(DAGID id)
 {
-    auto it = textureNodeMap.find(id);
-    return it != textureNodeMap.end() ? it->second : nullptr;
+    return static_cast<RDGTextureNodeRef>(graph->access_node(id));
 }
 
 RDGBufferNodeRef RDGDependencyGraph::GetBufferNode(DAGID id)
 {
-    auto it = bufferNodeMap.find(id);
-    return it != bufferNodeMap.end() ? it->second : nullptr;
+    return static_cast<RDGBufferNodeRef>(graph->access_node(id));
 }
 
 RDGPassNodeRef RDGDependencyGraph::GetPassNode(DAGID id)
 {
-    auto it = passNodeMap.find(id);
-    return it != passNodeMap.end() ? it->second : nullptr;
+    return static_cast<RDGPassNodeRef>(graph->access_node(id));
 }
 
 void RDGDependencyGraph::Link(RDGPassNodeRef from, RDGTextureNodeRef to, RDGTextureEdgeRef edge)
 {
     graph->link(from, to, edge);
+    from->textureEdges.emplace_back(to, edge);
 }
 
 void RDGDependencyGraph::Link(RDGTextureNodeRef from, RDGPassNodeRef to, RDGTextureEdgeRef edge)
 {
     graph->link(from, to, edge);
+    to->textureEdges.emplace_back(from, edge);
 }
 
 void RDGDependencyGraph::Link(RDGPassNodeRef from, RDGBufferNodeRef to, RDGBufferEdgeRef edge)
 {
     graph->link(from, to, edge);
+    from->bufferEdges.emplace_back(to, edge);
 }
 
 void RDGDependencyGraph::Link(RDGBufferNodeRef from, RDGPassNodeRef to, RDGBufferEdgeRef edge)
 {
     graph->link(from, to, edge);
+    to->bufferEdges.emplace_back(from, edge);
 }
 
 void RDGDependencyGraph::ForEachPass(RDGTextureNodeRef texture, const std::function<void(RDGTextureEdgeRef,RDGPassNodeRef)>& func)
@@ -159,21 +160,26 @@ void RDGDependencyGraph::ForEachBuffer(RDGPassNodeRef pass, const std::function<
 
 void RDGDependencyGraph::ForEachTextureNode(const std::function<void(RDGTextureNodeRef)>& func)
 {
-    for (auto& [id, node] : textureNodeMap) func(node);
+    for (auto& resource : resources) {
+        if (resource->NodeType() == RDG_RESOURCE_NODE_TYPE_TEXTURE)
+            func(static_cast<RDGTextureNodeRef>(resource));
+    }
 }
 
 void RDGDependencyGraph::ForEachBufferNode(const std::function<void(RDGBufferNodeRef)>& func)
 {
-    for (auto& [id, node] : bufferNodeMap) func(node);
+    for (auto& resource : resources) {
+        if (resource->NodeType() == RDG_RESOURCE_NODE_TYPE_BUFFER)
+            func(static_cast<RDGBufferNodeRef>(resource));
+    }
 }
 
 void RDGDependencyGraph::ForEachPassNode(const std::function<void(RDGPassNodeRef)>& func)
 {
-    for (auto& [id, node] : passNodeMap) func(node);
+    for (auto& pass : passes) func(pass);
 }
 
-void RDGDependencyGraph::ForEachEdge(const std::function<void(DependencyGraphNode* from, DependencyGraphNode* to,
-    DependencyGraphEdge* edge)>& func)
+void RDGDependencyGraph::ForEachEdge(const std::function<void(DependencyGraphNode* from, DependencyGraphNode* to, DependencyGraphEdge* edge)>& func)
 {
     graph->foreach_edges(func);
 }

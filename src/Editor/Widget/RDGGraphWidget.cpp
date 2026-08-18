@@ -589,7 +589,7 @@ void RDGGraphWidget::UIInternel(bool* open)
 
         ImGui::Text("Resource count: %d / %d, imported count: %d / %d",
             (int)resourceNodes.size(),
-            (int)(rdgDependencyGraph->TextureNodeCount() + rdgDependencyGraph->BufferNodeCount()),
+            (int)(rdgDependencyGraph->ResourceNodeCount()),
             importedUniqueResourceCount,
             importedResourceCount);
         

@@ -373,15 +373,15 @@ void NRDIntegration::Denoise(RDGBuilder& builder, const nrd::Identifier* denoise
     // Invoke dispatches
     for (uint32_t i = 0; i < dispatchDescsNum; i++) {   //RELAX 0 0 3~9 10 10 10
         const nrd::DispatchDesc& dispatchDesc = dispatchDescs[i];
-        _Dispatch(builder, dispatchDesc, resourceSnapshot);
+        _Dispatch(builder, dispatchDesc, resourceSnapshot,i);
     }
 }
 
-void NRDIntegration::_Dispatch(RDGBuilder& builder, const nrd::DispatchDesc& dispatchDesc, NRDResourceSnapshot& resourceSnapshot) {
+void NRDIntegration::_Dispatch(RDGBuilder& builder, const nrd::DispatchDesc& dispatchDesc, NRDResourceSnapshot& resourceSnapshot, uint32_t dispatchIndex) {
     const nrd::InstanceDesc& instanceDesc = *GetInstanceDesc(*m_Instance);
     const nrd::PipelineDesc& pipelineDesc = instanceDesc.pipelines[dispatchDesc.pipelineIndex];
 
-    auto passBuilder = builder.CreateComputePass("NRD Pass [" + std::to_string(dispatchDesc.pipelineIndex) + "]");
+    auto passBuilder = builder.CreateComputePass("NRD Pass [" + std::to_string(dispatchIndex) + "]");
     RDGBufferHandle bufferHandle = builder.GetBuffer("NRD Constant Buffer");
 
     // Update constants

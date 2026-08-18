@@ -30,6 +30,9 @@ private:
     std::unordered_map<std::string, RDGTextureNodeRef> textures;
 };
 
+struct IRenderGraphPhase;
+
+
 // UE中的RDG：
 // 每个pass一个cpp文件 有graphbuilder的构建回调函数，
 // meshpass继承pass，多一个获取场景meshbatch的回调函数
@@ -68,6 +71,8 @@ public:
     RDGCopyPassHandle GetCopyPass(std::string name)                 { return GetPass<RDGCopyPassNodeRef, RDGCopyPassHandle>(name); }
 
     RDGDependencyGraphRef GetGraph() { return graph; }
+
+    friend struct IRenderGraphPhase;
 
     void Execute();
 

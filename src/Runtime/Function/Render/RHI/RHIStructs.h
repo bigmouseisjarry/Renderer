@@ -312,6 +312,115 @@ static uint32_t FormatChanelCounts(RHIFormat format)
 		return 0;
     }
 }
+static uint32_t RHIFormatBytesPerPixel(RHIFormat format)
+{
+	switch (format) {
+		// 8-bit per channel
+	case FORMAT_R8_UNORM:
+	case FORMAT_R8_SNORM:
+	case FORMAT_R8_UINT:
+	case FORMAT_R8_SINT:
+	case FORMAT_R8_SRGB:
+		return 1;
+
+		// 16-bit per channel, 1 channel
+	case FORMAT_R16_UNORM:
+	case FORMAT_R16_SNORM:
+	case FORMAT_R16_UINT:
+	case FORMAT_R16_SINT:
+	case FORMAT_R16_SFLOAT:
+		return 2;
+
+		// 2 channels × 8-bit
+	case FORMAT_R8G8_UNORM:
+	case FORMAT_R8G8_SNORM:
+	case FORMAT_R8G8_UINT:
+	case FORMAT_R8G8_SINT:
+	case FORMAT_R8G8_SRGB:
+		return 2;
+
+		// 32-bit single channel
+	case FORMAT_R32_SFLOAT:
+	case FORMAT_R32_UINT:
+	case FORMAT_R32_SINT:
+		return 4;
+
+		// 2 channels × 16-bit
+	case FORMAT_R16G16_SFLOAT:
+	case FORMAT_R16G16_UNORM:
+	case FORMAT_R16G16_SNORM:
+	case FORMAT_R16G16_UINT:
+	case FORMAT_R16G16_SINT:
+		return 4;
+
+		// 4 channels × 8-bit
+	case FORMAT_R8G8B8A8_UNORM:
+	case FORMAT_R8G8B8A8_SNORM:
+	case FORMAT_R8G8B8A8_UINT:
+	case FORMAT_R8G8B8A8_SINT:
+	case FORMAT_R8G8B8A8_SRGB:
+	case FORMAT_B8G8R8A8_SRGB:
+		return 4;
+
+		// 4 channels × 16-bit
+	case FORMAT_R16G16B16A16_SFLOAT:
+	case FORMAT_R16G16B16A16_UNORM:
+	case FORMAT_R16G16B16A16_SNORM:
+	case FORMAT_R16G16B16A16_UINT:
+	case FORMAT_R16G16B16A16_SINT:
+		return 8;
+
+		// 4 channels × 32-bit
+	case FORMAT_R32G32B32A32_SFLOAT:
+	case FORMAT_R32G32B32A32_UINT:
+	case FORMAT_R32G32B32A32_SINT:
+		return 16;
+
+		// 3 channels
+	case FORMAT_R8G8B8_UNORM:
+	case FORMAT_R8G8B8_SNORM:
+	case FORMAT_R8G8B8_UINT:
+	case FORMAT_R8G8B8_SINT:
+	case FORMAT_R8G8B8_SRGB:
+		return 3;
+	case FORMAT_R16G16B16_SFLOAT:
+	case FORMAT_R16G16B16_UNORM:
+	case FORMAT_R16G16B16_SNORM:
+	case FORMAT_R16G16B16_UINT:
+	case FORMAT_R16G16B16_SINT:
+		return 6;
+	case FORMAT_R32G32B32_SFLOAT:
+	case FORMAT_R32G32B32_UINT:
+	case FORMAT_R32G32B32_SINT:
+		return 12;
+
+		// Packed formats
+	case FORMAT_B10G11R11_UFLOAT:
+	case FORMAT_E5B9G9R9_UFLOAT:
+	case FORMAT_A2R10G10B10_SNORM:
+	case FORMAT_A2R10G10B10_UNORM:
+	case FORMAT_A2R10G10B10_SINT:
+	case FORMAT_A2R10G10B10_UINT:
+		return 4;
+
+		// Depth formats
+	case FORMAT_D32_SFLOAT:
+		return 4;
+	case FORMAT_D32_SFLOAT_S8_UINT:
+		return 5;   // 或 8，取决于对齐
+	case FORMAT_D24_UNORM_S8_UINT:
+		return 4;
+
+		// 2 channels × 32-bit
+	case FORMAT_R32G32_SFLOAT:
+	case FORMAT_R32G32_UINT:
+	case FORMAT_R32G32_SINT:
+		return 8;
+
+	default:
+		return 0;
+	}
+}
 
 static bool IsDepthStencilFormat(RHIFormat format)
 {
@@ -860,6 +969,18 @@ struct RHITextureInfo
 	ResourceType type = RESOURCE_TYPE_TEXTURE;
 
 	TextureCreationFlags creationFlag = TEXTURE_CREATION_NONE;
+
+	inline uint64_t get_size() const 
+	{
+		uint64_t bytesPerPixel = RHIFormatBytesPerPixel(format);
+		uint64_t baseSize = static_cast<uint64_t>(extent.width)
+			* extent.height
+			* std::max(extent.depth, 1u)
+			* bytesPerPixel;
+		if (mipLevels <= 1) return baseSize;
+		return baseSize + baseSize / 3;
+	}
+
 
 	friend bool operator== (const RHITextureInfo& a, const RHITextureInfo& b)
 	{

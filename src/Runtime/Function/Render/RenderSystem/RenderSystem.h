@@ -3,6 +3,7 @@
 #include "Function/Global/Definations.h"
 #include "Function/Render/RenderPass/MeshPass.h"
 #include "Function/Render/RenderPass/RenderPass.h"
+#include "Function/Render/RDG/RDGCompiler.h"
 #include "RenderLightManager.h"
 #include "RenderMeshManager.h"
 #include "RenderSurfaceCacheManager.h"
@@ -15,6 +16,8 @@ static const Extent2D HALF_WINDOW_EXTENT = { HALF_WINDOW_WIDTH, HALF_WINDOW_HEIG
 static const RHIFormat HDR_COLOR_FORMAT = FORMAT_R16G16B16A16_SFLOAT;
 static const RHIFormat COLOR_FORMAT = FORMAT_R8G8B8A8_UNORM;   
 static const RHIFormat DEPTH_FORMAT = FORMAT_D32_SFLOAT;
+
+struct IRenderGraphPhase; 
 
 class RenderSystem
 {
@@ -59,20 +62,26 @@ private:
     RHISurfaceRef surface;
     RHIQueueRef queue;
     RHISwapchainRef swapchain;
-    RHICommandPoolRef pool;
     
+    RHICommandPoolRef pool;
 
-    struct PerFrameCommonResource 
-    {
-        RHICommandListRef GraphicsCommand;
-        RHICommandListRef ComputeCommand;
-        
-        RHISemaphoreRef startSemaphore;
-        RHISemaphoreRef finishSemaphore;
+    //// 改成每帧做reset
+    //struct PerFrameCommonResource
+    //{
+    //    RHICommandPoolRef GraphicsPool;
+    //    RHICommandListRef GraphicsCommand;
 
-        RHIFenceRef fence;
-    };
+    //    RHISemaphoreRef startSemaphore;
+    //    RHISemaphoreRef finishSemaphore;
+
+    //    RHIFenceRef fence;
+    //};
+
+    using PerFrameCommonResource = RDGPerFrameResource;
+
     std::array<PerFrameCommonResource, FRAMES_IN_FLIGHT> perFrameCommonResources;
+    std::array<RDGCompilerRef, FRAMES_IN_FLIGHT> rdgCompilers;
+
     RenderGlobalSetting globalSetting = {};
     RDGDependencyGraphRef rdgDependencyGraph;
 
@@ -88,3 +97,4 @@ private:
     std::shared_ptr<RenderLightManager> lightManager;
     std::shared_ptr<RenderSurfaceCacheManager> surfaceCacheManager;
 };
+

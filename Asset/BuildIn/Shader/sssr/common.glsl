@@ -30,6 +30,6 @@ layout(set = 1, binding = 6)            uniform texture2D IN_COLOR_PYRAMID;     
 layout(set = 1, binding = 7)            uniform texture2D BRDF_LUT;	            // split sum的预积分纹理
 layout(set = 1, binding = 8)            uniform texture2D REPROJECTION_RESULT;	// 重投影信息
 
-layout(set = 2, binding = 0, rgba8)         uniform image2D G_BUFFER_DIFFUSE_METALLIC;	// G-Buffer
-layout(set = 2, binding = 1, rgba8_snorm)   uniform image2D G_BUFFER_NORMAL_ROUGHNESS;	
-layout(set = 2, binding = 2, rgba16f)       uniform image2D G_BUFFER_EMISSION;	
+layout(set = 2, binding = 0)            uniform texture2D G_BUFFER_DIFFUSE_METALLIC;	// G-Buffer
+layout(set = 2, binding = 1)            uniform texture2D G_BUFFER_NORMAL_ROUGHNESS;	
+layout(set = 2, binding = 2)            uniform texture2D G_BUFFER_EMISSION;	

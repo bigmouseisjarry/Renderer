@@ -48,7 +48,11 @@ private:
 
     Shader computeShader[3];
 
-    RHIRootSignatureRef rootSignature;
+
+	RHIRootSignatureRef copySssrRootSignature;
+	RHIRootSignatureRef viewZRootSignature;
+	RHIRootSignatureRef combineRootSignature;
+    // RHIRootSignatureRef rootSignature;
     RHIComputePipelineRef computePipeline[3];
 	RHITextureRef confidenceTexture;
 

@@ -11,7 +11,7 @@ void PostProcessingPass::Init()
     computeShader = Shader(EngineContext::File()->ShaderPath() + "post_process/post_process.comp.spv", SHADER_FREQUENCY_COMPUTE);
 
     RHIRootSignatureInfo rootSignatureInfo = {};
-    rootSignatureInfo.AddEntry({0, 0, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE})
+    rootSignatureInfo.AddEntry({0, 0, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })
                      .AddEntry({0, 1, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE})
                      .AddEntry({0, 2, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_BUFFER})
                      .AddPushConstant({128, SHADER_FREQUENCY_COMPUTE});
@@ -43,7 +43,7 @@ void PostProcessingPass::Build(RDGBuilder& builder)
 
     RDGComputePassHandle pass = builder.CreateComputePass(GetName())
         .RootSignature(rootSignature)
-        .ReadWrite(0, 0, 0, taaOutColor)
+        .Read(0, 0, 0, taaOutColor)
         .ReadWrite(0, 1, 0, outColor)
         .ReadWrite(0, 2, 0, exposureData)
         .Execute([&](RDGPassContext context) {       

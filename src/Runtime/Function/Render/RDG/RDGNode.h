@@ -16,6 +16,7 @@
 #include <vector>
 
 class RDGBuilder;
+class RDGDependencyGraph;
 
 enum RDGPassNodeType
 {
@@ -94,6 +95,11 @@ public:
 
     const RHITextureInfo& GetInfo() { return info; }
 
+    uint64_t get_size() const {
+        // 从 RHITextureInfo 算出来
+        return info.get_size();
+    }
+
 private:  
     RHITextureInfo info;
     RHIResourceState initState; // 从池中/外部引用时的最初状态
@@ -115,6 +121,7 @@ public:
 
     RDGBufferHandle GetHandle() { return RDGBufferHandle(ID()); }
 
+    uint64_t get_size() const { return info.size; }
     const RHIBufferInfo& GetInfo() { return info; }
 
 private:  
@@ -138,6 +145,21 @@ struct SamplerBind
     uint32_t index;
 };
 
+enum class RDGPassFlags : uint32_t
+{
+    None = 0x0,
+    SeparateFromCommandBuffer = 0x1,
+    PreferAsyncCompute = 0x2,
+    ComputeIntensive = 0x10,
+    VertexBoundIntensive = 0x20,
+    PixelBoundIntensive = 0x40,
+    BandwidthIntensive = 0x80,
+    SmallWorkingSet = 0x100,
+    LargeWorkingSet = 0x200,
+    RandomAccess = 0x400,
+    StreamingAccess = 0x800,
+};
+
 class RDGPassNode : public RDGNode
 {
 public:
@@ -148,9 +170,30 @@ public:
 
     inline bool Before(RDGPassNode* other)  { return ID() < other->ID(); }    // 假定所有pass的添加顺序就是执行顺序
     inline bool After(RDGPassNode* other)   { return ID() > other->ID(); }
-
-
     RDGPassNodeType NodeType() { return nodeType; }
+
+    // 资源边遍历
+    uint32_t textures_count() const {return static_cast<uint32_t>(textureEdges.size());}
+    uint32_t buffers_count() const {return static_cast<uint32_t>(bufferEdges.size());}
+
+    void foreach_textures(const std::function<void(RDGTextureNodeRef, RDGTextureEdgeRef)>& func) {
+        for (auto& [tex, edge] : textureEdges) func(tex, edge);
+    }
+    void foreach_buffers(const std::function<void(RDGBufferNodeRef, RDGBufferEdgeRef)>& func) {
+        for (auto& [buf, edge] : bufferEdges) func(buf, edge);
+    }
+
+    // 性能提示
+    void set_flags(RDGPassFlags flags) { hintFlags = flags; }
+    void add_flags(RDGPassFlags flags) {
+        hintFlags = static_cast<RDGPassFlags>(static_cast<uint32_t>(hintFlags) | static_cast<uint32_t>(flags));
+    }
+    bool has_flags(RDGPassFlags flags) const {
+        return (static_cast<uint32_t>(hintFlags) & static_cast<uint32_t>(flags)) != 0;
+    }
+    RDGPassFlags get_flags() const { return hintFlags; }
+
+    friend class RDGDependencyGraph;
 
 protected:
     RDGPassNodeType nodeType;
@@ -164,6 +207,11 @@ protected:
     std::vector<SamplerBind> samplers;                
 
     friend class RDGBuilder;
+
+    RDGPassFlags hintFlags = RDGPassFlags::None;
+    std::vector<std::pair<RDGTextureNodeRef, RDGTextureEdgeRef>> textureEdges;
+    std::vector<std::pair<RDGBufferNodeRef, RDGBufferEdgeRef>> bufferEdges;
+
 };
 using RDGPassNodeRef = RDGPassNode* ;
 
@@ -250,11 +298,12 @@ private:
 };
 using RDGCopyPassNodeRef = RDGCopyPassNode*;
 
+
 // 依赖图/////////////////////////////////////////////////////////////////////////////////////
 
 class RDGDependencyGraph
 {
-public: 
+public:
     RDGDependencyGraph() { graph = DependencyGraph::Create(); }
     ~RDGDependencyGraph() { if (graph) DependencyGraph::Destroy(graph); }
     RDGDependencyGraph(const RDGDependencyGraph&) = delete;
@@ -280,9 +329,8 @@ public:
     RDGBufferNodeRef  GetBufferNode(DAGID id);
     RDGPassNodeRef    GetPassNode(DAGID id);
 
-    uint32_t TextureNodeCount() const { return textureNodeMap.size(); }
-    uint32_t BufferNodeCount() const { return bufferNodeMap.size(); }
-    uint32_t PassNodeCount() const { return passNodeMap.size(); }
+    uint32_t ResourceNodeCount()const { return resources.size(); }
+    uint32_t PassNodeCount() const { return passes.size(); }
 
     uint32_t EdgeCount() { return graph->edge_count(); }
 
@@ -302,14 +350,12 @@ public:
 
     DependencyGraph* GetGraph() { return graph; }
 
-private:  
-
+private:
+    friend struct IRenderGraphPhase;
     // 图的本体
     DependencyGraph* graph = nullptr;
 
-    // 图中存的id 与 RDG中的资源对应
-    std::unordered_map<DAGID, RDGTextureNodeRef>  textureNodeMap;
-    std::unordered_map<DAGID, RDGBufferNodeRef>   bufferNodeMap;
-    std::unordered_map<DAGID, RDGPassNodeRef>     passNodeMap;
+    std::vector<RDGResourceNodeRef> resources;
+    std::vector<RDGPassNodeRef> passes;
 };
 using RDGDependencyGraphRef = std::shared_ptr<RDGDependencyGraph>;

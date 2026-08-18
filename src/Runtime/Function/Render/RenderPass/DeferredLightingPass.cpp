@@ -11,9 +11,9 @@ void DeferredLightingPass::Init()
 
     RHIRootSignatureInfo rootSignatureInfo = {};
     rootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetPerFrameRootSignature()->GetInfo())
-                     .AddEntry({1, 0, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE})
-                     .AddEntry({1, 1, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE})
-                     .AddEntry({1, 2, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE})
+                     .AddEntry({1, 0, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })
+                     .AddEntry({1, 1, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })
+                     .AddEntry({1, 2, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })
                      .AddEntry({1, 3, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE})
                      .AddPushConstant({128, SHADER_FREQUENCY_COMPUTE});
     rootSignature = backend->CreateRootSignature(rootSignatureInfo);
@@ -49,9 +49,9 @@ void DeferredLightingPass::Build(RDGBuilder& builder)
     {
         RDGComputePassHandle pass = builder.CreateComputePass(GetName())
             .RootSignature(rootSignature)
-            .ReadWrite(1, 0, 0, diffuse)
-            .ReadWrite(1, 1, 0, normal)
-            .ReadWrite(1, 2, 0, emission)
+            .Read(1, 0, 0, diffuse)
+            .Read(1, 1, 0, normal)
+            .Read(1, 2, 0, emission)
             .ReadWrite(1, 3, 0, outColor)
             .Execute([&](RDGPassContext context) {       
 

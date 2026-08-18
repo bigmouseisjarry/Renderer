@@ -10,7 +10,7 @@
 #include "common.glsl"
 	
 layout(set = 1, binding = 1, rgba16f) 	    uniform image2D RESTIR_SPECULAR_COLOR;
-layout(set = 1, binding = 2, rgba16f) 	    uniform image2D SSSR_RESOLVE;
+layout(set = 1, binding = 2) 	            uniform texture2D SSSR_RESOLVE;
 
 #define THREAD_SIZE_X 16
 #define THREAD_SIZE_Y 16
@@ -27,7 +27,7 @@ void main()
     if(SETTING.restirEnabled != 0)
         specularHitDist = imageLoad(RESTIR_SPECULAR_COLOR, pixel);
         
-    specularHitDist += imageLoad(SSSR_RESOLVE, pixel);
+    specularHitDist += texelFetch(SSSR_RESOLVE, pixel, 0);
 
     imageStore(RESTIR_SPECULAR_COLOR, pixel, specularHitDist);
 }

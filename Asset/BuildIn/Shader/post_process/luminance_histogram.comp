@@ -1,11 +1,12 @@
 #version 460
+#extension GL_EXT_samplerless_texture_functions : enable
 
 #define EPSILON 0.005
 #define RGB_TO_LUM vec3(0.2125, 0.7154, 0.0721) // Taken from RTR vol 4 pg. 278
 
 // https://bruop.github.io/exposure/
 
-layout(set = 0, binding = 0, rgba16f) uniform image2D IN_COLOR;
+layout(set = 0, binding = 0) uniform texture2D IN_COLOR;
 
 struct ExposureSetting
 {             
@@ -66,12 +67,12 @@ void main()
     HistogramShared[gl_LocalInvocationIndex] = 0;
     barrier();
 
-    uvec2 dim = imageSize(IN_COLOR).xy;
+    uvec2 dim = textureSize(IN_COLOR, 0);
 
     // Ignore threads that map to areas beyond the bounds of our HDR image
     if (pixel.x < dim.x && pixel.y < dim.y) 
     {
-        vec3 hdrColor = imageLoad(IN_COLOR, pixel).xyz;
+        vec3 hdrColor = texelFetch(IN_COLOR, pixel, 0).xyz;
         uint binIndex = colorToBin(hdrColor, setting.minLog2Luminance, setting.inverseLuminanceRange);
         // We use an atomic add to ensure we don't write to the same bin in our
         // histogram from two different threads at the same time.

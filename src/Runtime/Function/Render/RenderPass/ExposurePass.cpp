@@ -12,7 +12,7 @@ void ExposurePass::Init()
     computeShader1 = Shader(EngineContext::File()->ShaderPath() + "post_process/luminance_exposure.comp.spv", SHADER_FREQUENCY_COMPUTE);
 
     RHIRootSignatureInfo rootSignatureInfo = {};
-    rootSignatureInfo.AddEntry({0, 0, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE})
+    rootSignatureInfo.AddEntry({0, 0, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })
                      .AddEntry({0, 1, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_BUFFER});
     rootSignature = backend->CreateRootSignature(rootSignatureInfo);
 
@@ -52,7 +52,7 @@ void ExposurePass::Build(RDGBuilder& builder)
 
     RDGComputePassHandle pass0 = builder.CreateComputePass("Luminance Histogram")
         .RootSignature(rootSignature)
-        .ReadWrite(0, 0, 0, taaOutColor)
+        .Read(0, 0, 0, taaOutColor)
         .ReadWrite(0, 1, 0, exposureData)
         .Execute([&](RDGPassContext context) {       
 
@@ -67,7 +67,7 @@ void ExposurePass::Build(RDGBuilder& builder)
 
     RDGComputePassHandle pass1 = builder.CreateComputePass("Luminance Exposure")
         .RootSignature(rootSignature)
-        .ReadWrite(0, 0, 0, taaOutColor)
+        .Read(0, 0, 0, taaOutColor)
         .ReadWrite(0, 1, 0, exposureData)
         .Execute([&](RDGPassContext context) {       
 

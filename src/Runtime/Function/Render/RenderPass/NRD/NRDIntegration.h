@@ -112,7 +112,7 @@ private:
     NRDIntegration(const NRDIntegration&) = delete;
 
     bool _CreateResources();
-    void _Dispatch(RDGBuilder& builder, const nrd::DispatchDesc& dispatchDesc, NRDResourceSnapshot& resourceSnapshot);
+    void _Dispatch(RDGBuilder& builder, const nrd::DispatchDesc& dispatchDesc, NRDResourceSnapshot& resourceSnapshot, uint32_t dispatchIndex);
 
     RHIBufferRef m_ConstantBuffer;
     std::vector<RHISamplerRef> m_Samplers;

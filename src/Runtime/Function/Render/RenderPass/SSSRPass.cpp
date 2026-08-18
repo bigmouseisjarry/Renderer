@@ -25,9 +25,9 @@ void SSSRPass::Init()
                      .AddEntry({1, 6, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE})      // IN_COLOR_PYRAMID
                      .AddEntry({1, 7, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE})      // BRDF_LUT
                      .AddEntry({1, 8, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE})      // REPROJECTION_RESULT
-                     .AddEntry({2, 0, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE})   // G_BUFFER_DIFFUSE_METALLIC
-                     .AddEntry({2, 1, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE})   // G_BUFFER_NORMAL_ROUGHNESS
-                     .AddEntry({2, 2, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE})   // G_BUFFER_EMISSION
+                     .AddEntry({2, 0, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })     // G_BUFFER_DIFFUSE_METALLIC
+                     .AddEntry({2, 1, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })     // G_BUFFER_NORMAL_ROUGHNESS
+                     .AddEntry({2, 2, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })     // G_BUFFER_EMISSION
                      .AddPushConstant({128, SHADER_FREQUENCY_COMPUTE});
     rootSignature = backend->CreateRootSignature(rootSignatureInfo);
 
@@ -138,9 +138,9 @@ void SSSRPass::Build(RDGBuilder& builder)
             .Read(1, 6, 0, inColorPyramid)
             .Read(1, 7, 0, brdfLut)
             .Read(1, 8, 0, reprojectionOut)      
-            .ReadWrite(2, 0, 0, diffuse)
-            .ReadWrite(2, 1, 0, normal)
-            .ReadWrite(2, 2, 0, emission)
+            .Read(2, 0, 0, diffuse)
+            .Read(2, 1, 0, normal)
+            .Read(2, 2, 0, emission)
             .Execute([&](RDGPassContext context) {       
 
                 Extent2D extent = (HALF_SIZE_SSSR) ? EngineContext::Render()->GetHalfWindowsExtent() : 
@@ -169,9 +169,9 @@ void SSSRPass::Build(RDGBuilder& builder)
             .Read(1, 6, 0, inColorPyramid)
             .Read(1, 7, 0, brdfLut)
             .Read(1, 8, 0, reprojectionOut)      
-            .ReadWrite(2, 0, 0, diffuse)
-            .ReadWrite(2, 1, 0, normal)
-            .ReadWrite(2, 2, 0, emission)
+            .Read(2, 0, 0, diffuse)
+            .Read(2, 1, 0, normal)
+            .Read(2, 2, 0, emission)
             .Execute([&](RDGPassContext context) {       
 
                 RHICommandListRef command = context.command; 
@@ -199,9 +199,9 @@ void SSSRPass::Build(RDGBuilder& builder)
                 .Read(1, 6, 0, inColorPyramid)
                 .Read(1, 7, 0, brdfLut)
                 .Read(1, 8, 0, reprojectionOut)      
-                .ReadWrite(2, 0, 0, diffuse)
-                .ReadWrite(2, 1, 0, normal)
-                .ReadWrite(2, 2, 0, emission)
+                .Read(2, 0, 0, diffuse)
+                .Read(2, 1, 0, normal)
+                .Read(2, 2, 0, emission)
                 .Execute([&](RDGPassContext context) {       
 
                     RHICommandListRef command = context.command; 

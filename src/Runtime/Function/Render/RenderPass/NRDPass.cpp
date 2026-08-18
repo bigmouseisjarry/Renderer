@@ -43,28 +43,56 @@ void NRDPass::Init()
     computeShader[1] = Shader(EngineContext::File()->ShaderPath() + "nrd/nrd_combine.comp.spv", SHADER_FREQUENCY_COMPUTE);
     computeShader[2] = Shader(EngineContext::File()->ShaderPath() + "nrd/copy_sssr.comp.spv", SHADER_FREQUENCY_COMPUTE);
 
-    RHIRootSignatureInfo rootSignatureInfo = {};
-    rootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetPerFrameRootSignature()->GetInfo())
-                     .AddEntry({1, 0, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE})
-                     .AddEntry({1, 1, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE})
-                     .AddEntry({1, 2, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE})
-                     .AddEntry({1, 3, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE})
-                     .AddEntry({1, 4, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE})
-                     .AddEntry({1, 5, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE})
-                     .AddEntry({1, 6, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE})
-                     .AddPushConstant({128, SHADER_FREQUENCY_COMPUTE});
-    rootSignature = backend->CreateRootSignature(rootSignatureInfo);
+    {
+        RHIRootSignatureInfo viewZRootSignatureInfo = {};
+        viewZRootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetPerFrameRootSignature()->GetInfo())
+            .AddEntry({ 1, 0, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })      // G_BUFFER_DEPTH
+            .AddEntry({ 1, 1, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })      // G_BUFFER_DIFFUSE_METALLIC
+            .AddEntry({ 1, 2, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })      // G_BUFFER_NORMAL_ROUGHNESS
+            .AddEntry({ 1, 3, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE })   // RESTIR_DIFFUSE_COLOR
+            .AddEntry({ 1, 4, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE })   // RESTIR_SPECULAR_COLOR
+            .AddEntry({ 1, 5, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE })   // NRD_VIEW_Z
+            .AddEntry({ 1, 6, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE });  // NRD_NORMAL
 
-    RHIComputePipelineInfo pipelineInfo     = {};
-    pipelineInfo.rootSignature              = rootSignature;
-    pipelineInfo.computeShader              = computeShader[0].shader;
-    computePipeline[0]   = backend->CreateComputePipeline(pipelineInfo);
+        viewZRootSignature = backend->CreateRootSignature(viewZRootSignatureInfo);
 
-    pipelineInfo.computeShader              = computeShader[1].shader;
-    computePipeline[1]   = backend->CreateComputePipeline(pipelineInfo);
+        RHIComputePipelineInfo pipelineInfo = {};
+        pipelineInfo.rootSignature = viewZRootSignature;
+        pipelineInfo.computeShader = computeShader[0].shader;
+        computePipeline[0] = backend->CreateComputePipeline(pipelineInfo);
+    }
 
-    pipelineInfo.computeShader              = computeShader[2].shader;
-    computePipeline[2]   = backend->CreateComputePipeline(pipelineInfo);
+
+    {
+        RHIRootSignatureInfo combineRootSignatureInfo = {};
+        combineRootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetPerFrameRootSignature()->GetInfo())
+            .AddEntry({ 1, 1, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })      // G_BUFFER_DIFFUSE_METALLIC
+            .AddEntry({ 1, 2, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })      // G_BUFFER_NORMAL_ROUGHNESS
+            .AddEntry({ 1, 3, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })      // NRD_OUT_DIFFUSE
+            .AddEntry({ 1, 4, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })      // NRD_OUT_SPECULAR
+            .AddEntry({ 1, 5, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE });  // OUT
+
+        combineRootSignature = backend->CreateRootSignature(combineRootSignatureInfo);
+
+        RHIComputePipelineInfo pipelineInfo = {};
+        pipelineInfo.rootSignature = combineRootSignature;
+        pipelineInfo.computeShader = computeShader[1].shader;
+        computePipeline[1] = backend->CreateComputePipeline(pipelineInfo);
+    }
+
+    {
+        RHIRootSignatureInfo copySssrRootSignatureInfo = {};
+        copySssrRootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetPerFrameRootSignature()->GetInfo())
+            .AddEntry({ 1, 1, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE })
+            .AddEntry({ 1, 2, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE });
+
+        copySssrRootSignature = backend->CreateRootSignature(copySssrRootSignatureInfo);
+
+        RHIComputePipelineInfo pipelineInfo = {};
+        pipelineInfo.rootSignature = copySssrRootSignature;
+        pipelineInfo.computeShader = computeShader[2].shader;
+        computePipeline[2] = backend->CreateComputePipeline(pipelineInfo);
+    }
 
     // confidenceTexture = EngineContext::RHI()->CreateTexture({
     //     .format = FORMAT_R16_SFLOAT,
@@ -183,9 +211,9 @@ void NRDPass::Build(RDGBuilder& builder)
             RDGTextureHandle sssrResolve = builder.GetTexture("SSSR Resolve");
 
             RDGComputePassHandle pass2 = builder.CreateComputePass(GetName() + " Copy SSSR")
-                .RootSignature(rootSignature)
+                .RootSignature(copySssrRootSignature)
                 .ReadWrite(1, 1, 0, restirSpecularColor)
-                .ReadWrite(1, 2, 0, sssrResolve)
+                .Read(1, 2, 0, sssrResolve)
                 .Execute([&](RDGPassContext context) {       
 
                     RHICommandListRef command = context.command; 
@@ -201,10 +229,10 @@ void NRDPass::Build(RDGBuilder& builder)
         }
 
         RDGComputePassHandle pass = builder.CreateComputePass(GetName() + " Generate View Z")
-            .RootSignature(rootSignature)
+            .RootSignature(viewZRootSignature)
             .Read(1, 0, 0, depth, VIEW_TYPE_2D, {TEXTURE_ASPECT_DEPTH, 0, 1, 0, 1})
-            .ReadWrite(1, 1, 0, diffuse)
-            .ReadWrite(1, 2, 0, normal)
+            .Read(1, 1, 0, diffuse)
+            .Read(1, 2, 0, normal)
             .ReadWrite(1, 3, 0, restirDiffuseColor)
             .ReadWrite(1, 4, 0, restirSpecularColor)
             .ReadWrite(1, 5, 0, nrdViewZ)
@@ -289,11 +317,11 @@ void NRDPass::Build(RDGBuilder& builder)
         if(!debug)
         {
             RDGComputePassHandle pass1 = builder.CreateComputePass(GetName() + " Combine")
-                .RootSignature(rootSignature)
-                .ReadWrite(1, 1, 0, diffuse)
-                .ReadWrite(1, 2, 0, normal)
-                .ReadWrite(1, 3, 0, nrdOutDiffuse)
-                .ReadWrite(1, 4, 0, nrdOutSpecular)
+                .RootSignature(combineRootSignature)
+                .Read(1, 1, 0, diffuse)
+                .Read(1, 2, 0, normal)
+                .Read(1, 3, 0, nrdOutDiffuse)
+                .Read(1, 4, 0, nrdOutSpecular)
                 .ReadWrite(1, 5, 0, outColor)
                 .Execute([&](RDGPassContext context) {       
 

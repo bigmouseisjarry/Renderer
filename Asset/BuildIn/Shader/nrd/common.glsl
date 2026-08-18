@@ -13,6 +13,6 @@ layout(push_constant) uniform NRDSetting
     float motionVectorScaleZ;
 } SETTING;
 
-layout(set = 1, binding = 0) 			    uniform texture2D G_BUFFER_DEPTH;
-layout(set = 1, binding = 1, rgba8)         uniform image2D G_BUFFER_DIFFUSE_METALLIC;	
-layout(set = 1, binding = 2, rgba8_snorm)   uniform image2D G_BUFFER_NORMAL_ROUGHNESS;	
+layout(set = 1, binding = 0)    uniform texture2D G_BUFFER_DEPTH;
+layout(set = 1, binding = 1)    uniform texture2D G_BUFFER_DIFFUSE_METALLIC;	
+layout(set = 1, binding = 2)    uniform texture2D G_BUFFER_NORMAL_ROUGHNESS;	

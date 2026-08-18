@@ -33,7 +33,7 @@ void main()
     if(depth == 1.0f)
         viewZ = sign(viewZ) * 1e5;
     
-    vec4 gbffer1    = imageLoad(G_BUFFER_NORMAL_ROUGHNESS, pixel);
+    vec4 gbffer1    = texelFetch(G_BUFFER_NORMAL_ROUGHNESS, pixel,0);
     vec3 normal     = gbffer1.xyz;
     float roughness = gbffer1.w;
     vec4 normalRoughness = NRD_FrontEnd_PackNormalAndRoughness(normal, roughness, 0);
@@ -42,7 +42,7 @@ void main()
 
     if(SETTING.demodulate > 0)
     {
-        vec3 diffuse 		= imageLoad(G_BUFFER_DIFFUSE_METALLIC, pixel).xyz;
+        vec3 diffuse 		= texelFetch(G_BUFFER_DIFFUSE_METALLIC, pixel,0).xyz;
         float luminance     = RGBtoLuminance(diffuse);
 	    if(luminance > 1e-3)
         {
