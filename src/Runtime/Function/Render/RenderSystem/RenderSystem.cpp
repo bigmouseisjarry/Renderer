@@ -84,7 +84,14 @@ void RenderSystem::InitBaseResource()
         perFrameCommonResources[i].finishSemaphore = backend->CreateSemaphore();
         perFrameCommonResources[i].fence = backend->CreateFence(true);
 
-        rdgCompilers[i] = std::make_shared<RDGCompiler>();
+
+        QueueScheduleConfig queueCfg;
+        queueCfg.enable_async_compute = true;
+        queueCfg.max_async_compute_queues = 2;
+        queueCfg.max_copy_queues = 1;
+        queueCfg.enable_copy_queue = true;
+        queueCfg.enable_debug_output = false;
+        rdgCompilers[i] = std::make_shared<RDGCompiler>(queueCfg);
     }
 }
 
@@ -201,86 +208,34 @@ void RenderSystem::Tick()
         &perFrameCommonResources[EngineContext::ThreadPool()->ThreadFrameIndex()]
     );
 
-    // 验证 PassInfoAnalysis 结果
-    {
-        const auto& infoAnalysis = rdgCompiler->GetPassInfoAnalysis();
-        ENGINE_LOG_INFO("=== PassInfoAnalysis Result ===");
-        ENGINE_LOG_INFO("Pass count: {}", rdgDependencyGraph->PassNodeCount());
-        ENGINE_LOG_INFO("Resource count: {}", rdgDependencyGraph->ResourceNodeCount());
+    //// ====== 测试输出 ======
+    //{
+    //    const auto& depAnalysis = rdgCompiler->GetPassDependencyAnalysis();
 
-        // 按类型汇总
-        uint32_t renderCount = 0, computeCount = 0, copyCount = 0, presentCount = 0, rtCount = 0;
-        uint32_t totalResourcesAccessed = 0;
-        uint32_t hintAsyncCompute = 0, hintSeparateCmdBuf = 0;
-        rdgDependencyGraph->ForEachPassNode([&](RDGPassNodeRef pass) {
-            const auto* passInfo = infoAnalysis.get_pass_info(pass);
-            if (!passInfo) return;
-            switch (passInfo->pass_type) {
-                case RDGPassNodeType::RDG_PASS_NODE_TYPE_RENDER:      renderCount++; break;
-                case RDGPassNodeType::RDG_PASS_NODE_TYPE_COMPUTE:     computeCount++; break;
-                case RDGPassNodeType::RDG_PASS_NODE_TYPE_COPY:        copyCount++; break;
-                case RDGPassNodeType::RDG_PASS_NODE_TYPE_PRESENT:     presentCount++; break;
-                case RDGPassNodeType::RDG_PASS_NODE_TYPE_RAY_TRACING: rtCount++; break;
-                default: break;
-            }
-            totalResourcesAccessed += passInfo->resource_info.total_resource_count;
-            if (passInfo->performance_info.prefers_async_compute) hintAsyncCompute++;
-            if (passInfo->performance_info.separate_command_buffer) hintSeparateCmdBuf++;
-        });
-        ENGINE_LOG_INFO("Pass summary: Render={} Compute={} Copy={} Present={} RayTracing={}",
-            renderCount, computeCount, copyCount, presentCount, rtCount);
-        ENGINE_LOG_INFO("Total resource accesses: {}", totalResourcesAccessed);
-        ENGINE_LOG_INFO("Performance hints: asyncCompute={} separateCmdBuf={}", hintAsyncCompute, hintSeparateCmdBuf);
+    //    // 1. 打印依赖关系
+    //    depAnalysis.dump_dependencies();
 
-        // 逐 pass 输出（只输出 pass 级，不展开每个资源）
-        rdgDependencyGraph->ForEachPassNode([&](RDGPassNodeRef pass) {
-            const auto* passInfo = infoAnalysis.get_pass_info(pass);
-            if (!passInfo) { ENGINE_LOG_INFO("  [PASS] {} - no info", pass->Name()); return; }
+    //    // 2. 打印逻辑拓扑（核心：dependency levels）
+    //    depAnalysis.dump_logical_topology();
 
-            const char* typeStr = "Unknown";
-            switch (passInfo->pass_type) {
-                case RDGPassNodeType::RDG_PASS_NODE_TYPE_RENDER:      typeStr = "R"; break;
-                case RDGPassNodeType::RDG_PASS_NODE_TYPE_COMPUTE:     typeStr = "C"; break;
-                case RDGPassNodeType::RDG_PASS_NODE_TYPE_RAY_TRACING: typeStr = "RT"; break;
-                case RDGPassNodeType::RDG_PASS_NODE_TYPE_PRESENT:     typeStr = "P"; break;
-                case RDGPassNodeType::RDG_PASS_NODE_TYPE_COPY:        typeStr = "CP"; break;
-                default: break;
-            }
+    //    // 3. 打印关键路径
+    //    depAnalysis.dump_logical_critical_path();
 
-            // 统计该 pass 的读写资源数
-            uint32_t texCount = 0, bufCount = 0, writeCount = 0, readCount = 0;
-            for (const auto& access : passInfo->resource_info.resource_accesses)
-            {
-                if (access.resource->NodeType() == RDG_RESOURCE_NODE_TYPE_TEXTURE) texCount++;
-                else bufCount++;
-                if (access.access_type == EResourceAccessType::ReadWrite) { readCount++; writeCount++; }
-                else if (access.access_type == EResourceAccessType::Write)       writeCount++;
-                else                                                             readCount++;
-            }
-            ENGINE_LOG_INFO("  [{}] {} tex={} buf={} reads={} writes={}",
-                typeStr, pass->Name(), texCount, bufCount, readCount, writeCount);
-        });
-
-        // 资源跨 pass 汇总
-        uint32_t crossQueueResources = 0;
-        rdgDependencyGraph->ForEachTextureNode([&](RDGTextureNodeRef tex) {
-            const auto* resInfo = infoAnalysis.get_resource_info((RDGResourceNodeRef)tex);
-            if (resInfo) {
-                // queues 位掩码: 0x01=Graphics, 0x02=Compute, 0x04=Transfer
-                bool isCross = resInfo->access_queues != 0 && (resInfo->access_queues & (resInfo->access_queues - 1)) != 0;
-                if (isCross) crossQueueResources++;
-            }
-        });
-        rdgDependencyGraph->ForEachBufferNode([&](RDGBufferNodeRef buf) {
-            const auto* resInfo = infoAnalysis.get_resource_info((RDGResourceNodeRef)buf);
-            if (resInfo) {
-                bool isCross = resInfo->access_queues != 0 && (resInfo->access_queues & (resInfo->access_queues - 1)) != 0;
-                if (isCross) crossQueueResources++;
-            }
-        });
-        ENGINE_LOG_INFO("Cross-queue resources: {}", crossQueueResources);
-        ENGINE_LOG_INFO("=== End PassInfoAnalysis Result ===");
-    }
+    //    // 4. 统计：同一 level 中可并行的 pass 对数（多队列潜力指标）
+    //    const auto& topology = depAnalysis.get_logical_topology_result();
+    //    uint32_t parallel_pairs = 0;
+    //    for (const auto& level : topology.logical_levels)
+    //    {
+    //        uint32_t n = static_cast<uint32_t>(level.passes.size());
+    //        if (n > 1)
+    //            parallel_pairs += n * (n - 1) / 2;  // C(n,2)
+    //    }
+    //    ENGINE_LOG_INFO("=== Parallelism Potential ===");
+    //    ENGINE_LOG_INFO("  Total dependency levels: {}", topology.logical_levels.size());
+    //    ENGINE_LOG_INFO("  Max dependency depth: {}", topology.max_logical_dependency_depth);
+    //    ENGINE_LOG_INFO("  Parallelizable pass pairs: {}", parallel_pairs);
+    //    ENGINE_LOG_INFO("  Critical path length: {}", depAnalysis.get_logical_critical_path().size());
+    //}
 
     // 根据分析结果分别录制+执行，而不是现在这样串行一个队列执行
     ExecuteRDG();

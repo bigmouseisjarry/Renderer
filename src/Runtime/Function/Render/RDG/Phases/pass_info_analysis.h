@@ -72,6 +72,8 @@ public:
     PassInfoAnalysis() = default;
     ~PassInfoAnalysis() override = default;
 
+    void reset_for_frame() override;
+
     // IRenderGraphPhase interface
     void on_execute(RDGDependencyGraphRef graph, PerFrameCommonResourceRef executor) override;
 

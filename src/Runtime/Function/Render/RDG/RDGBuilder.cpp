@@ -1284,6 +1284,12 @@ RDGRenderPassBuilder& RDGRenderPassBuilder::Execute(const RDGPassExecuteFunc& ex
     return *this;
 }
 
+RDGRenderPassBuilder& RDGRenderPassBuilder::AddFlag(const RDGPassFlags flag)
+{
+    pass->add_flags(flag);
+    return *this;
+}
+
 RDGComputePassBuilder& RDGComputePassBuilder::PassIndex(uint32_t x, uint32_t y, uint32_t z)
 {
     pass->passIndex[0] = x;
@@ -1446,6 +1452,12 @@ RDGComputePassBuilder& RDGComputePassBuilder::OutputIndirectDraw(RDGBufferHandle
     return *this;
 }
 
+RDGComputePassBuilder& RDGComputePassBuilder::AddFlag(const RDGPassFlags flag)
+{
+    pass->add_flags(flag);
+    return *this;
+}
+
 RDGComputePassBuilder& RDGComputePassBuilder::Execute(const RDGPassExecuteFunc& execute)
 {
     pass->execute = execute;
@@ -1601,6 +1613,12 @@ RDGRayTracingPassBuilder& RDGRayTracingPassBuilder::OutputReadWrite(RDGTextureHa
     return *this;
 }
 
+RDGRayTracingPassBuilder& RDGRayTracingPassBuilder::AddFlag(const RDGPassFlags flag)
+{
+    pass->add_flags(flag);
+    return *this;
+}
+
 RDGRayTracingPassBuilder& RDGRayTracingPassBuilder::Execute(const RDGPassExecuteFunc& execute)
 {
     pass->execute = execute;
@@ -1733,6 +1751,12 @@ RDGCopyPassBuilder& RDGCopyPassBuilder::OutputReadWrite(RDGTextureHandle texture
     graph->Link(pass, graph->GetTextureNode(texture.ID()), edge);
 
     return *this; 
+}
+
+RDGCopyPassBuilder& RDGCopyPassBuilder::AddFlag(const RDGPassFlags flag)
+{
+    pass->add_flags(flag);
+    return *this;
 }
 
 

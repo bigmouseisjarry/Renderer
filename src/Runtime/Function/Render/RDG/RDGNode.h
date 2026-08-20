@@ -150,6 +150,7 @@ enum class RDGPassFlags : uint32_t
     None = 0x0,
     SeparateFromCommandBuffer = 0x1,
     PreferAsyncCompute = 0x2,
+    ForceGraphicsQueue = 0x4,
     ComputeIntensive = 0x10,
     VertexBoundIntensive = 0x20,
     PixelBoundIntensive = 0x40,
@@ -290,6 +291,7 @@ public:
     {}
 
     RDGCopyPassHandle GetHandle() { return RDGCopyPassHandle(ID()); } 
+    bool IsGenerateMip() { return generateMip; }
 private:
     bool generateMip = false;
 

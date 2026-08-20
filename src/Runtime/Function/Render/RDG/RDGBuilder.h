@@ -211,6 +211,7 @@ public:
     RDGRenderPassBuilder& OutputReadWrite(RDGBufferHandle buffer, uint32_t offset = 0, uint32_t size = 0);
     RDGRenderPassBuilder& OutputReadWrite(RDGTextureHandle texture, TextureSubresourceRange subresource = {});  
     RDGRenderPassBuilder& Execute(const RDGPassExecuteFunc& execute);
+    RDGRenderPassBuilder& AddFlag(const RDGPassFlags flag);
 
     RDGRenderPassHandle Finish() { return pass->GetHandle(); }
 
@@ -242,7 +243,7 @@ public:
     RDGComputePassBuilder& OutputReadWrite(RDGBufferHandle buffer, uint32_t offset = 0, uint32_t size = 0);
     RDGComputePassBuilder& OutputReadWrite(RDGTextureHandle texture, TextureSubresourceRange subresource = {});  
     RDGComputePassBuilder& OutputIndirectDraw(RDGBufferHandle buffer, uint32_t offset = 0, uint32_t size = 0);
-
+    RDGComputePassBuilder& AddFlag(const RDGPassFlags flag);
 
     RDGComputePassBuilder& Execute(const RDGPassExecuteFunc& execute);
 
@@ -275,7 +276,7 @@ public:
     RDGRayTracingPassBuilder& OutputRead(RDGTextureHandle texture, TextureSubresourceRange subresource = {});      
     RDGRayTracingPassBuilder& OutputReadWrite(RDGBufferHandle buffer, uint32_t offset = 0, uint32_t size = 0);
     RDGRayTracingPassBuilder& OutputReadWrite(RDGTextureHandle texture, TextureSubresourceRange subresource = {});  
-
+    RDGRayTracingPassBuilder& AddFlag(const RDGPassFlags flag);
 
     RDGRayTracingPassBuilder& Execute(const RDGPassExecuteFunc& execute);
 
@@ -328,6 +329,7 @@ public:
     RDGCopyPassBuilder& OutputRead(RDGTextureHandle texture, TextureSubresourceLayers subresource = {});
     RDGCopyPassBuilder& OutputReadWrite(RDGBufferHandle buffer, uint32_t offset = 0, uint32_t size = 0);
     RDGCopyPassBuilder& OutputReadWrite(RDGTextureHandle texture, TextureSubresourceLayers subresource = {});
+    RDGCopyPassBuilder& AddFlag(const RDGPassFlags flag);
 
 private:
     RDGBuilder* builder;

@@ -22,6 +22,7 @@ struct IRenderGraphPhase
     using PerFrameCommonResourceRef = RDGPerFrameResource*;
 
     virtual ~IRenderGraphPhase();
+    virtual void reset_for_frame();
     virtual void on_execute(RDGDependencyGraphRef graph, PerFrameCommonResourceRef executor);
 
     static std::vector<RDGResourceNodeRef>& get_resources(RDGDependencyGraphRef graph);

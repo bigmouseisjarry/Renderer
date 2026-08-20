@@ -5,6 +5,11 @@ IRenderGraphPhase::~IRenderGraphPhase()
 
 }
 
+void IRenderGraphPhase::reset_for_frame()
+{
+
+}
+
 void IRenderGraphPhase::on_execute(RDGDependencyGraphRef graph, PerFrameCommonResourceRef executor)
 {
 

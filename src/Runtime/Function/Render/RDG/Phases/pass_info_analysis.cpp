@@ -2,7 +2,13 @@
 
 #include "Function/Global/EngineContext.h"
 
-void PassInfoAnalysis::on_execute(RDGDependencyGraphRef graph, PerFrameCommonResourceRef executor) 
+void PassInfoAnalysis::reset_for_frame()
+{
+    pass_infos.clear();
+    resource_infos.clear();
+}
+
+void PassInfoAnalysis::on_execute(RDGDependencyGraphRef graph, PerFrameCommonResourceRef executor)
 {
     ENGINE_TIME_SCOPE(PassInfoAnalysis::on_execute);
 
