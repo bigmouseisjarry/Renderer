@@ -85,13 +85,24 @@ void RenderSystem::InitBaseResource()
         perFrameCommonResources[i].fence = backend->CreateFence(true);
 
 
-        QueueScheduleConfig queueCfg;
+        QueueScheduleConfig queueCfg{};
         queueCfg.enable_async_compute = true;
-        queueCfg.max_async_compute_queues = 2;
+        queueCfg.max_async_compute_queues = 1;
         queueCfg.max_copy_queues = 1;
         queueCfg.enable_copy_queue = true;
         queueCfg.enable_debug_output = false;
-        rdgCompilers[i] = std::make_shared<RDGCompiler>(queueCfg);
+
+        ExecutionReorderConfig reorderConfig{};
+        reorderConfig.enable_cache_opt = true;
+        reorderConfig.enable_lifetime_opt = false;
+        reorderConfig.max_attraction_distance = 10;
+        reorderConfig.min_affinity_score = 0.3;
+
+        CrossQueueSyncConfig crossQueueSyncConfig{};
+        crossQueueSyncConfig.enable_ssis_optimization = true;
+        crossQueueSyncConfig.enable_debug_output = true;
+        crossQueueSyncConfig.max_sync_distance = 16;
+        rdgCompilers[i] = std::make_shared<RDGCompiler>(queueCfg, reorderConfig, crossQueueSyncConfig);
     }
 }
 
@@ -207,35 +218,6 @@ void RenderSystem::Tick()
         rdgDependencyGraph,
         &perFrameCommonResources[EngineContext::ThreadPool()->ThreadFrameIndex()]
     );
-
-    //// ====== 测试输出 ======
-    //{
-    //    const auto& depAnalysis = rdgCompiler->GetPassDependencyAnalysis();
-
-    //    // 1. 打印依赖关系
-    //    depAnalysis.dump_dependencies();
-
-    //    // 2. 打印逻辑拓扑（核心：dependency levels）
-    //    depAnalysis.dump_logical_topology();
-
-    //    // 3. 打印关键路径
-    //    depAnalysis.dump_logical_critical_path();
-
-    //    // 4. 统计：同一 level 中可并行的 pass 对数（多队列潜力指标）
-    //    const auto& topology = depAnalysis.get_logical_topology_result();
-    //    uint32_t parallel_pairs = 0;
-    //    for (const auto& level : topology.logical_levels)
-    //    {
-    //        uint32_t n = static_cast<uint32_t>(level.passes.size());
-    //        if (n > 1)
-    //            parallel_pairs += n * (n - 1) / 2;  // C(n,2)
-    //    }
-    //    ENGINE_LOG_INFO("=== Parallelism Potential ===");
-    //    ENGINE_LOG_INFO("  Total dependency levels: {}", topology.logical_levels.size());
-    //    ENGINE_LOG_INFO("  Max dependency depth: {}", topology.max_logical_dependency_depth);
-    //    ENGINE_LOG_INFO("  Parallelizable pass pairs: {}", parallel_pairs);
-    //    ENGINE_LOG_INFO("  Critical path length: {}", depAnalysis.get_logical_critical_path().size());
-    //}
 
     // 根据分析结果分别录制+执行，而不是现在这样串行一个队列执行
     ExecuteRDG();

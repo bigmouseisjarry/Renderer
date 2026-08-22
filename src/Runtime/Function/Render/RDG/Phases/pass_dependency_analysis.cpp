@@ -3,7 +3,7 @@
 #include "pass_info_analysis.h"
 #include "Function/Global/EngineContext.h"
 #include "queue_schedule.h"
-//#include "SkrRenderGraph/phases_v2/cross_queue_sync_analysis.hpp"
+#include "cross_queue_sync_analysis.h"
 
 PassDependencyAnalysis::PassDependencyAnalysis(const PassInfoAnalysis& pass_info_analysis)
     : pass_info_analysis(pass_info_analysis)
@@ -485,36 +485,36 @@ void PassDependencyAnalysis::dump_logical_critical_path() const
 // 跨队列同步点生成方法
 void PassDependencyAnalysis::generate_cross_queue_sync_points(const QueueSchedule& queue_schedule, std::vector<CrossQueueSyncPoint>& sync_points) const
 {
-    //const auto& queue_result = queue_schedule.get_schedule_result();
-    //sync_points.clear();
+    const auto& queue_result = queue_schedule.get_schedule_result();
+    sync_points.clear();
 
-    //// 为每个Pass检查其依赖关系
-    //for (const auto& [consumer_pass, deps] : pass_dependencies_)
-    //{
-    //    uint32_t consumer_queue = queue_result.pass_queue_assignments.find(consumer_pass).value();
+    // 为每个Pass检查其依赖关系
+    for (const auto& [consumer_pass, deps] : pass_dependencies_)
+    {
+        uint32_t consumer_queue = queue_result.pass_queue_assignments.find(consumer_pass)->second;
 
-    //    // 检查每个资源依赖
-    //    for (const auto& resource_dep : deps.resource_dependencies)
-    //    {
-    //        RDGPassNodeRef producer_pass = resource_dep.dependent_pass;
-    //        uint32_t producer_queue = queue_result.pass_queue_assignments.find(producer_pass).value();
+        // 检查每个资源依赖
+        for (const auto& resource_dep : deps.resource_dependencies)
+        {
+            RDGPassNodeRef producer_pass = resource_dep.dependent_pass;
+            uint32_t producer_queue = queue_result.pass_queue_assignments.find(producer_pass)->second;
 
-    //        // 如果生产者和消费者在不同队列上，创建跨队列同步点
-    //        if (producer_queue != consumer_queue)
-    //        {
-    //            CrossQueueSyncPoint sync_point;
-    //            sync_point.type = ESyncPointType::Signal;
-    //            sync_point.producer_queue_index = producer_queue;
-    //            sync_point.consumer_queue_index = consumer_queue;
-    //            sync_point.producer_pass = producer_pass;
-    //            sync_point.consumer_pass = consumer_pass;
-    //            sync_point.resource = resource_dep.resource;
-    //            sync_point.from_state = resource_dep.previous_state;
-    //            sync_point.to_state = resource_dep.current_state;
-    //            sync_point.sync_value = 0;
+            // 如果生产者和消费者在不同队列上，创建跨队列同步点
+            if (producer_queue != consumer_queue)
+            {
+                CrossQueueSyncPoint sync_point;
+                sync_point.type = ESyncPointType::Signal;
+                sync_point.producer_queue_index = producer_queue;
+                sync_point.consumer_queue_index = consumer_queue;
+                sync_point.producer_pass = producer_pass;
+                sync_point.consumer_pass = consumer_pass;
+                sync_point.resource = resource_dep.resource;
+                sync_point.from_state = resource_dep.previous_state;
+                sync_point.to_state = resource_dep.current_state;
+                sync_point.sync_value = 0;
 
-    //            sync_points.add(sync_point);
-    //        }
-    //    }
-    //}
+                sync_points.push_back(sync_point);
+            }
+        }
+    }
 }

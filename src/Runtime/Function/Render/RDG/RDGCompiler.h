@@ -5,6 +5,9 @@
 #include "Function/Render/RDG/Phases/pass_info_analysis.h"
 #include "Function/Render/RDG/Phases/pass_dependency_analysis.h"
 #include "Function/Render/RDG/Phases/queue_schedule.h"
+#include "Function/Render/RDG/Phases/schedule_reorder.h"
+#include "Function/Render/RDG/Phases/cross_queue_sync_analysis.h"
+
 
 // RDGCompiler：编排 Phase pipeline
 //
@@ -19,8 +22,8 @@ class RDGCompiler
 {
 public:
     RDGCompiler() = default;
-    RDGCompiler(const QueueScheduleConfig& queueConfig)
-        : queueConfig_(queueConfig) {}
+    RDGCompiler(const QueueScheduleConfig& queueConfig,const ExecutionReorderConfig& reorderConfig,const CrossQueueSyncConfig& queueSyncConfig)
+        : queueConfig_(queueConfig),reorderConfig_(reorderConfig), queueSyncConfig_(queueSyncConfig) {}
 
     void reset();
 
@@ -29,14 +32,25 @@ public:
     const PassInfoAnalysis& GetPassInfoAnalysis() const { return passInfoAnalysis; }
     const PassDependencyAnalysis& GetPassDependencyAnalysis() const { return passDependencyAnalysis; }
     const QueueSchedule& GetQueueSchedule() const { return queueSchedule; }
+    const ExecutionReorderPhase& GetExecutionReorder() const { return executionReorder; }
 
 private:
     // 阶段 1: 信息收集
     PassInfoAnalysis passInfoAnalysis;
+
     // 阶段 2: 依赖分析（依赖阶段1，通过 const 引用传入）
     PassDependencyAnalysis passDependencyAnalysis{ passInfoAnalysis };
 
-    QueueScheduleConfig queueConfig_;                          // 存储 config
-    QueueSchedule queueSchedule{ passDependencyAnalysis, queueConfig_ };  // 阶段3
+    // 阶段3
+    QueueScheduleConfig queueConfig_;                          
+    QueueSchedule queueSchedule{ passDependencyAnalysis, queueConfig_ };  
+
+    // 阶段4
+    ExecutionReorderConfig reorderConfig_;
+    ExecutionReorderPhase executionReorder{ passInfoAnalysis,passDependencyAnalysis,queueSchedule,reorderConfig_ };
+
+    // 阶段5
+    CrossQueueSyncConfig queueSyncConfig_;
+    CrossQueueSyncAnalysis crossQueueSyncAnalysis{ passDependencyAnalysis,queueSchedule,queueSyncConfig_ };
 };
 using RDGCompilerRef = std::shared_ptr<RDGCompiler>;
