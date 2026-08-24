@@ -39,6 +39,7 @@
 #include "Function/Render/RenderPass/RenderPass.h"
 #include "Platform/HAL/PlatformProcess.h"
 #include "RenderSurfaceCacheManager.h"
+#include "Function/Render/RDG/RDGPool.h"
 #include <cstdio>
 #include <memory>
 
@@ -77,7 +78,7 @@ void RenderSystem::InitBaseResource()
     queue         = backend->GetQueue({ QUEUE_TYPE_GRAPHICS, 0 });
     swapchain     = backend->CreateSwapChain({ surface, queue, FRAMES_IN_FLIGHT, surface->GetExetent(), COLOR_FORMAT });
     pool          = backend->CreateCommandPool({ queue });  
-    for(uint32_t i = 0; i < FRAMES_IN_FLIGHT; i++) 
+    for (uint32_t i = 0; i < FRAMES_IN_FLIGHT; i++)
     {
         perFrameCommonResources[i].GraphicsCommand = pool->CreateCommandList(false);
         perFrameCommonResources[i].startSemaphore = backend->CreateSemaphore();
@@ -100,9 +101,19 @@ void RenderSystem::InitBaseResource()
 
         CrossQueueSyncConfig crossQueueSyncConfig{};
         crossQueueSyncConfig.enable_ssis_optimization = true;
-        crossQueueSyncConfig.enable_debug_output = true;
+        crossQueueSyncConfig.enable_debug_output = false;
         crossQueueSyncConfig.max_sync_distance = 16;
-        rdgCompilers[i] = std::make_shared<RDGCompiler>(queueCfg, reorderConfig, crossQueueSyncConfig);
+
+        PassBindingConfig passBindingConfig{};
+        passBindingConfig.enable_debug_output = false;
+
+        BarrierGenerationConfig barrierGenerationConfig{};
+        barrierGenerationConfig.enable_debug_output = false;
+
+        CommandRecordingConfig commandRecordingConfig{};
+        commandRecordingConfig.enable_debug_markers = true;
+        commandRecordingConfig.enable_debug_output = false;
+        rdgCompilers[i] = std::make_shared<RDGCompiler>(queueCfg, reorderConfig, crossQueueSyncConfig, passBindingConfig, barrierGenerationConfig, commandRecordingConfig);
     }
 }
 
@@ -178,6 +189,7 @@ void RenderSystem::InitPasses()
 
 void RenderSystem::Tick()
 {
+
     ENGINE_TIME_SCOPE(RenderSystem::Tick);
     if (EngineContext::World()->GetActiveScene() == nullptr) return;
 
@@ -211,13 +223,6 @@ void RenderSystem::Tick()
     }
 
     BuildRDG(); // RDG的构建目前暂未支持多线程并行，只能串行；执行需要依赖于上面几个manager的数据处理结果
-   
-    // TODO:添加图分析
-    RDGCompilerRef rdgCompiler = rdgCompilers[EngineContext::ThreadPool()->ThreadFrameIndex()];
-    rdgCompiler->compile_and_execute(
-        rdgDependencyGraph,
-        &perFrameCommonResources[EngineContext::ThreadPool()->ThreadFrameIndex()]
-    );
 
     // 根据分析结果分别录制+执行，而不是现在这样串行一个队列执行
     ExecuteRDG();
@@ -242,7 +247,7 @@ void RenderSystem::BuildRDG()
 
     // 现在是cmd自己每帧做reset，改成pre-frame整体pool做reset
     command->BeginCommand();
-    rdgBuilder = std::make_shared<RDGBuilder>(command);
+    rdgBuilder = std::make_shared<RDGBuilder>();
     {
         ENGINE_TIME_SCOPE(RenderSystem::RDGBuild);
 
@@ -271,12 +276,14 @@ void RenderSystem::ExecuteRDG()
 {
     ENGINE_TIME_SCOPE(RenderSystem::RDGExecute);
 
-    auto& rdgBuilder = rdgBuilders[EngineContext::ThreadPool()->ThreadFrameIndex()];
-    if(rdgBuilder)
-    {
-        rdgBuilder->Execute();
-        // rdgDependencyGraph = rdgBuilder->GetGraph();
-    }
+    // TODO:添加图分析
+    RDGCompilerRef rdgCompiler = rdgCompilers[EngineContext::ThreadPool()->ThreadFrameIndex()];
+    auto& frameResource = perFrameCommonResources[EngineContext::ThreadPool()->ThreadFrameIndex()];
+    frameResource.builder = rdgBuilders[EngineContext::ThreadPool()->ThreadFrameIndex()].get();   // PassExecutionPhase 组装RDGPassContext用
+    rdgCompiler->compile_and_execute(
+        rdgDependencyGraph,
+        &frameResource
+    );
 }
 
 void RenderSystem::SubmitRHI()

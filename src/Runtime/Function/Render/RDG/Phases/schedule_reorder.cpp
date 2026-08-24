@@ -17,7 +17,9 @@ ExecutionReorderPhase::ExecutionReorderPhase(
 
 void ExecutionReorderPhase::reset_for_frame()
 {
-
+    result.optimized_timeline.clear();
+    working_timeline.clear();
+    render_graph = nullptr;     // 释放持有的上一帧图shared_ptr，避免旧图（全部pass/资源节点/边）多存活一帧
 }
 
 void ExecutionReorderPhase::on_execute(RDGDependencyGraphRef graph, PerFrameCommonResourceRef executor)

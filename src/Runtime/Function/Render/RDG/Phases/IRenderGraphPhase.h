@@ -5,6 +5,8 @@
 
 #include <vector>
 
+class RDGBuilder;
+
 // 每帧公共执行资源——作为 Phase 的执行上下文
 struct RDGPerFrameResource
 {
@@ -15,6 +17,13 @@ struct RDGPerFrameResource
     RHISemaphoreRef     finishSemaphore;
 
     RHIFenceRef         fence;
+
+    // 本帧的RDGBuilder（构建图的来源），PassExecutionPhase 组装 RDGPassContext 时使用。
+    // 由 RenderSystem 在 compile_and_execute 之前填入
+    RDGBuilder*         builder = nullptr;
+
+    // TODO 多队列提交扩展位：每队列的 pool/command/信号量，
+    // 届时录制目标从 GraphicsCommand 单流改为按 optimized_timeline 分队列
 };
 
 struct IRenderGraphPhase

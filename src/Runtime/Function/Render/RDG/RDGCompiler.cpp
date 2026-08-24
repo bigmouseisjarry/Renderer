@@ -12,6 +12,12 @@ void RDGCompiler::reset()
     executionReorder.reset_for_frame();
 
     crossQueueSyncAnalysis.reset_for_frame();
+
+    passBinding.reset_for_frame();
+
+    barrierGeneration.reset_for_frame();
+
+    passExecution.reset_for_frame();
 }
 
 void RDGCompiler::compile_and_execute(RDGDependencyGraphRef graph, RDGPerFrameResource* executor)
@@ -34,8 +40,15 @@ void RDGCompiler::compile_and_execute(RDGDependencyGraphRef graph, RDGPerFrameRe
 
     // Phase 5: 同步点生成
     crossQueueSyncAnalysis.on_execute(graph, executor);
+    
+    // Phase 6: 绑定阶段——集中式资源分配 + 生命期分析 + 描述符集准备
+    // （合并 SakuraEngine 的 resource_allocation / memory_aliasing(Tier0) / bind_table 三阶段）
+    passBinding.on_execute(graph, executor);
 
-    // ...
-    // Phase N: PassExecutionPhase — 实际录制和提交 command
-    //         这一步替代现有的 RDGBuilder::Execute()
+    // Phase 7: 屏障生成——subresource级状态跟踪 + 拓扑序访问遍历，按pass分batch
+    barrierGeneration.on_execute(graph, executor);
+
+    // Phase 8: Pass执行——按拓扑序录制command，替代 RDGBuilder::Execute()
+    passExecution.on_execute(graph, executor);
+    
 }

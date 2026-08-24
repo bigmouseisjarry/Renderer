@@ -70,7 +70,8 @@ void PassInfoAnalysis::extract_resource_info(RDGPassNodeRef pass, PassResourceIn
         ResourceAccessInfo access_info;
         access_info.pass = pass;
         access_info.resource = texture;
-        access_info.resource_state = edge->state; 
+        access_info.resource_state = edge->state;
+        access_info.is_output = edge->IsOutput();
 
         // 从 edge flags 推断访问类型
         if (edge->asShaderReadWrite)       access_info.access_type = EResourceAccessType::ReadWrite;
@@ -117,6 +118,7 @@ void PassInfoAnalysis::extract_resource_info(RDGPassNodeRef pass, PassResourceIn
         access_info.pass = pass;
         access_info.resource = buffer;
         access_info.resource_state = edge->state;
+        access_info.is_output = edge->IsOutput();
 
         if (edge->asShaderReadWrite || edge->asOutputReadWrite)
             access_info.access_type = EResourceAccessType::ReadWrite;

@@ -24,8 +24,8 @@ void CrossQueueSyncAnalysis::reset_for_frame()
 
 void CrossQueueSyncAnalysis::on_execute(RDGDependencyGraphRef graph, PerFrameCommonResourceRef executor)
 {
-    ENGINE_LOG_INFO("CrossQueueSyncAnalysis");
-    ENGINE_LOG_INFO("CrossQueueSyncAnalysis: Starting SSIS analysis");
+    //ENGINE_LOG_INFO("CrossQueueSyncAnalysis");
+    //ENGINE_LOG_INFO("CrossQueueSyncAnalysis: Starting SSIS analysis");
 
     // 构建Pass到队列的映射缓存
     const TimelineScheduleResult& queue_result = queue_schedule_.get_schedule_result();
@@ -34,7 +34,7 @@ void CrossQueueSyncAnalysis::on_execute(RDGDependencyGraphRef graph, PerFrameCom
     // 每一条跨队列的资源依赖边都会产生一个
     dependency_analysis_.generate_cross_queue_sync_points(queue_schedule_, ssis_result_.raw_sync_points);
     ssis_result_.total_raw_syncs = static_cast<uint32_t>(ssis_result_.raw_sync_points.size());
-    ENGINE_LOG_INFO("CrossQueueSyncAnalysis: Received {} raw sync points from PassDependencyAnalysis", ssis_result_.total_raw_syncs);
+    //ENGINE_LOG_INFO("CrossQueueSyncAnalysis: Received {} raw sync points from PassDependencyAnalysis", ssis_result_.total_raw_syncs);
 
     // Step 3: 应用SSIS优化算法
     if (config_.enable_ssis_optimization)
@@ -56,17 +56,17 @@ void CrossQueueSyncAnalysis::on_execute(RDGDependencyGraphRef graph, PerFrameCom
         dump_ssis_analysis();
     }
 
-    ENGINE_LOG_INFO("CrossQueueSyncAnalysis: SSIS analysis completed - reduced {} sync points to {} ({} reduction)",
-        ssis_result_.total_raw_syncs,
-        ssis_result_.total_optimized_syncs,
-        ssis_result_.optimization_ratio * 100.0f);
+    //ENGINE_LOG_INFO("CrossQueueSyncAnalysis: SSIS analysis completed - reduced {} sync points to {} ({} reduction)",
+    //    ssis_result_.total_raw_syncs,
+    //    ssis_result_.total_optimized_syncs,
+    //    ssis_result_.optimization_ratio * 100.0f);
 }
 
 
 // 每个 Pass 维护一个数组 ssis[queue_count]，其中 ssis[q] 表示"该 Pass需要与队列 q 在位置 ssis[q] 处同步"
 void CrossQueueSyncAnalysis::apply_ssis_optimization(RDGDependencyGraphRef graph)
 {
-    ENGINE_LOG_INFO("CrossQueueSyncAnalysis: Applying SSIS optimization algorithm");
+    //ENGINE_LOG_INFO("CrossQueueSyncAnalysis: Applying SSIS optimization algorithm");
 
     const TimelineScheduleResult& queue_result = queue_schedule_.get_schedule_result();
     total_queue_count_ = static_cast<uint32_t>(queue_result.queue_schedules.size());
@@ -164,12 +164,12 @@ void CrossQueueSyncAnalysis::apply_ssis_optimization(RDGDependencyGraphRef graph
         // 设置自己队列的SSIS值
         ssis[pass_queue] = pass_local_to_queue_indices_[pass];
 
-        ENGINE_LOG_INFO("  Pass {} initial SSIS: [{},{},{}], nodes_to_sync: {}",
-            pass->Name(),
-            ssis[0] == InvalidSyncIndex ? -1 : (int32_t)ssis[0],
-            ssis.size() > 1 ? (ssis[1] == InvalidSyncIndex ? -1 : (int32_t)ssis[1]) : -1,
-            ssis.size() > 2 ? (ssis[2] == InvalidSyncIndex ? -1 : (int32_t)ssis[2]) : -1,
-            static_cast<uint32_t>(nodes_to_sync.size()));
+        //ENGINE_LOG_INFO("  Pass {} initial SSIS: [{},{},{}], nodes_to_sync: {}",
+        //    pass->Name(),
+        //    ssis[0] == InvalidSyncIndex ? -1 : (int32_t)ssis[0],
+        //    ssis.size() > 1 ? (ssis[1] == InvalidSyncIndex ? -1 : (int32_t)ssis[1]) : -1,
+        //    ssis.size() > 2 ? (ssis[2] == InvalidSyncIndex ? -1 : (int32_t)ssis[2]) : -1,
+        //    static_cast<uint32_t>(nodes_to_sync.size()));
     }
 
     // Step 3: 第二阶段 - 通过SSIS比较剔除冗余同步
@@ -302,16 +302,16 @@ void CrossQueueSyncAnalysis::apply_ssis_optimization(RDGDependencyGraphRef graph
                 if (raw_sync.producer_pass == optimal_node && raw_sync.consumer_pass == pass)
                 {
                     ssis_result_.optimized_sync_points.push_back(raw_sync);
-                    ENGINE_LOG_INFO("    Optimized sync: {} -> {}",
-                        optimal_node->Name(), pass->Name());
+                    //ENGINE_LOG_INFO("    Optimized sync: {} -> {}",
+                    //    optimal_node->Name(), pass->Name());
                     break;
                 }
             }
         }
     }
 
-    ENGINE_LOG_INFO("CrossQueueSyncAnalysis: SSIS optimization completed - {} sync points after optimization",
-        static_cast<uint32_t>(ssis_result_.optimized_sync_points.size()));
+    //ENGINE_LOG_INFO("CrossQueueSyncAnalysis: SSIS optimization completed - {} sync points after optimization",
+    //    static_cast<uint32_t>(ssis_result_.optimized_sync_points.size()));
 }
 
 void CrossQueueSyncAnalysis::calculate_optimization_statistics() 

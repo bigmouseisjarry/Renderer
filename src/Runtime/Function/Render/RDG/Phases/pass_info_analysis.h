@@ -15,6 +15,7 @@ struct ResourceAccessInfo {
     RDGResourceNodeRef resource = nullptr;
     EResourceAccessType access_type;
     RHIResourceState resource_state = RESOURCE_STATE_UNDEFINED;
+    bool is_output = false;    // 是否为output边（pass产出、后续pass消费）：其状态是pass之后的收敛状态，屏障需在pass之后发射
     // Texture subresource range (optional)
     uint32_t mip_base = 0;
     uint32_t mip_count = 0;

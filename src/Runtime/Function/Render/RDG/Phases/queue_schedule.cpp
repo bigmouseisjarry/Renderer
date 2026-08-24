@@ -14,6 +14,10 @@ QueueSchedule::~QueueSchedule() = default;
 void QueueSchedule::reset_for_frame()
 {
     all_queues.clear();
+    schedule_result.queue_schedules.clear();            
+    schedule_result.pass_queue_assignments.clear();     
+    // 注：schedule_result.all_queues 是指向成员 all_queues 的 span，本帧由
+    // assign_passes_to_queues 重新赋值，reset 后悬空属预期（下游都在 Phase 3 完成后读取）
 }
 
 void QueueSchedule::on_execute(RDGDependencyGraphRef graph, PerFrameCommonResourceRef executor) 

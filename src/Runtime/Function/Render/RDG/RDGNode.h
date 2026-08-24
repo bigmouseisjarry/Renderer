@@ -17,6 +17,9 @@
 
 class RDGBuilder;
 class RDGDependencyGraph;
+class PassBindingPhase;
+class BarrierGenerationPhase;
+class PassExecutionPhase;
 
 enum RDGPassNodeType
 {
@@ -40,6 +43,8 @@ enum RDGResourceNodeType
 struct RDGPassContext
 {
     RHICommandListRef command;
+
+    // TODO:这个搭建器应该删除掉
     RDGBuilder* builder;
     std::array<RHIDescriptorSetRef, MAX_DESCRIPTOR_SETS> descriptors;
 
@@ -108,6 +113,9 @@ private:
 
     friend class RDGTextureBuilder;
     friend class RDGBuilder;
+    friend class PassBindingPhase;          // 阶段6: 集中式物理分配/生命期分析/描述符准备
+    friend class BarrierGenerationPhase;    // 阶段7: 读取 initState/texture 做状态跟踪
+    friend class PassExecutionPhase;        // 阶段8: 执行期物理解析与释放
 };
 using RDGTextureNodeRef = RDGTextureNode*;
 
@@ -132,6 +140,9 @@ private:
 
     friend class RDGBufferBuilder;
     friend class RDGBuilder;
+    friend class PassBindingPhase;
+    friend class BarrierGenerationPhase;
+    friend class PassExecutionPhase;
 };
 using RDGBufferNodeRef = RDGBufferNode*;
 
@@ -196,6 +207,10 @@ public:
 
     friend class RDGDependencyGraph;
 
+    friend class PassBindingPhase;          // 读取 rootSignature/samplers/isCulled/descriptorSets
+    friend class BarrierGenerationPhase;    // 读取 isCulled 等做屏障生成
+    friend class PassExecutionPhase;        // 执行期组装上下文与释放
+
 protected:
     RDGPassNodeType nodeType;
     bool isCulled = false;
@@ -228,10 +243,11 @@ public:
 private:
     uint32_t passIndex[3] = { 0, 0, 0};
     RDGPassExecuteFunc execute;
-    uint32_t multiviewCount = 0;    
+    uint32_t multiviewCount = 0;
 
     friend class RDGRenderPassBuilder;
     friend class RDGBuilder;
+    friend class PassExecutionPhase;
 };
 using RDGRenderPassNodeRef = RDGRenderPassNode*;
 
@@ -249,6 +265,7 @@ private:
 
     friend class RDGComputePassBuilder;
     friend class RDGBuilder;
+    friend class PassExecutionPhase;
 };
 using RDGComputePassNodeRef = RDGComputePassNode*;
 
@@ -266,6 +283,7 @@ private:
 
     friend class RDGRayTracingPassBuilder;
     friend class RDGBuilder;
+    friend class PassExecutionPhase;
 };
 using RDGRayTracingPassNodeRef = RDGRayTracingPassNode*;
 
@@ -297,6 +315,7 @@ private:
 
     friend class RDGCopyPassBuilder;
     friend class RDGBuilder;
+    friend class PassExecutionPhase;
 };
 using RDGCopyPassNodeRef = RDGCopyPassNode*;
 

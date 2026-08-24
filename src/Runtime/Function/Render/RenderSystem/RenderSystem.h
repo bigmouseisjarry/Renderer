@@ -31,6 +31,12 @@ public:
     void BuildRDG();
     void ExecuteRDG();
 
+    // 执行路径开关（迁移对照用）：
+    //   false —— 旧路径：rdgBuilder->Execute() 串行单队列录制，编译器只跑阶段1-5分析
+    //   true  —— 新路径：RDGCompiler 阶段6-8（绑定/屏障/录制）完成执行，ExecuteRDG跳过旧路径
+    // 验证新路径渲染与旧路径一致后可翻转默认值并移除旧路径
+    //bool useCompilerExecution = true;
+
     void SetSurfaceCacheUpdate(bool update)                                                 { surfaceCacheManager->SetDynamicUpdate(update); }
     void SetSurfaceCacheFixScale(bool fixScale)                                             { surfaceCacheManager->SetFixScale(fixScale); }
 

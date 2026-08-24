@@ -45,10 +45,10 @@ struct IRenderGraphPhase;
 class RDGBuilder
 {
 public:
-    RDGBuilder() = delete;
-    RDGBuilder(RHICommandListRef command)
-    : command(command)
-    {}
+    RDGBuilder() = default;
+    //RDGBuilder(RHICommandListRef command)
+    //: command(command)
+    //{}
     
     ~RDGBuilder() {};
 
@@ -74,19 +74,19 @@ public:
 
     friend struct IRenderGraphPhase;
 
-    void Execute();
+    //void Execute();
 
 private:
-    void CreateInputBarriers(RDGPassNodeRef pass);
-    void CreateOutputBarriers(RDGPassNodeRef pass);
-    void PrepareDescriptorSet(RDGPassNodeRef pass);
-    void PrepareRenderingTarget(RDGRenderPassNodeRef pass, RHIRenderingInfo& renderingInfo);
-    void ReleaseResource(RDGPassNodeRef pass);
-    void ExecutePass(RDGRenderPassNodeRef pass);
-    void ExecutePass(RDGComputePassNodeRef pass);
-    void ExecutePass(RDGRayTracingPassNodeRef pass);
-    void ExecutePass(RDGPresentPassNodeRef pass);
-    void ExecutePass(RDGCopyPassNodeRef pass);
+    //void CreateInputBarriers(RDGPassNodeRef pass);
+    //void CreateOutputBarriers(RDGPassNodeRef pass);
+    //void PrepareDescriptorSet(RDGPassNodeRef pass);
+    //void PrepareRenderingTarget(RDGRenderPassNodeRef pass, RHIRenderingInfo& renderingInfo);
+    //void ReleaseResource(RDGPassNodeRef pass);
+    //void ExecutePass(RDGRenderPassNodeRef pass);
+    //void ExecutePass(RDGComputePassNodeRef pass);
+    //void ExecutePass(RDGRayTracingPassNodeRef pass);
+    //void ExecutePass(RDGPresentPassNodeRef pass);
+    //void ExecutePass(RDGCopyPassNodeRef pass);
 
     template<typename Type, typename Handle>
     Handle GetPass(std::string name)
@@ -100,10 +100,10 @@ private:
         return dynamic_cast<Type>(node)->GetHandle();
     }
 
-    RHITextureRef Resolve(RDGTextureNodeRef textureNode);   // 从node获取到实际的RHI资源
-    RHIBufferRef Resolve(RDGBufferNodeRef bufferNode);     
-    void Release(RDGTextureNodeRef textureNode, RHIResourceState state);  
-    void Release(RDGBufferNodeRef bufferNode, RHIResourceState state);  
+    //RHITextureRef Resolve(RDGTextureNodeRef textureNode);   // 从node获取到实际的RHI资源
+    //RHIBufferRef Resolve(RDGBufferNodeRef bufferNode);     
+    //void Release(RDGTextureNodeRef textureNode, RHIResourceState state);  
+    //void Release(RDGBufferNodeRef bufferNode, RHIResourceState state);  
 
     /*
     * 获取当前pass（在执行顺序上）的资源的前序状态
@@ -114,17 +114,17 @@ private:
     * @param output 相对于当前pass该资源是否为输出资源
     * @return 前序状态
     */
-    RHIResourceState PreviousState(RDGTextureNodeRef textureNode, RDGPassNodeRef passNode, TextureSubresourceRange subresource = {}, bool output = false);    
-    RHIResourceState PreviousState(RDGBufferNodeRef bufferNode, RDGPassNodeRef passNode, uint32_t offset = 0, uint32_t size = 0, bool output = false); 
-    bool IsLastUsedPass(RDGTextureNodeRef textureNode, RDGPassNodeRef passNode, bool output = false);
-    bool IsLastUsedPass(RDGBufferNodeRef bufferNode, RDGPassNodeRef passNode, bool output = false);
+    //RHIResourceState PreviousState(RDGTextureNodeRef textureNode, RDGPassNodeRef passNode, TextureSubresourceRange subresource = {}, bool output = false);    
+    //RHIResourceState PreviousState(RDGBufferNodeRef bufferNode, RDGPassNodeRef passNode, uint32_t offset = 0, uint32_t size = 0, bool output = false); 
+    //bool IsLastUsedPass(RDGTextureNodeRef textureNode, RDGPassNodeRef passNode, bool output = false);
+    //bool IsLastUsedPass(RDGBufferNodeRef bufferNode, RDGPassNodeRef passNode, bool output = false);
 
-    std::vector<RDGPassNodeRef> passes; // 创建的全部pass，按照创建顺序执行
+    // std::vector<RDGPassNodeRef> passes; // 创建的全部pass，按照创建顺序执行
 
     RDGDependencyGraphRef graph = std::make_shared<RDGDependencyGraph>();
     RDGBlackBoard blackBoard;
 
-    RHICommandListRef command;
+    // RHICommandListRef command;
 };
 using RDGBuilderRef = std::shared_ptr<RDGBuilder>;
 
