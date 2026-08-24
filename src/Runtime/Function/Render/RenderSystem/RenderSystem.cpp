@@ -276,7 +276,6 @@ void RenderSystem::ExecuteRDG()
 {
     ENGINE_TIME_SCOPE(RenderSystem::RDGExecute);
 
-    // TODO:添加图分析
     RDGCompilerRef rdgCompiler = rdgCompilers[EngineContext::ThreadPool()->ThreadFrameIndex()];
     auto& frameResource = perFrameCommonResources[EngineContext::ThreadPool()->ThreadFrameIndex()];
     frameResource.builder = rdgBuilders[EngineContext::ThreadPool()->ThreadFrameIndex()].get();   // PassExecutionPhase 组装RDGPassContext用
