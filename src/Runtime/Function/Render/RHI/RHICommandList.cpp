@@ -48,6 +48,36 @@ void RHICommandList::Execute(RHIFenceRef waitFence, RHISemaphoreRef waitSemaphor
     info.context->Execute(waitFence, waitSemaphore, signalSemaphore);
 }
 
+void RHICommandList::ExecuteBatch(const std::vector<RHICommandListRef>& lists, RHIFenceRef fence, RHISemaphoreRef waitSemaphore, RHISemaphoreRef signalSemaphore)
+{
+    if (lists.empty()) return;
+
+    std::vector<RHICommandContextRef> contexts;
+    contexts.reserve(lists.size());
+
+    for (const RHICommandListRef& list : lists)
+    {
+        if (list == nullptr) continue;
+
+        if (!list->info.byPass)     // 延迟模式：先回放各自队列到自己的context
+        {
+            for (int32_t i = 0; i < list->commands.size(); i++)
+            {
+                list->commands[i]->Execute(list->info.context);
+                delete list->commands[i];
+            }
+            list->commands.clear();
+        }
+
+        contexts.push_back(list->info.context);
+    }
+
+    if (contexts.empty()) return;
+
+    // 所有chunk来自同一pool（同队列），由第一个context提供提交队列
+    contexts.front()->ExecuteBatch(contexts, fence, waitSemaphore, signalSemaphore);
+}
+
 void RHICommandList::TextureBarrier(const RHITextureBarrier& barrier)
 {
     COMMANDLIST_DEBUG_OUTPUT();

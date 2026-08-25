@@ -1114,9 +1114,52 @@ void VulkanRHICommandContext::Execute(RHIFenceRef fence, RHISemaphoreRef waitSem
         submitInfo.pSignalSemaphores = &ResourceCast(signalSemaphore)->GetHandle();
     }
 
-    if (vkQueueSubmit(ResourceCast(pool->GetQueue())->GetHandle(), 1, &submitInfo, signalFence) != VK_SUCCESS) 
+    if (vkQueueSubmit(ResourceCast(pool->GetQueue())->GetHandle(), 1, &submitInfo, signalFence) != VK_SUCCESS)
     {
         LOG_FATAL("Failed to submit command buffer!");
+    }
+}
+
+void VulkanRHICommandContext::ExecuteBatch(const std::vector<RHICommandContextRef>& contexts, RHIFenceRef fence, RHISemaphoreRef waitSemaphore, RHISemaphoreRef signalSemaphore)
+{
+    if (contexts.empty()) return;
+
+    // 收集各context的VkCommandBuffer（须全部来自同一pool即同一队列），按序单次提交——
+    // 同一次vkQueueSubmit中的多个primary command buffer按数组顺序执行，语义等价于单buffer串接
+    std::vector<VkCommandBuffer> buffers;
+    buffers.reserve(contexts.size());
+    for (const RHICommandContextRef& context : contexts)
+    {
+        buffers.push_back(static_cast<VulkanRHICommandContext*>(context.get())->GetHandle());
+    }
+
+    VkPipelineStageFlags stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT;
+    VkFence signalFence = VK_NULL_HANDLE;
+
+    VkSubmitInfo submitInfo = {};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.commandBufferCount = static_cast<uint32_t>(buffers.size());
+    submitInfo.pCommandBuffers = buffers.data();
+
+    if (fence != nullptr)
+    {
+        signalFence = ResourceCast(fence)->GetHandle();
+    }
+    if (waitSemaphore != nullptr)
+    {
+        submitInfo.waitSemaphoreCount = 1;
+        submitInfo.pWaitSemaphores = &ResourceCast(waitSemaphore)->GetHandle();
+        submitInfo.pWaitDstStageMask = &stage;
+    }
+    if (signalSemaphore != nullptr)
+    {
+        submitInfo.signalSemaphoreCount = 1;
+        submitInfo.pSignalSemaphores = &ResourceCast(signalSemaphore)->GetHandle();
+    }
+
+    if (vkQueueSubmit(ResourceCast(pool->GetQueue())->GetHandle(), 1, &submitInfo, signalFence) != VK_SUCCESS)
+    {
+        LOG_FATAL("Failed to submit command buffers!");
     }
 }
 

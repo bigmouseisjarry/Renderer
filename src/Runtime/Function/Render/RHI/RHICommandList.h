@@ -61,6 +61,10 @@ public:
 
 	void Execute(RHIFenceRef fence = nullptr, RHISemaphoreRef waitSemaphore = nullptr, RHISemaphoreRef signalSemaphore = nullptr);
 
+	// 批量提交：多条命令流（chunked并行录制）按序做一次提交，执行语义等价于单buffer串接；
+	// 延迟模式（byPass=false）的列表会先各自回放到自己的context，byPass=true的列表队列已空直接提交
+	static void ExecuteBatch(const std::vector<RHICommandListRef>& lists, RHIFenceRef fence = nullptr, RHISemaphoreRef waitSemaphore = nullptr, RHISemaphoreRef signalSemaphore = nullptr);
+
     void TextureBarrier(const RHITextureBarrier& barrier);
 
     void BufferBarrier(const RHIBufferBarrier& barrier);

@@ -265,13 +265,55 @@ void PassBindingPhase::prepare_descriptor_sets(RDGDependencyGraphRef graph)
         graph->ForEachTexture(pass, [&](RDGTextureEdgeRef edge, RDGTextureNodeRef texture) {
 
             if (edge->IsOutput()) return;    // 作为output声明时不需要view
-            if (edge->asColor || edge->asDepthStencil) return;    // rendering target在执行期单独处理
+
             RHITextureViewRef view = RDGTextureViewPool::Get()->Allocate({
-                .texture = texture->texture,    // Step1 已完成集中分配
-                .format = texture->info.format,
-                .viewType = edge->viewType,
-                .subresource = edge->subresource}).textureView;
+            .texture = texture->texture,    // Step1 已完成集中分配
+            .format = texture->info.format,
+            .viewType = edge->viewType,
+            .subresource = edge->subresource }).textureView;
             bind_info.pooled_views.push_back(view);
+
+            // rendering target：view与RHIRenderingInfo在主线程预构建（原执行期PrepareRenderingTarget），
+            // 并行录制期worker不碰无锁的视图池；view随pooled_views由释放sweep统一归还
+            if (edge->asColor || edge->asDepthStencil)
+            {
+
+                //RHITextureViewRef view = RDGTextureViewPool::Get()->Allocate({
+                //.texture = texture->texture,
+                //.format = texture->info.format,
+                //.viewType = edge->viewType,
+                //.subresource = edge->subresource }).textureView;
+                //bind_info.pooled_views.push_back(view);
+
+                RHIRenderingInfo& renderingInfo = bind_info.rendering_info;
+                renderingInfo.multiviewCount = static_cast<RDGRenderPassNodeRef>(pass)->multiviewCount;
+                renderingInfo.extent = { texture->info.extent.width, texture->info.extent.height };
+                renderingInfo.layers = renderingInfo.multiviewCount > 0 ? 1 :                  // 启用 multiview时，textureview的layer还是多个，framebuffer强制为1
+                    edge->subresource.layerCount > 0 ? edge->subresource.layerCount : 1;
+
+                if (edge->asColor)
+                {
+                    renderingInfo.colorAttachments[edge->binding] = {
+                    .textureView = view,
+                    .currentState = edge->state,
+                    .loadOp = edge->loadOp,
+                    .storeOp = edge->storeOp,
+                    .clearColor = edge->clearColor,
+                    };
+                }
+                else
+                {
+                    renderingInfo.depthStencilAttachment = {
+                    .textureView = view,
+                    .currentState = edge->state,
+                    .loadOp = edge->loadOp,
+                    .storeOp = edge->storeOp,
+                    .clearDepth = edge->clearDepth,
+                    .clearStencil = edge->clearStencil
+                    };
+                }
+                return;
+            }
 
             RHIDescriptorSetRef descriptor = ensure_descriptor_set(edge->set);
 

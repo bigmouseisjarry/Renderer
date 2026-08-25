@@ -247,6 +247,7 @@ private:
 
     friend class RDGRenderPassBuilder;
     friend class RDGBuilder;
+    friend class PassBindingPhase;          // 阶段6主线程预构建RHIRenderingInfo（multiviewCount）
     friend class PassExecutionPhase;
 };
 using RDGRenderPassNodeRef = RDGRenderPassNode*;

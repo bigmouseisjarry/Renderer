@@ -164,7 +164,9 @@ public:
 
 	virtual void EndCommand() override final;
 
-    virtual void Execute(RHIFenceRef fence, RHISemaphoreRef waitSemaphore, RHISemaphoreRef signalSemaphore) override final;   
+    virtual void Execute(RHIFenceRef fence, RHISemaphoreRef waitSemaphore, RHISemaphoreRef signalSemaphore) override final;
+
+    virtual void ExecuteBatch(const std::vector<RHICommandContextRef>& contexts, RHIFenceRef fence, RHISemaphoreRef waitSemaphore, RHISemaphoreRef signalSemaphore) override final;   
 
     virtual void TextureBarrier(const RHITextureBarrier& barrier) override final;
 

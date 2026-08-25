@@ -69,7 +69,7 @@ public:
     static uint32_t PreviousFrameIndex()                            { return (context->currentFrameIndex + FRAMES_IN_FLIGHT - 1) % FRAMES_IN_FLIGHT; }  // 主线程的帧
     static uint32_t GetCurretTick()                                 { return context->currentTick; }
     static float GetDeltaTime()                                     { return context->deltaTime; }
-    static std::map<uint32_t, std::shared_ptr<TimeScopes>>& GetTimeScopes(uint32_t index)                               
+    static std::map<uint32_t, std::shared_ptr<TimeScopes>>& GetTimeScopes(uint32_t index)
                                                                     { return context->timers[index]; }
     static std::map<uint32_t, std::shared_ptr<TimeScopes>>& GetHistoryTimeScopes()                   
                                                                     { return context->historyTimers; }                                              
@@ -106,7 +106,7 @@ private:
     uint32_t currentFrameIndex = 0;
     TimeScope timer;
 
-    std::map<uint32_t, std::shared_ptr<TimeScopes>> historyTimers; 
+    std::map<uint32_t, std::shared_ptr<TimeScopes>> historyTimers;
     std::array<std::map<uint32_t, std::shared_ptr<TimeScopes>>, 2 * FRAMES_IN_FLIGHT> timers; // 各个线程的计时器
 
     void DestroyInternal();

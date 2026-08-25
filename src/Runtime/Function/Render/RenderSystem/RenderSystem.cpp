@@ -37,10 +37,7 @@
 #include "Function/Render/RenderPass/TestTrianglePass.h"
 #include "Function/Render/RenderPass/PresentPass.h"
 #include "Function/Render/RenderPass/RenderPass.h"
-#include "Platform/HAL/PlatformProcess.h"
 #include "RenderSurfaceCacheManager.h"
-#include "Function/Render/RDG/RDGPool.h"
-#include <cstdio>
 #include <memory>
 
 void RenderSystem::InitSDL()
@@ -113,7 +110,23 @@ void RenderSystem::InitBaseResource()
         CommandRecordingConfig commandRecordingConfig{};
         commandRecordingConfig.enable_debug_markers = true;
         commandRecordingConfig.enable_debug_output = false;
+        // commandRecordingConfig.enable_parallel_recording = useParallelRecording;
+        commandRecordingConfig.chunk_count = 3;     // ANY池worker(2) + 主线程(1)
         rdgCompilers[i] = std::make_shared<RDGCompiler>(queueCfg, reorderConfig, crossQueueSyncConfig, passBindingConfig, barrierGenerationConfig, commandRecordingConfig);
+    }
+}
+
+void RenderSystem::EnsureFrameChunkLists(PerFrameCommonResource& resource, uint32_t count)
+{
+    // 惰性增长到所需chunk数；列表按帧槽持久持有（context独占，跨帧由帧槽fence保证复用安全，
+    // 每帧由各chunk的BeginCommand重置）。主线程调用，无并发分配。
+    // 注意：每个chunk使用独立的命令池——vkBegin/vkEnd/vkResetCommandBuffer要求父VkCommandPool
+    // 外部同步，多worker共享一个池并发BeginCommand是未定义行为（驱动访问冲突）
+    while (static_cast<uint32_t>(resource.ChunkCommands.size()) < count)
+    {
+        RHICommandPoolRef chunkPool = backend->CreateCommandPool({ queue });
+        chunkPools.push_back(chunkPool);                                   // 显式持有池生命周期
+        resource.ChunkCommands.push_back(chunkPool->CreateCommandList(true));   // byPass=true：立即录制
     }
 }
 
@@ -177,9 +190,9 @@ void RenderSystem::InitPasses()
     passes[RAY_TRACING_BASE_PASS]           = std::make_shared<RayTracingBasePass>();
 
     passes[CLIPMAP_PASS]->SetEnable(false);
-    passes[CLIPMAP_VISUALIZE_PASS]->SetEnable(false);
     passes[RESTIR_DI_PASS]->SetEnable(false);
     passes[SVGF_PASS]->SetEnable(false);
+    passes[CLIPMAP_VISUALIZE_PASS]->SetEnable(false);
     passes[PATH_TRACING_PASS]->SetEnable(false);  
     passes[RAY_TRACING_BASE_PASS]->SetEnable(false);      
 #endif
@@ -225,6 +238,7 @@ void RenderSystem::Tick()
     BuildRDG(); // RDG的构建目前暂未支持多线程并行，只能串行；执行需要依赖于上面几个manager的数据处理结果
 
     // 根据分析结果分别录制+执行，而不是现在这样串行一个队列执行
+    // 分别录制已完成
     ExecuteRDG();
 
     {
@@ -243,10 +257,6 @@ void RenderSystem::BuildRDG()
     auto& resource = perFrameCommonResources[EngineContext::ThreadPool()->ThreadFrameIndex()];
     auto& rdgBuilder = rdgBuilders[EngineContext::ThreadPool()->ThreadFrameIndex()];
 
-    RHICommandListRef command = resource.GraphicsCommand;   // 构建RDG，绘制提交
-
-    // 现在是cmd自己每帧做reset，改成pre-frame整体pool做reset
-    command->BeginCommand();
     rdgBuilder = std::make_shared<RDGBuilder>();
     {
         ENGINE_TIME_SCOPE(RenderSystem::RDGBuild);
@@ -279,6 +289,11 @@ void RenderSystem::ExecuteRDG()
     RDGCompilerRef rdgCompiler = rdgCompilers[EngineContext::ThreadPool()->ThreadFrameIndex()];
     auto& frameResource = perFrameCommonResources[EngineContext::ThreadPool()->ThreadFrameIndex()];
     frameResource.builder = rdgBuilders[EngineContext::ThreadPool()->ThreadFrameIndex()].get();   // PassExecutionPhase 组装RDGPassContext用
+
+    // chunked并行录制：帧首fence已保证本帧槽上一轮的chunk命令缓冲执行完毕（可安全BeginCommand重置）
+    frameResource.chunkCount = 3;
+    EnsureFrameChunkLists(frameResource, 3);
+
     rdgCompiler->compile_and_execute(
         rdgDependencyGraph,
         &frameResource
@@ -286,15 +301,21 @@ void RenderSystem::ExecuteRDG()
 }
 
 void RenderSystem::SubmitRHI()
-{   
+{
     ENGINE_TIME_SCOPE(RenderSystem::RecordCommands);
 
     auto& resource = perFrameCommonResources[EngineContext::ThreadPool()->ThreadFrameIndex()];
     RHITextureRef swapchainTexture = swapchain->GetNewFrame(nullptr, resource.startSemaphore);
-    RHICommandListRef command = resource.GraphicsCommand; 
-    command->EndCommand();
-    command->Execute(resource.fence, resource.startSemaphore, resource.finishSemaphore);    // 指令提交
-    swapchain->Present(resource.finishSemaphore); 
+    assert(resource.chunkCount > 0);
+    
+
+    // 并行录制：各chunk已在录制线程各自Begin/End，此处按chunk序单次批量提交
+    // （一次vkQueueSubmit内多个primary buffer按序执行，语义等价于单buffer串接）
+    std::vector<RHICommandListRef> chunks(resource.ChunkCommands.begin(),
+                                            resource.ChunkCommands.begin() + resource.chunkCount);
+    RHICommandList::ExecuteBatch(chunks, resource.fence, resource.startSemaphore, resource.finishSemaphore);
+
+    swapchain->Present(resource.finishSemaphore);
 }
 
 void RenderSystem::UpdateGlobalSetting()

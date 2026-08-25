@@ -22,6 +22,12 @@ struct RDGPerFrameResource
     // 由 RenderSystem 在 compile_and_execute 之前填入
     RDGBuilder*         builder = nullptr;
 
+    // chunked并行录制：按帧槽持久持有的命令流（byPass=true，各自独占一个context），
+    // 由 RenderSystem::EnsureFrameChunkLists 惰性创建；每帧由各chunk的 BeginCommand 重置，
+    // 帧槽 fence 保证跨帧复用安全。录制完成后由 SubmitRHI 用 ExecuteBatch 按序单次提交
+    std::vector<RHICommandListRef> ChunkCommands;
+    uint32_t            chunkCount = 0;     // 本帧启用的chunk数（提交 [0, chunkCount) ）
+
     // TODO 多队列提交扩展位：每队列的 pool/command/信号量，
     // 届时录制目标从 GraphicsCommand 单流改为按 optimized_timeline 分队列
 };

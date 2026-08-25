@@ -136,6 +136,11 @@ public:
 
     virtual void Execute(RHIFenceRef waitFence, RHISemaphoreRef waitSemaphore, RHISemaphoreRef signalSemaphore) = 0;     // 实际提交，如果延迟录制也该在对应线程调用该函数完成录制提交
 
+    // 多命令缓冲按序单次提交（chunked并行录制）：contexts须来自同一pool（同队列），
+    // 由this（第一个context）提供提交队列；一次vkQueueSubmit内多个primary buffer按数组顺序执行，
+    // 语义等价于单buffer串接
+    virtual void ExecuteBatch(const std::vector<RHICommandContextRef>& contexts, RHIFenceRef fence, RHISemaphoreRef waitSemaphore, RHISemaphoreRef signalSemaphore) = 0;
+
     // UE RHI彻底做了资源状态（如VkImageLayout）等的屏蔽封装
     // 和BeginTransitions，FVulkanLayoutManager等有关
     // 参考Sakura Engine还是做暴露吧

@@ -20,6 +20,10 @@ struct PassBindInfo {
     std::vector<RHITextureViewRef> pooled_views;
     // 池化描述符集（全部 pass 执行完后回收）
     std::vector<std::pair<RHIDescriptorSetRef, uint32_t>> pooled_descriptor_sets;
+
+    // render pass 的渲染信息（attachment view 在主线程预分配，随pooled_views统一归还）。
+    // 并行录制期worker不碰视图池——RHIRenderingInfo必须整体前置到阶段6构建
+    RHIRenderingInfo rendering_info = {};
 };
 
 // 资源生命期信息（对应 SakuraEngine ResourceLifetimeAnalysis 中释放所需的最小子集）
