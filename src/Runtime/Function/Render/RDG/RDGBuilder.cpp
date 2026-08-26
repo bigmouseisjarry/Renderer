@@ -933,6 +933,21 @@ RDGRayTracingPassBuilder& RDGRayTracingPassBuilder::OutputReadWrite(RDGTextureHa
     return *this;
 }
 
+RDGRayTracingPassBuilder& RDGRayTracingPassBuilder::Dependency(RDGBufferHandle buffer)
+{
+    // 无描述符的读向依赖边：不参与描述符绑定（绑定阶段按NO_DESCRIPTOR_SET跳过），
+    // 但进入依赖分析与屏障跟踪——拓扑排序据此保证生产者pass（如TLAS Update）先于本pass
+    if (buffer.ID() == UINT64_MAX) return *this;    // 生产者pass未构建（被禁用等），GetBuffer已警告
+
+    RDGBufferEdgeRef edge = new RDGBufferEdge();
+    edge->state = RESOURCE_STATE_SHADER_RESOURCE;
+    edge->set = NO_DESCRIPTOR_SET;
+
+    graph->Link(graph->GetBufferNode(buffer.ID()), pass, edge);
+
+    return *this;
+}
+
 RDGRayTracingPassBuilder& RDGRayTracingPassBuilder::AddFlag(const RDGPassFlags flag)
 {
     pass->add_flags(flag);

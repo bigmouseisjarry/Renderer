@@ -180,9 +180,11 @@ public:
 
     virtual void CopyTexture(RHITextureRef src, TextureSubresourceLayers srcSubresource, RHITextureRef dst, TextureSubresourceLayers dstSubresource) override final;
 
-    virtual void GenerateMips(RHITextureRef src) override final;  
+    virtual void GenerateMips(RHITextureRef src) override final;
 
-    virtual void PushEvent(const std::string& name, Color3 color) override final;   
+    virtual void BuildTopLevelAccelerationStructure(RHITopLevelAccelerationStructureRef tlas) override final;
+
+    virtual void PushEvent(const std::string& name, Color3 color) override final;
 
 	virtual void PopEvent() override final;
 

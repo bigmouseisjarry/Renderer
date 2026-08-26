@@ -10,8 +10,6 @@ class RDGBuilder;
 // 每帧公共执行资源——作为 Phase 的执行上下文
 struct RDGPerFrameResource
 {
-    RHICommandPoolRef   GraphicsPool;
-    RHICommandListRef   GraphicsCommand;
 
     RHISemaphoreRef     startSemaphore;
     RHISemaphoreRef     finishSemaphore;

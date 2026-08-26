@@ -93,6 +93,7 @@ void ClipmapPass::Build(RDGBuilder& builder)
             RDGRayTracingPassHandle pass = builder.CreateRayTracingPass(GetName() + index)
                 .PassIndex(i)
                 .RootSignature(rootSignature)
+                .Dependency(builder.GetBuffer("TLAS Storage"))      // 依赖TLAS Update的产出（虚拟边，不绑定描述符）
                 .ReadWrite(1, 0, 0, clipmapTex, VIEW_TYPE_3D)
                 .ReadWrite(1, 1, 0, clipmapBuf)
                 .Execute([&](RDGPassContext context) {       

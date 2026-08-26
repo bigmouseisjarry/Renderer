@@ -221,7 +221,13 @@ public:
 	const VkAccelerationStructureKHR& GetHandle() 	{ return handle; }
 	VkDeviceAddress GetAddress() 					{ return address; }
 
-	virtual void Update(const std::vector<RHIAccelerationStructureInstanceInfo>& instanceInfos, bool build = false) override final;	
+	virtual void Update(const std::vector<RHIAccelerationStructureInstanceInfo>& instanceInfos, bool build = false) override final;
+	virtual void PrepareUpdate(const std::vector<RHIAccelerationStructureInstanceInfo>& instanceInfos, bool build = false) override final;
+	virtual RHIBufferRef GetStorageBuffer() const override final { return accelerationStructureBuffer; }
+
+	// 纯录制：把构建命令录进给定命令缓冲（帧内路径由VulkanRHICommandContext调用，
+	// 与PrepareUpdate配对使用，不再有独立提交）
+	void RecordBuild(VkCommandBuffer commandBuffer);	
 
 	virtual void Destroy() override final;
 	virtual void* RawHandle() override final { return handle; };
@@ -235,6 +241,7 @@ private:
 
 	VkAccelerationStructureGeometryKHR accelerationStructureGeometry;
 	VkAccelerationStructureBuildGeometryInfoKHR accelerationStructureBuildGeometryInfo;
+	VkAccelerationStructureBuildRangeInfoKHR accelerationStructureBuildRangeInfo;	// PrepareUpdate填充，RecordBuild使用
 };
 
 class VulkanRHIBottomLevelAccelerationStructure : public RHIBottomLevelAccelerationStructure

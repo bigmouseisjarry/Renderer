@@ -11,9 +11,10 @@
 #include <string>
 #include <cstdint>
 
-enum PassType	
-{  
-    GPU_CULLING_PASS = 0,
+enum PassType
+{
+    TLAS_UPDATE_PASS = 0,       // 必须先于所有RT pass构建（blackboard的"TLAS Storage"import在先）
+    GPU_CULLING_PASS,
 	CLUSTER_LIGHTING_PASS,
 	IBL_PASS,
 	DEPTH_PASS,

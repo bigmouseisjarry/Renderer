@@ -1196,6 +1196,11 @@ void VulkanRHICommandContext::CopyTexture(RHITextureRef src, TextureSubresourceL
 void VulkanRHICommandContext::GenerateMips(RHITextureRef src)
 {
     ::GenerateMips(handle, src);
+}
+
+void VulkanRHICommandContext::BuildTopLevelAccelerationStructure(RHITopLevelAccelerationStructureRef tlas)
+{
+    ResourceCast(tlas)->RecordBuild(handle);
 } 
 
 void VulkanRHICommandContext::PushEvent(const std::string& name, Color3 color) 

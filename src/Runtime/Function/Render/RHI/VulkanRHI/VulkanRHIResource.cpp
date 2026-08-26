@@ -938,7 +938,18 @@ VulkanRHITopLevelAccelerationStructure::VulkanRHITopLevelAccelerationStructure(c
     this->info.instanceInfos.clear();
 }
 
-void VulkanRHITopLevelAccelerationStructure::Update(const std::vector<RHIAccelerationStructureInstanceInfo>& instanceInfos, bool build) 
+void VulkanRHITopLevelAccelerationStructure::Update(const std::vector<RHIAccelerationStructureInstanceInfo>& instanceInfos, bool build)
+{
+    // 立即路径：准备 + immediate录制 + 独立提交（仅构造期的一次性空构建等场景；
+    // 帧内路径用 PrepareUpdate + RecordBuild 经RDG命令流录制，不再有独立提交）
+    PrepareUpdate(instanceInfos, build);
+
+    auto immediateCommandContest = Backend()->GetImmediateCommandContest();
+    RecordBuild(immediateCommandContest->GetHandle());
+    immediateCommandContest->Flush();
+}
+
+void VulkanRHITopLevelAccelerationStructure::PrepareUpdate(const std::vector<RHIAccelerationStructureInstanceInfo>& instanceInfos, bool build)
 {
     bool update = (handle == VK_NULL_HANDLE || build) ? false : true;   // 这个build标志位可不可以在内部自动推导？TODO
 
@@ -948,39 +959,31 @@ void VulkanRHITopLevelAccelerationStructure::Update(const std::vector<RHIAcceler
         blasInstances.push_back(VulkanUtil::AccelerationStructureInstanceInfoToVk(instanceInfos[i]));
     }
     memcpy(instanceBuffer->Map(), blasInstances.data(), blasInstances.size() * sizeof(VkAccelerationStructureInstanceKHR));
-  
-    // 4. 命令执行加速结构创建
-    {
-        accelerationStructureBuildGeometryInfo.mode = update ?
-                                                        VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR :
-                                                        VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
 
-        //补齐构建所需的信息（需要构建的加速结构，和scratch buffer）
-        accelerationStructureBuildGeometryInfo.srcAccelerationStructure = update ? 
-                                                                                handle:
-                                                                                VK_NULL_HANDLE;
-        accelerationStructureBuildGeometryInfo.dstAccelerationStructure = handle;
-        accelerationStructureBuildGeometryInfo.scratchData.deviceAddress = VulkanUtil::GetBufferDeviceAddress(ResourceCast(scratchBuffer)->GetHandle(), Backend()->GetLogicalDevice());
+    // 补齐构建所需的信息（构建模式、目标加速结构、scratch buffer地址、实例数量）
+    accelerationStructureBuildGeometryInfo.mode = update ?
+                                                    VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR :
+                                                    VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+    accelerationStructureBuildGeometryInfo.srcAccelerationStructure = update ?
+                                                                            handle:
+                                                                            VK_NULL_HANDLE;
+    accelerationStructureBuildGeometryInfo.dstAccelerationStructure = handle;
+    accelerationStructureBuildGeometryInfo.scratchData.deviceAddress = VulkanUtil::GetBufferDeviceAddress(ResourceCast(scratchBuffer)->GetHandle(), Backend()->GetLogicalDevice());
 
-        // 构建
-        VkAccelerationStructureBuildRangeInfoKHR accelerationStructureBuildRangeInfo = {};
-        accelerationStructureBuildRangeInfo.primitiveCount = instanceInfos.size();
-        //accelerationStructureBuildRangeInfo.primitiveCount = 0;
-        accelerationStructureBuildRangeInfo.primitiveOffset = 0;
-        accelerationStructureBuildRangeInfo.firstVertex = 0;
-        accelerationStructureBuildRangeInfo.transformOffset = 0;
-        std::vector<VkAccelerationStructureBuildRangeInfoKHR*> accelerationBuildStructureRangeInfos = { &accelerationStructureBuildRangeInfo };
- 
-        auto immediateCommandContest = Backend()->GetImmediateCommandContest();    // 暂时这样写吧，不应该把加速结构的构建函数暴露出去？
-        vkCmdBuildAccelerationStructuresKHR(immediateCommandContest->GetHandle(), 
-            1, 
-            &accelerationStructureBuildGeometryInfo, 
-            accelerationBuildStructureRangeInfos.data());     //在这个指令处真正完成构建     
-    
-        immediateCommandContest->Flush();
-    }
+    accelerationStructureBuildRangeInfo = {};
+    accelerationStructureBuildRangeInfo.primitiveCount = instanceInfos.size();
+    accelerationStructureBuildRangeInfo.primitiveOffset = 0;
+    accelerationStructureBuildRangeInfo.firstVertex = 0;
+    accelerationStructureBuildRangeInfo.transformOffset = 0;
+}
 
-    // 5. 回收scratch buffer内存
+void VulkanRHITopLevelAccelerationStructure::RecordBuild(VkCommandBuffer commandBuffer)
+{
+    VkAccelerationStructureBuildRangeInfoKHR* rangeInfo = &accelerationStructureBuildRangeInfo;
+    vkCmdBuildAccelerationStructuresKHR(commandBuffer,
+        1,
+        &accelerationStructureBuildGeometryInfo,
+        &rangeInfo);     // 在这条指令处真正完成构建
 }
 
 void VulkanRHITopLevelAccelerationStructure::Destroy()

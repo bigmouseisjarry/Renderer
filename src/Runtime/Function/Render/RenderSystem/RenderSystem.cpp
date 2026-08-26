@@ -35,6 +35,7 @@
 #include "Function/Render/RenderPass/GizmoPass.h"
 #include "Function/Render/RenderPass/EditorUIPass.h"
 #include "Function/Render/RenderPass/TestTrianglePass.h"
+#include "Function/Render/RenderPass/TLASUpdatePass.h"
 #include "Function/Render/RenderPass/PresentPass.h"
 #include "Function/Render/RenderPass/RenderPass.h"
 #include "RenderSurfaceCacheManager.h"
@@ -74,10 +75,9 @@ void RenderSystem::InitBaseResource()
     surface       = backend->CreateSurface(window);
     queue         = backend->GetQueue({ QUEUE_TYPE_GRAPHICS, 0 });
     swapchain     = backend->CreateSwapChain({ surface, queue, FRAMES_IN_FLIGHT, surface->GetExetent(), COLOR_FORMAT });
-    pool          = backend->CreateCommandPool({ queue });  
     for (uint32_t i = 0; i < FRAMES_IN_FLIGHT; i++)
     {
-        perFrameCommonResources[i].GraphicsCommand = pool->CreateCommandList(false);
+       // perFrameCommonResources[i].GraphicsCommand = pool->CreateCommandList(false);
         perFrameCommonResources[i].startSemaphore = backend->CreateSemaphore();
         perFrameCommonResources[i].finishSemaphore = backend->CreateSemaphore();
         perFrameCommonResources[i].fence = backend->CreateFence(true);
@@ -138,6 +138,7 @@ void RenderSystem::InitPasses()
     meshPasses[MESH_G_BUFFER_PASS]              = std::make_shared<GBufferPass>();
     meshPasses[MESH_FORWARD_PASS]               = std::make_shared<ForwardPass>();
 
+    passes[TLAS_UPDATE_PASS]                    = std::make_shared<TLASUpdatePass>();
     passes[GPU_CULLING_PASS]                    = std::make_shared<GPUCullingPass>();
     passes[CLUSTER_LIGHTING_PASS]               = std::make_shared<ClusterLightingPass>();
     passes[IBL_PASS]                            = std::make_shared<IBLPass>();
@@ -245,9 +246,7 @@ void RenderSystem::Tick()
         ENGINE_TIME_SCOPE(RenderSystem::SyncRHI);                                   // GPU端瓶颈会导致此处的WaitIdle等待
         EngineContext::ThreadPool()->WaitIdle(ENGINE_THREAD_TYPE_RHI);  // loop里唯一和RHI线程同步的时点，RHI最多会延迟主线程一帧
         EngineContext::ThreadPool()->AddQueuedWork([this]() {
-            meshManager->UpdateTLAS();  // TODO vk等支持多线程的指令录制，但是不支持同queue并行提交，此处的TLAS更新里有一个提交，不能和上面的前一帧指令并行，需要再改          
-            SubmitRHI();
-
+            SubmitRHI();    // TLAS更新已收编进RDG（TLASUpdatePass在帧命令流内录制构建，不再有独立提交与等待）
             }, ENGINE_THREAD_TYPE_RHI);
     }
 }

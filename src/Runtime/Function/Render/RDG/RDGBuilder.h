@@ -236,9 +236,13 @@ public:
     RDGRayTracingPassBuilder& ReadWrite(uint32_t set, uint32_t binding, uint32_t index, RDGBufferHandle buffer, uint32_t offset = 0, uint32_t size = 0);   // 好像和read也没什么区别？
     RDGRayTracingPassBuilder& ReadWrite(uint32_t set, uint32_t binding, uint32_t index, RDGTextureHandle texture, TextureViewType viewType = VIEW_TYPE_2D, TextureSubresourceRange subresource = {}); 
     RDGRayTracingPassBuilder& OutputRead(RDGBufferHandle buffer, uint32_t offset = 0, uint32_t size = 0);             // 在执行完Pass后作为输出，自动屏障，可能还会在其他地方使用
-    RDGRayTracingPassBuilder& OutputRead(RDGTextureHandle texture, TextureSubresourceRange subresource = {});      
+    RDGRayTracingPassBuilder& OutputRead(RDGTextureHandle texture, TextureSubresourceRange subresource = {});
     RDGRayTracingPassBuilder& OutputReadWrite(RDGBufferHandle buffer, uint32_t offset = 0, uint32_t size = 0);
-    RDGRayTracingPassBuilder& OutputReadWrite(RDGTextureHandle texture, TextureSubresourceRange subresource = {});  
+    RDGRayTracingPassBuilder& OutputReadWrite(RDGTextureHandle texture, TextureSubresourceRange subresource = {});
+
+    // 无描述符的虚拟依赖边：声明"本pass读取该资源"的排序/屏障关系（如RT pass对TLAS存储buffer），
+    // 不参与描述符绑定。资源经由其他pass Import进图后即可引用
+    RDGRayTracingPassBuilder& Dependency(RDGBufferHandle buffer);
     RDGRayTracingPassBuilder& AddFlag(const RDGPassFlags flag);
 
     RDGRayTracingPassBuilder& Execute(const RDGPassExecuteFunc& execute);

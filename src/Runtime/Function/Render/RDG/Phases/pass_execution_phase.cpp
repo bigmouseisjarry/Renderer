@@ -59,17 +59,20 @@ void PassExecutionPhase::execute_scheduled_passes(RDGDependencyGraphRef graph, P
         const bool parallelReady =  executor->chunkCount >= 2
                                     && executor->ChunkCommands.size() >= executor->chunkCount
                                     && total >= 2;
+
+        assert(parallelReady);
+
         if (parallelReady)
         {
             record_parallel(graph, executor, orderedPasses);
         }
-        else
-        {
-            // 串行：单命令流（延迟模式GraphicsCommand，Begin/End由BuildRDG/SubmitRHI负责）
-            RHICommandListRef command = executor->GraphicsCommand;
-            record_pass_range(graph, executor, command, 0, total, orderedPasses);
-            executor->chunkCount = 0;   // 走旧的单流提交路径
-        }
+        //else
+        //{
+        //    // 串行：单命令流（延迟模式GraphicsCommand，Begin/End由BuildRDG/SubmitRHI负责）
+        //    RHICommandListRef command = executor->GraphicsCommand;
+        //    record_pass_range(graph, executor, command, 0, total, orderedPasses);
+        //    executor->chunkCount = 0;   // 走旧的单流提交路径
+        //}
     }
 
     // 释放sweep：录制期不碰任何池（RDG池无锁），全部录制完成后按拓扑全序统一执行last-use释放

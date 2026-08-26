@@ -61,14 +61,13 @@ void RenderMeshManager::PrepareRayTracePass()
     instances.clear();
     auto rendererComponents = EngineContext::World()->GetActiveScene()->GetComponents<MeshRendererComponent>();     // 场景物体
     for(auto component : rendererComponents) component->CollectAccelerationStructureInstance(instances);
-
-    //UpdateTLAS();
+    // TLAS的构建由RDG的TLASUpdatePass在Build期Prepare、帧命令流内录制
 }
 
-void RenderMeshManager::UpdateTLAS()
+void RenderMeshManager::PrepareTLASUpdate()
 {
-    ENGINE_TIME_SCOPE(RenderMeshManager::BuildTLAS);
-    
-    tlas->Update(instances, !init);
+    ENGINE_TIME_SCOPE(RenderMeshManager::PrepareTLASUpdate);
+
+    tlas->PrepareUpdate(instances, !init);
     init = true;
 }

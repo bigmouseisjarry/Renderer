@@ -31,12 +31,6 @@ public:
     void BuildRDG();
     void ExecuteRDG();
 
-    // chunked并行录制开关：
-    //   false —— Phase 8 单命令流串行录制（延迟模式GraphicsCommand，行为与历史版本一致）
-    //   true  —— 拓扑序切chunk，worker并行录制（byPass立即模式），SubmitRHI用ExecuteBatch按序单次提交。
-    //            GPU执行语义与串行等价（同一次vkQueueSubmit内按序），仅CPU录制并行
-    // bool useParallelRecording = true;
-
     void SetSurfaceCacheUpdate(bool update)                                                 { surfaceCacheManager->SetDynamicUpdate(update); }
     void SetSurfaceCacheFixScale(bool fixScale)                                             { surfaceCacheManager->SetFixScale(fixScale); }
 
@@ -68,8 +62,6 @@ private:
     RHISurfaceRef surface;
     RHIQueueRef queue;
     RHISwapchainRef swapchain;
-    
-    RHICommandPoolRef pool;
 
     // 每chunk一个独立的命令池：vkBegin/vkEnd/vkResetCommandBuffer要求父VkCommandPool外部同步，
     // 并行录制时各worker同时BeginCommand会违反规范（驱动层访问冲突），必须物理隔离

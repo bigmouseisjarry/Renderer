@@ -726,9 +726,13 @@ public:
         if(accessFlags & (  VK_ACCESS_TRANSFER_READ_BIT | 
                             VK_ACCESS_TRANSFER_WRITE_BIT))                  flags |=    VK_PIPELINE_STAGE_TRANSFER_BIT;                         // 0x00001000
 
-        if(accessFlags & (  VK_ACCESS_HOST_READ_BIT | 
+        if(accessFlags & (  VK_ACCESS_HOST_READ_BIT |
                             VK_ACCESS_HOST_WRITE_BIT))                      flags |=    VK_PIPELINE_STAGE_HOST_BIT;                             // 0x00004000
 
+        // AS构建/读取：写侧必须含构建阶段，否则屏障的srcStage落在TOP_OF_PIPE等不到构建写
+        if(accessFlags &    VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR) flags |=    VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR;
+        if(accessFlags &    VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR)  flags |=    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT |
+                                                                                        VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR;
 
         if(flags == 0) flags = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
         return flags;

@@ -79,6 +79,9 @@ public:
 
     void GenerateMips(RHITextureRef src);
 
+	// TLAS构建录制（需先经RHI层PrepareUpdate完成CPU侧准备），录进当前命令流
+	void BuildTopLevelAccelerationStructure(RHITopLevelAccelerationStructureRef tlas);
+
 	void PushEvent(const std::string& name, Color3 color = {0.0f, 0.0f, 0.0f});
 
 	void PopEvent();
@@ -310,12 +313,23 @@ struct RHICommandCopyTexture : public RHICommand
     virtual void Execute(RHICommandContextRef context) override final;
 };
 
-struct RHICommandGenerateMips : public RHICommand 
+struct RHICommandGenerateMips : public RHICommand
 {
     RHITextureRef src;
 
     RHICommandGenerateMips(RHITextureRef src)
     : src(src)
+    {}
+
+    virtual void Execute(RHICommandContextRef context) override final;
+};
+
+struct RHICommandBuildTLAS : public RHICommand
+{
+    RHITopLevelAccelerationStructureRef tlas;
+
+    RHICommandBuildTLAS(RHITopLevelAccelerationStructureRef tlas)
+    : tlas(tlas)
     {}
 
     virtual void Execute(RHICommandContextRef context) override final;

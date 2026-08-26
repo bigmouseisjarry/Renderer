@@ -209,12 +209,20 @@ protected:
 class RHITopLevelAccelerationStructure : public RHIResource
 {
 public:
-	RHITopLevelAccelerationStructure(const RHITopLevelAccelerationStructureInfo& info) 
+	RHITopLevelAccelerationStructure(const RHITopLevelAccelerationStructureInfo& info)
 	: RHIResource(RHI_TOP_LEVEL_ACCELERATION_STRUCTURE)
 	, info(info)
 	{}
 
+	// 立即路径：准备+immediate录制+提交（仅构造期的一次性空构建等场景使用）
 	virtual void Update(const std::vector<RHIAccelerationStructureInstanceInfo>& instanceInfos, bool build = false) = 0;
+
+	// 纯CPU准备：instance数据写入持久映射buffer + 填充构建信息（不录任何命令）
+	// 帧内路径由RDG的TLASUpdatePass调用：Build期Prepare，Execute期经命令流录制
+	virtual void PrepareUpdate(const std::vector<RHIAccelerationStructureInstanceInfo>& instanceInfos, bool build = false) = 0;
+
+	// AS存储buffer（RDG以imported buffer的形式为其建立依赖边与屏障）
+	virtual RHIBufferRef GetStorageBuffer() const = 0;
 
 	const RHITopLevelAccelerationStructureInfo& GetInfo() const { return info; }
 

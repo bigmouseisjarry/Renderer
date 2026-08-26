@@ -106,6 +106,7 @@ void DDGIPass::Build(RDGBuilder& builder)
                 RDGRayTracingPassHandle pass = builder.CreateRayTracingPass(GetName() + " Trace Ray" + index)
                     .PassIndex(i)
                     .RootSignature(rootSignature)
+                    .Dependency(builder.GetBuffer("TLAS Storage"))      // 依赖TLAS Update的产出（虚拟边，不绑定描述符）
                     .ReadWrite(1, 0, 0, diffuseTex)
                     .ReadWrite(1, 1, 0, normalTex)
                     .ReadWrite(1, 2, 0, emissionTex)

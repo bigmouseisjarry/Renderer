@@ -20,6 +20,10 @@ enum RDGEdgeType
     RDG_EDGE_TYPE_MAX_ENUM,    //
 };
 
+// 虚拟依赖边的set哨兵：该边只表达排序/屏障依赖，不参与描述符绑定
+// （绑定阶段见此set直接跳过该边）。用于如图外全局资源（TLAS等）的图内依赖表达
+constexpr uint32_t NO_DESCRIPTOR_SET = UINT32_MAX;
+
 class RDGEdge : public DependencyGraphEdge    
 {
 public:
