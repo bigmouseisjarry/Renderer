@@ -90,7 +90,10 @@ public:
 
     virtual RHIFenceRef CreateFence(bool signaled) = 0;
 
-    virtual RHISemaphoreRef CreateSemaphore() = 0;
+    virtual RHISemaphoreRef CreateSemaphore(bool isTimeline, uint64_t initialValue = 0) = 0;
+
+    // 渲染查询（GPU侧逐pass统计：时间戳采集/回读，见RHIRenderQuery/RHIRenderQueryInfo）
+    virtual RHIRenderQueryRef CreateRenderQuery(const RHIRenderQueryInfo& info) = 0;
 
     //立即模式的命令接口 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -134,12 +137,12 @@ public:
 
 	virtual void EndCommand() = 0;  // 结束录制
 
-    virtual void Execute(RHIFenceRef waitFence, RHISemaphoreRef waitSemaphore, RHISemaphoreRef signalSemaphore) = 0;     // 实际提交，如果延迟录制也该在对应线程调用该函数完成录制提交
-
-    // 多命令缓冲按序单次提交（chunked并行录制）：contexts须来自同一pool（同队列），
-    // 由this（第一个context）提供提交队列；一次vkQueueSubmit内多个primary buffer按数组顺序执行，
-    // 语义等价于单buffer串接
-    virtual void ExecuteBatch(const std::vector<RHICommandContextRef>& contexts, RHIFenceRef fence, RHISemaphoreRef waitSemaphore, RHISemaphoreRef signalSemaphore) = 0;
+    // 设备级提交原语：将批次（contexts的命令缓冲 + waits/signals + 可选fence）提交到batch.queue，
+    // 一次后端调用（VkSubmitInfo2）。contexts与batch.commandLists一一对应（已回放完毕），
+    // 可为空=空提交（信号量中继/join收口批，合法）。
+    // 经由哪个context实例调用不影响结果——实例仅提供后端执行环境（载体语义），
+    // 目标队列由batch显式携带，不再从context/pool归属隐式推导
+    virtual void Submit(const RHIQueueSubmitBatch& batch, const std::vector<RHICommandContextRef>& contexts) = 0;
 
     // UE RHI彻底做了资源状态（如VkImageLayout）等的屏蔽封装
     // 和BeginTransitions，FVulkanLayoutManager等有关
@@ -209,11 +212,6 @@ public:
     virtual void DrawIndirect(RHIBufferRef argumentBuffer, uint32_t offset, uint32_t drawCount) = 0;
 
     virtual void DrawIndexedIndirect(RHIBufferRef argumentBuffer, uint32_t offset, uint32_t drawCount) = 0;
-
-    // TODO 
-    // virtual void BeginRenderQuery(RHIRenderQuery* RenderQuery) = 0;
-
-	// virtual void EndRenderQuery(RHIRenderQuery* RenderQuery) = 0;
 
     //ImGui /////////////////////////////////////////////////////////////////////////////////////
 

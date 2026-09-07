@@ -597,10 +597,18 @@ void RDGGraphWidget::UIInternel(bool* open)
             (int)passNodes.size(), 
             (int)rdgDependencyGraph->PassNodeCount());
 
-        ImGui::Text("Resource pool allocated count: %d(buffer) / %d(texture) / %d(view) / %d(descriptor set)", 
-            RDGBufferPool::Get()->AllocatedSize(), 
-            RDGTexturePool::Get()->AllocatedSize(),
-            RDGTextureViewPool::Get()->AllocatedSize(),
+        // 池按帧槽分实例（跨帧GPU并发隔离），统计聚合全部帧槽
+        auto sumPoolAllocated = [](auto poolGetter, uint32_t frameIndex) -> int
+        {
+            int total = 0;
+            for (uint32_t f = 0; f < FRAMES_IN_FLIGHT; f++)
+                total += (int)poolGetter(f)->AllocatedSize();
+            return total;
+        };
+        ImGui::Text("Resource pool allocated count: %d(buffer) / %d(texture) / %d(view) / %d(descriptor set)",
+            sumPoolAllocated([](uint32_t f) { return RDGBufferPool::Get(f); }, currentFrameIndex),
+            sumPoolAllocated([](uint32_t f) { return RDGTexturePool::Get(f); }, currentFrameIndex),
+            sumPoolAllocated([](uint32_t f) { return RDGTextureViewPool::Get(f); }, currentFrameIndex),
             RDGDescriptorSetPool::Get(currentFrameIndex)->AllocatedSize());
 
         if(init)

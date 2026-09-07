@@ -64,9 +64,17 @@ void DirectionalShadowPass::Build(RDGBuilder& builder)
                     .Import(EngineContext::RenderResource()->GetDirectionalShadowTexture(i), RESOURCE_STATE_UNDEFINED)
                     .Finish();
 
+                // 间接绘制命令buffer的虚拟依赖边：Draw()在execute内以DrawIndirect消费GPU Culling
+                // 写入的命令buffer（不走描述符），必须在图内声明依赖，否则拓扑排序可能把本pass排到
+                // culling之前执行，DrawIndirect读到未写入的命令（阴影图无几何）
+                std::string cmdIndex = " [" + std::to_string(MESH_DIRECTIONAL_SHADOW_PASS) + "][" + std::to_string(i) + "]";
+
+
                 RDGRenderPassHandle pass = builder.CreateRenderPass(GetName() + index)
                     .PassIndex(i)
                     .DepthStencil(depth, ATTACHMENT_LOAD_OP_CLEAR, ATTACHMENT_STORE_OP_STORE, 1.0f, 0)
+                    .Dependency(builder.GetBuffer("Mesh Draw Commands" + cmdIndex))
+                    .Dependency(builder.GetBuffer("Clusrter Draw Commands" + cmdIndex))
                     .Execute([&](RDGPassContext context) {
 
                         Extent2D windowExtent = EngineContext::Render()->GetWindowsExtent();

@@ -2,15 +2,6 @@
 #include "pass_dependency_analysis.h"
 #include <span>
 
-// 队列类型定义
-enum class ERenderGraphQueueType : uint8_t
-{
-    Graphics = 0,      // 主图形队列
-    AsyncCompute = 1,  // 异步计算队列
-    Copy = 2,          // 专用拷贝队列
-    Count = 3
-};
-
 // 队列能力描述
 struct QueueCapabilities
 {
@@ -26,6 +17,7 @@ struct QueueInfo {
     ERenderGraphQueueType type;
     uint32_t index;
     RHIQueueRef handle;
+    uint32_t family_index = RHI_QUEUE_FAMILY_IGNORED;    // 队列族（所有权转移release/acquire判定用）
     bool supports_graphics = false;
     bool supports_compute = false;
     bool supports_copy = false;
@@ -43,10 +35,9 @@ struct TimelineScheduleResult
 // Timeline Phase 配置
 struct QueueScheduleConfig
 {
-    bool enable_async_compute = true;       // 启用异步计算
-    bool enable_copy_queue = true;          // 启用拷贝队列
-    uint32_t max_async_compute_queues = MAX_QUEUE_CNT;  // 最大异步计算队列数量
-    uint32_t max_copy_queues = MAX_QUEUE_CNT;           // 最大拷贝队列数量
+    uint32_t enable_graphic_queues = MAX_QUEUE_CNT;            // 启用的图像队列数量
+    uint32_t enable_async_compute_queues = MAX_QUEUE_CNT;      // 启用的异步计算队列数量
+    uint32_t enable_copy_queues = MAX_QUEUE_CNT;               // 启用的拷贝队列数量
     uint32_t max_sync_points = 64;          // 最大同步点数量
     bool enable_debug_output = false;       // 启用调试输出
 };
@@ -63,6 +54,10 @@ public:
 
     // IRenderGraphPhase 接口
     void on_execute(RDGDependencyGraphRef graph, PerFrameCommonResourceRef executor)  override;
+
+    // 静态：按配置枚举 on_execute 将注册的队列集合（顺序 graphics→computes→copies、同开关、同判空），供 RenderSystem 在录制开始前预建每队列的命令池，
+    // 保证帧槽 queueSlots 下标与 all_queues 对齐
+    static std::vector<RHIQueueRef> QueryConfiguredQueues(const QueueScheduleConfig& config);
 
     // 获取调度结果
     const TimelineScheduleResult& get_schedule_result() const { return schedule_result; }

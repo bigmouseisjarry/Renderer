@@ -114,29 +114,38 @@ void main()
 	
 	// 时域复用Reservoir //////////////////////////////////
 
-	if (RESTIR_GI_SETTING.temporalReuse != 0) 
+	if (RESTIR_GI_SETTING.temporalReuse != 0)
 	{
-		vec4 reprojection   = texelFetch(REPROJECTION_RESULT, screenPixel, 0);	
-		ivec2 prevPixel     = ivec2(reprojection.zw);
-		prevPixel 			= ivec2(prevPixel.x / WIDTH_DOWNSAMPLE_RATE, prevPixel.y / HEIGHT_DOWNSAMPLE_RATE);
-		bool valid          = prevPixel.x > 0.0f ? true : false;		// TODO 是否需要专门计算下采样的重投影？
+		vec4 reprojection   = texelFetch(REPROJECTION_RESULT, screenPixel, 0);
+		vec2 prevScreen     = reprojection.zw;
+		// 防护：重投影输出含NaN/Inf时ivec2转换是UB，且垃圾坐标会越界读历史reservoir——
+		// 先在float域做全有限性+双边范围校验（原实现只查了x>0）
+		bool valid          = IsFiniteVec3(vec3(prevScreen, 0.0f))
+							&& prevScreen.x > 0.0f && prevScreen.y >= 0.0f
+							&& prevScreen.x < float(WINDOW_WIDTH) && prevScreen.y < float(WINDOW_HEIGHT);
+		ivec2 prevPixel     = ivec2(prevScreen) / ivec2(WIDTH_DOWNSAMPLE_RATE, HEIGHT_DOWNSAMPLE_RATE);
 
 		if(valid)
 		{
-			GIReservoir prevRes = PREV_RESERVOIRS[ReservoirIndex(prevPixel)];	
-			prevRes.numStreamSamples = min(prevRes.numStreamSamples, RESTIR_GI_SETTING.temporalSampleCountMultiplier * res.numStreamSamples);	// 需要设置一个累计采样数的上限
-			
-			float newPHat = EvaluatePHat(prevRes.sampl); 
-			CombineGIReservoirs(res, prevRes, newPHat, rand);		
+			GIReservoir prevRes = PREV_RESERVOIRS[ReservoirIndex(prevPixel)];
+			if (IsGIReservoirValid(prevRes))	// 防护：坏历史（越界读/反馈毒化）视作无历史
+			{
+				prevRes.numStreamSamples = min(prevRes.numStreamSamples, RESTIR_GI_SETTING.temporalSampleCountMultiplier * res.numStreamSamples);	// 需要设置一个累计采样数的上限
+
+				float newPHat = EvaluatePHat(prevRes.sampl);
+				CombineGIReservoirs(res, prevRes, newPHat, rand);
+			}
 		}
 	}
 
-	if (RESTIR_GI_SETTING.visibilityReuse != 0) 
+	// 防护：只对"持有效采样"（w>0且hitPos有限）的reservoir做可见性射线——空reservoir本就
+	// 无需查询，毒化hitPos会产生无法被BVH剪枝的NaN射线
+	if (RESTIR_GI_SETTING.visibilityReuse != 0 && res.w > 0.0f && IsFiniteVec3(res.sampl.hitPos))
 	{
 		bool shadowed = RayQueryVisibility(worldPos.xyz, res.sampl.hitPos, GLOBAL_SETTING.rayTracingOffset);
-		if (shadowed) 
+		if (shadowed)
 		{
-			CleanGIReservoir(res);		
+			CleanGIReservoir(res);
 		}
 	}
 

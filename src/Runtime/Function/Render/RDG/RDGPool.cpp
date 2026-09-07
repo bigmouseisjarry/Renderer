@@ -57,6 +57,7 @@ RDGTexturePool::PooledTexture RDGTexturePool::Allocate(const RHITextureInfo& inf
     ret = {
         .texture = EngineContext::RHI()->CreateTexture(tempInfo),
         .state = RESOURCE_STATE_UNDEFINED,
+        .queueFamily = RHI_QUEUE_FAMILY_IGNORED,    // 新建纹理无归属族
     };
     allocatedSize++;
 

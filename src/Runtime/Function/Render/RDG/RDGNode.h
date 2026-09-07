@@ -40,16 +40,27 @@ enum RDGResourceNodeType
     RDG_RESOURCE_NODE_TYPE_MAX_ENUM,    //
 };
 
+// RDG队列类型
+enum class ERenderGraphQueueType : uint8_t
+{
+    Graphics = 0,      // 主图形队列
+    AsyncCompute = 1,  // 异步计算队列
+    Copy = 2,          // 专用拷贝队列
+    Count = 3
+};
+
+// pass执行上下文：Phase 8组装，按值传给pass的execute lambda
 struct RDGPassContext
 {
-    RHICommandListRef command;
+    RHICommandListRef command;                              // 本pass录制的命令流（属于其队列的pool）
 
-    // TODO:这个搭建器应该删除掉
-    RDGBuilder* builder;
+    uint32_t queueIndex = 0;                                // QueueSchedule::all_queues 下标
+    ERenderGraphQueueType queueType = ERenderGraphQueueType::Graphics;
+
     std::array<RHIDescriptorSetRef, MAX_DESCRIPTOR_SETS> descriptors;
 
+    // TODO:这个是什么
     uint32_t passIndex[3] = { 0, 0, 0};
-
 };
 
 using RDGPassExecuteFunc = std::function<void(RDGPassContext)> ;
@@ -105,17 +116,18 @@ public:
         return info.get_size();
     }
 
-private:  
+private:
     RHITextureInfo info;
     RHIResourceState initState; // 从池中/外部引用时的最初状态
+    uint32_t initFamily = RHI_QUEUE_FAMILY_IGNORED;    // 池化跨帧归属族（上一帧最后触碰的族，帧首acquire判定用）
 
     RHITextureRef texture;      // 执行时分配和绑定，会动态更新，在最后一个依赖pass完成后返回资源池
 
     friend class RDGTextureBuilder;
     friend class RDGBuilder;
-    friend class PassBindingPhase;          // 阶段6: 集中式物理分配/生命期分析/描述符准备
-    friend class BarrierGenerationPhase;    // 阶段7: 读取 initState/texture 做状态跟踪
-    friend class PassExecutionPhase;        // 阶段8: 执行期物理解析与释放
+    friend class PassBindingPhase;          
+    friend class BarrierGenerationPhase;    
+    friend class PassExecutionPhase;        
 };
 using RDGTextureNodeRef = RDGTextureNode*;
 

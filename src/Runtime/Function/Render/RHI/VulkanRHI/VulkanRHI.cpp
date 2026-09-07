@@ -72,75 +72,6 @@ void VulkanRHIBackend::Destroy()
 
 //基本资源 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-//void VulkanRHIBackend::InitImGui(GLFWwindow* window)
-//{
-//    initImGui = true;
-//
-//    //// TODO 这一部分的VkRenderPass创建是和pass相关的，应该放在外面？
-//    //VulkanRenderPassAttachments attachmentInfo = {};
-//    //attachmentInfo.colorAttachments.push_back({
-//    //    .format = VulkanUtil::RHIFormatToVkFormat(EngineContext::Render()->GetColorFormat()),
-//    //    .samples = VK_SAMPLE_COUNT_1_BIT,
-//    //    .loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-//    //    .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE});
-//    //attachmentInfo.depthStencilAttachment = {
-//    //    .format = VulkanUtil::RHIFormatToVkFormat(EngineContext::Render()->GetDepthFormat()),
-//    //    .samples = VK_SAMPLE_COUNT_1_BIT,
-//    //    .loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-//    //    .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE};
-//    //VkRenderPass tempPass = FindOrCreateVkRenderPass(attachmentInfo);   // 创建一个pass来作为规范
-//    //                                                                            // 只需要兼容即可，和其他pass在RHI层的处理一样
-//
-//    std::shared_ptr<VulkanRHIQueue> queue = ResourceCast(queues[QUEUE_TYPE_GRAPHICS][0]);    
-//
-//	//使用volk加载vulkan函数，需要重新绑定
-//	auto funcLoader = [](const char* funcName, void* engine)
-//	{
-//        auto backend = std::static_pointer_cast<VulkanRHIBackend>(EngineContext::RHI());
-//		PFN_vkVoidFunction instanceAddr = vkGetInstanceProcAddr(backend->GetInstance(), funcName);
-//		PFN_vkVoidFunction deviceAddr = vkGetDeviceProcAddr(backend->GetLogicalDevice(), funcName);
-//		return deviceAddr ? deviceAddr : instanceAddr;
-//	};
-//	// const bool funcsLoaded = ImGui_ImplVulkan_LoadFunctions(funcLoader, this);
-//    ImGui_ImplVulkan_LoadFunctions(VULKAN_VERSION, funcLoader, this);
-//
-//	IMGUI_CHECKVERSION();
-//	ImGui::CreateContext();
-//    ImPlot::CreateContext();
-//	ImGuiIO& io = ImGui::GetIO();
-//	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
-//	io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
-//
-//	ImGui_ImplGlfw_InitForVulkan(window, true);
-//	ImGui_ImplVulkan_InitInfo initInfo = {};
-//    initInfo.ApiVersion = VULKAN_VERSION;
-//	initInfo.Instance       = instance;
-//	initInfo.PhysicalDevice = physicalDevice;
-//	initInfo.Device         = logicalDevice;
-//	initInfo.QueueFamily    = queue->GetQueueFamilyIndex();
-//	initInfo.Queue          = queue->GetHandle();
-//	initInfo.DescriptorPool = descriptorPool;
-//	// initInfo.Subpass = 0;
-//	initInfo.MinImageCount = FRAMES_IN_FLIGHT;
-//	initInfo.ImageCount = FRAMES_IN_FLIGHT;
-//	// initInfo.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
-//	initInfo.UseDynamicRendering = true;
-//    // initInfo.ColorAttachmentFormat = VulkanUtil::RHIFormatToVkFormat(EngineContext::Render()->GetColorFormat());
-//    
-//    std::vector<VkFormat> colorFormats = {VulkanUtil::RHIFormatToVkFormat(EngineContext::Render()->GetColorFormat())};
-//
-//    initInfo.PipelineInfoMain.Subpass = 0;
-//	initInfo.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
-//    initInfo.PipelineInfoMain.PipelineRenderingCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR;
-//    initInfo.PipelineInfoMain.PipelineRenderingCreateInfo.colorAttachmentCount = 1;
-//    initInfo.PipelineInfoMain.PipelineRenderingCreateInfo.pColorAttachmentFormats = colorFormats.data();
-//
-//	//ImGui_ImplVulkan_LoadFunctions();
-//	//ImGui_ImplVulkan_Init(&initInfo, tempPass);
-//    //ImGui_ImplVulkan_Init(&initInfo, VK_NULL_HANDLE);
-//    ImGui_ImplVulkan_Init(&initInfo);
-//}
-
 void VulkanRHIBackend::InitImGui(SDL_Window* window)
 {
     initImGui = true;
@@ -356,9 +287,9 @@ RHIFenceRef VulkanRHIBackend::CreateFence(bool signaled)
     return fence;
 }
 
-RHISemaphoreRef VulkanRHIBackend::CreateSemaphore()
+RHISemaphoreRef VulkanRHIBackend::CreateSemaphore(bool isTimeline, uint64_t initialValue)
 {
-    RHISemaphoreRef semaphore = std::make_shared<VulkanRHISemaphore>(*this);
+    RHISemaphoreRef semaphore = std::make_shared<VulkanRHISemaphore>(*this, isTimeline, initialValue);   // timeline
     RegisterResource(semaphore);
 
     return semaphore;
@@ -557,49 +488,71 @@ void VulkanRHIBackend::CreateLogicalDevice()
         std::cout << "Queue flags: " << VulkanUtil::QueueFlagsToString(queueFamily.queueFlags) << std::endl;
     }
 
-    std::vector<uint32_t> allocatedCounts(queueFamilyProperties.size());
-    for (int i = 0; i < queueFamilyProperties.size(); i++) 
+    // 队列族选择：两遍策略
+    //   phase1 优先专用的族——compute/transfer 尽量避开 graphics 族/全能族，让各类型拿到 族内独立的 VkQueue
+    // 
+    //   phase2 回落——带对应能力位且还有空位的任意族（含 graphics 族/全能族）
+    //   同族多类型各自保留 MAX_QUEUE_CNT 个请求（requestedCounts 累计后 clamp 到族队列数，
+    //   不足时 CreateQueues 按已请求数取模别名——合法，仅串行化，且同族判定会抑制release/acquire）
+    std::vector<uint32_t> requestedCounts(queueFamilyProperties.size(), 0);
+    std::vector<int32_t> freeCounts(queueFamilyProperties.size());
+    for (size_t i = 0; i < queueFamilyProperties.size(); i++)
+        freeCounts[i] = static_cast<int32_t>(queueFamilyProperties[i].queueCount);
+
+    // require: 必备能力位；
+    // avoidMask: 专用的判定——族不带这些能力位才算专用的，为0则不限制
+    // avoidGraphicsFamily: 额外避开 graphics 族（须先选定 graphics）
+    auto pickFamily = [&](VkQueueFlags require, VkQueueFlags avoidMask, bool avoidGraphicsFamily) -> int32_t
     {
-        auto& queueFamily = queueFamilyProperties[i];
-        uint32_t queueCount = queueFamily.queueCount;   // 多个不同属性的队列可以从同一个队列族分配，只要数量够就行，队列族不只支持一种属性
-                                                        // 背包问题 XD
-        if (queueCount > MAX_QUEUE_CNT &&
-            queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT &&
-            queueIndices[QUEUE_TYPE_GRAPHICS] < 0)
+        int32_t best = -1;
+        for (int32_t i = 0; i < static_cast<int32_t>(queueFamilyProperties.size()); i++)
         {
-            queueIndices[QUEUE_TYPE_GRAPHICS] = i;  
-            queueCount -= MAX_QUEUE_CNT;
-        }    
-        if (queueCount > MAX_QUEUE_CNT &&
-            queueFamily.queueFlags & VK_QUEUE_COMPUTE_BIT &&
-            queueIndices[QUEUE_TYPE_COMPUTE] < 0)
-        {
-            queueIndices[QUEUE_TYPE_COMPUTE] = i; 
-            queueCount -= MAX_QUEUE_CNT;
+            const VkQueueFamilyProperties& family = queueFamilyProperties[i];
+            if (!(family.queueFlags & require)) continue;
+            if (freeCounts[i] <= 0) continue;
+            if (avoidGraphicsFamily && queueIndices[QUEUE_TYPE_GRAPHICS] == i) continue;
+            if (avoidMask && (family.queueFlags & avoidMask)) continue;
+            if (best < 0 || freeCounts[i] > freeCounts[best]) best = i;
         }
-        if (queueCount > MAX_QUEUE_CNT &&
-            queueFamily.queueFlags & VK_QUEUE_TRANSFER_BIT &&
-            queueIndices[QUEUE_TYPE_TRANSFER] < 0)
-        {
-            queueIndices[QUEUE_TYPE_TRANSFER] = i; 
-            queueCount -= MAX_QUEUE_CNT;
-        }
+        if (best >= 0)
+            freeCounts[best] = std::max(0, freeCounts[best] - MAX_QUEUE_CNT);
+        return best;
+    };
 
-        allocatedCounts[i] = queueFamily.queueCount - queueCount;
+    // pass1：专用的 优先
+    queueIndices[QUEUE_TYPE_GRAPHICS] = pickFamily(VK_QUEUE_GRAPHICS_BIT, 0, false);
+    queueIndices[QUEUE_TYPE_COMPUTE]  = pickFamily(VK_QUEUE_COMPUTE_BIT, VK_QUEUE_GRAPHICS_BIT, true);
+    queueIndices[QUEUE_TYPE_TRANSFER] = pickFamily(VK_QUEUE_TRANSFER_BIT,
+                                        static_cast<VkQueueFlagBits>(VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT), true);
 
-        // 好像graphics queue就支持了？不需要单独处理？
-        // // 窗口支持
-        // VkBool32 presentSupport = false;
-        // vkGetPhysicalDeviceSurfaceSupportKHR(physicalDevice, i, surface, &presentSupport);
-        // if (queueFamily.queueCount > 0 && presentSupport && presentFamily < 0 && graphicsFamily != i) { //强行使用不同的queue
-        //     presentFamily = i;
-        // }
+    // pass2：回落
+    if (queueIndices[QUEUE_TYPE_COMPUTE]  < 0) queueIndices[QUEUE_TYPE_COMPUTE]  = pickFamily(VK_QUEUE_COMPUTE_BIT, 0, false);
+    if (queueIndices[QUEUE_TYPE_TRANSFER] < 0) queueIndices[QUEUE_TYPE_TRANSFER] = pickFamily(VK_QUEUE_TRANSFER_BIT, 0, false);
+
+    if (queueIndices[QUEUE_TYPE_GRAPHICS] < 0) LOG_FATAL("Fail to allocate graphics queue!");
+    // 带GRAPHICS位的族必然带COMPUTE/TRANSFER位，走到这里说明没有可用队列，复用graphics族
+    if (queueIndices[QUEUE_TYPE_COMPUTE]  < 0) queueIndices[QUEUE_TYPE_COMPUTE]  = queueIndices[QUEUE_TYPE_GRAPHICS];
+    if (queueIndices[QUEUE_TYPE_TRANSFER] < 0) queueIndices[QUEUE_TYPE_TRANSFER] = queueIndices[QUEUE_TYPE_GRAPHICS];
+
+    // 每类型向所属族保留 MAX_QUEUE_CNT 个请求
+    for (int type = 0; type < QUEUE_TYPE_MAX_ENUM; type++)
+        requestedCounts[queueIndices[type]] += MAX_QUEUE_CNT;
+
+    allocatedQueueCounts.resize(queueFamilyProperties.size());
+    std::vector<uint32_t> allocatedCounts(queueFamilyProperties.size());
+    for (size_t i = 0; i < queueFamilyProperties.size(); i++)
+    {
+        allocatedCounts[i] = std::min(requestedCounts[i], queueFamilyProperties[i].queueCount);
+        allocatedQueueCounts[i] = allocatedCounts[i];    // CreateQueues 的取模上限（见下）
     }
-    for(int i = 0; i < QUEUE_TYPE_MAX_ENUM; i++) if(queueIndices[i] < 0) LOG_FATAL("Fail to allocate queue!");
 
-
-
-
+    // 好像graphics queue就支持了？不需要单独处理？
+    // // 窗口支持
+    // VkBool32 presentSupport = false;
+    // vkGetPhysicalDeviceSurfaceSupportKHR(physicalDevice, i, surface, &presentSupport);
+    // if (queueFamily.queueCount > 0 && presentSupport && presentFamily < 0 && graphicsFamily != i) { //强行使用不同的queue
+    //     presentFamily = i;
+    // }
 
     // 创建设备请求信息
     VkDeviceCreateInfo createInfo = {};
@@ -625,6 +578,10 @@ void VulkanRHIBackend::CreateLogicalDevice()
     std::vector<const char*> deviceExtentions;
     for (auto extention : DEVICE_EXTENTIONS) deviceExtentions.push_back(extention);
     if (backendInfo.enableRayTracing) { for (auto extention : RAY_TRACING_DEVICE_EXTENTIONS) deviceExtentions.push_back(extention); }
+    // mesh shader扩展仅在设备支持时启用（supportedExtensions来自物理设备枚举；不支持时stageFlags-parameter错误会保留）
+    for (auto extention : MESH_SHADER_DEVICE_EXTENTIONS)
+        for (auto& supported : supportedExtensions)
+            if (supported == extention) { deviceExtentions.push_back(extention); break; }
     createInfo.enabledExtensionCount = (uint32_t)deviceExtentions.size(); 
     createInfo.ppEnabledExtensionNames = deviceExtentions.data();
 
@@ -656,6 +613,8 @@ void VulkanRHIBackend::CreateLogicalDevice()
     VkPhysicalDeviceVulkan12Features vulkan12Features{};                                        //1.2版本的其他支持
     vulkan12Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
     vulkan12Features.samplerFilterMinmax = VK_TRUE;                                             //采样器的过滤模式，用于Hiz
+    vulkan12Features.timelineSemaphore = VK_TRUE;                                               //时间线信号量（RDG多队列跨队列同步用，1.2核心）
+    vulkan12Features.hostQueryReset = VK_TRUE;                                                  //host侧重置查询池（诊断时间戳复用，1.2核心）
                                                                                                 //bindless支持，描述符索引
     vulkan12Features.runtimeDescriptorArray = VK_TRUE;                                          //SPIR-V 中使用动态数组
     vulkan12Features.descriptorBindingVariableDescriptorCount = VK_TRUE;                        //DescriptorSet Layout 的 Binding 中使用可变大小的 AoD
@@ -735,23 +694,31 @@ void VulkanRHIBackend::CreateLogicalDevice()
 
 void VulkanRHIBackend::CreateQueues()
 {
-    std::vector<uint32_t> offsets(queueFamilyProperties.size(), {0}) ;
+    // offsets 必须按【族】索引（原实现按队列类型索引——三类型映射到同族时会取到同一批
+    // VkQueue句柄，异步队列与graphics队列完全别名）。同族多类型各自取得族内不同的队列索引；
+    // 族内请求队列数不足时按 allocatedQueueCounts 取模别名（合法，仅串行化，且族相等会正确抑制跨队列所有权转移的发射）
+    
+    // 每个队列族各自已分配的队列数，同时也是该族下一次分配队列的索引
+    std::vector<uint32_t> offsets(queueFamilyProperties.size(), 0);
     for (uint32_t i = 0; i < QUEUE_TYPE_MAX_ENUM; i++)
     {
         for(uint32_t j = 0; j < MAX_QUEUE_CNT; j++)
         {
-            VkQueue queue;
-            vkGetDeviceQueue(logicalDevice, queueIndices[i], offsets[i], &queue);
+            const uint32_t family = queueIndices[i];
+            // 限制在 allocatedQueueCounts[family] 内循环取模，保证超分时同族内取别名
+            const uint32_t slot = offsets[family] % allocatedQueueCounts[family];
+            offsets[family]++;
 
-            RHIQueueInfo info = 
+            VkQueue queue;
+            vkGetDeviceQueue(logicalDevice, family, slot, &queue);
+
+            RHIQueueInfo info =
             {
                 .type = (QueueType)i,
                 .index = j,
             };
-            queues[i][j] = std::make_shared<VulkanRHIQueue>(info, queue, queueIndices[i]);
+            queues[i][j] = std::make_shared<VulkanRHIQueue>(info, queue, family);
             RegisterResource(queues[i][j]);
-
-            offsets[i]++;
         }
     }
 }
@@ -846,23 +813,58 @@ void VulkanRHIBackend::CreateImmediateCommand()
 }
 
 
-void TextureBarrier(VkCommandBuffer commandBuffer, const RHITextureBarrier& barrier)
+void TextureBarrier(VkCommandBuffer commandBuffer, const RHITextureBarrier& barrier, uint32_t queueFamilyIndex = RHI_QUEUE_FAMILY_IGNORED)
 {
     TextureSubresourceRange range = barrier.subresource;
     if (range.aspect == TEXTURE_ASPECT_NONE) range = barrier.texture->GetDefaultSubresourceRange();
 
-    VkAccessFlags srcAccessMask = VulkanUtil::ResourceStateToAccessFlags(barrier.srcState);
-    VkAccessFlags dstAccessMask = VulkanUtil::ResourceStateToAccessFlags(barrier.dstState);
-    VkPipelineStageFlags srcStage = VulkanUtil::AccessFlagsToPipelineStageFlags(srcAccessMask);
-    VkPipelineStageFlags dstStage = VulkanUtil::AccessFlagsToPipelineStageFlags(dstAccessMask);
+    // queueFlags：IGNORED→图形族位；否则取录制队列族能力位。
+    // 推导函数本身已按队列能力裁剪stage/access：非图形族上不会带图形专属stage
+    // （如compute族命令缓冲里SRV读只落COMPUTE/RT，不带VERTEX/FRAGMENT位）
+    const VkQueueFlags queueFlags = queueFamilyIndex != RHI_QUEUE_FAMILY_IGNORED
+        ? Backend()->GetQueueFamilyProperties()[queueFamilyIndex].queueFlags
+        : VK_QUEUE_GRAPHICS_BIT;
+
+    VkAccessFlags srcAccessMask = VulkanUtil::ResourceStateToAccessFlags(barrier.srcState, queueFlags);
+    VkAccessFlags dstAccessMask = VulkanUtil::ResourceStateToAccessFlags(barrier.dstState, queueFlags);
+    VkPipelineStageFlags srcStage = VulkanUtil::AccessFlagsToPipelineStageFlags(srcAccessMask, queueFlags);
+    VkPipelineStageFlags dstStage = VulkanUtil::AccessFlagsToPipelineStageFlags(dstAccessMask, queueFlags);
 
     // srcStage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;   // 可以保证绝对不会出错
     // dstStage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;   // 目前验证层VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT还是会有一些报错，太难调了
 
+    // UNDEFINED源侧（帧首UNDEFINED→X转移）：srcAccess=NONE不与上一帧的写建立内存依赖——
+    // 布局合法（丢弃语义）但sync validation实证为WAW缺口（上帧Editor UI写深度 vs 本帧Depth Copy
+    // 帧首转移）。保守全量：等待之前全部工作再执行转移
+    if (barrier.srcState == RESOURCE_STATE_UNDEFINED)
+    {
+        srcStage = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        srcAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
+    }
+    // PRESENT侧（转入PRESENT布局）：dstAccess=NONE经空access回落得TOP_OF_PIPE——转移完成点
+    // 早于一切后续（含present引擎读取）→PRESENT_AFTER_WRITE缺口。规范形态=BOTTOM_OF_PIPE；
+    // MEMORY读写双位保证对呈现引擎的写可用性（sync validation实证单READ位不足）
+    if (barrier.dstState == RESOURCE_STATE_PRESENT)
+    {
+        dstStage = VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT;
+        dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
+    }
+    if (barrier.srcState == RESOURCE_STATE_PRESENT)
+    {
+        srcStage = VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT;
+        srcAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
+    }
+    // 布局转移链的写-写衔接：转移本身=写，屏障src/dst一律带MEMORY读写位——同态acquire
+    // （SRV→SRV）的srcAccess=SHADER_READ-only不覆盖上一转移写的可用性（sync validation
+    // 实证：Depth的release转移链WRITE_RACING_WRITE）。图像屏障本就是全图可用性操作，
+    // 保守全量无可测代价
+    srcAccessMask |= VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
+    dstAccessMask |= VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
+
     VkImageMemoryBarrier memoryBarrier = {};
     memoryBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    memoryBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    memoryBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    memoryBarrier.srcQueueFamilyIndex = barrier.srcQueueFamily == RHI_QUEUE_FAMILY_IGNORED ? VK_QUEUE_FAMILY_IGNORED : barrier.srcQueueFamily;
+    memoryBarrier.dstQueueFamilyIndex = barrier.dstQueueFamily == RHI_QUEUE_FAMILY_IGNORED ? VK_QUEUE_FAMILY_IGNORED : barrier.dstQueueFamily;
     memoryBarrier.oldLayout = VulkanUtil::ResourceStateToImageLayout(barrier.srcState);
     memoryBarrier.newLayout = VulkanUtil::ResourceStateToImageLayout(barrier.dstState);
     memoryBarrier.image = ResourceCast(barrier.texture)->GetHandle();
@@ -876,19 +878,32 @@ void TextureBarrier(VkCommandBuffer commandBuffer, const RHITextureBarrier& barr
         0, nullptr,
         0, nullptr,
         1, &memoryBarrier);
+
 }
 
-void BufferBarrier(VkCommandBuffer commandBuffer, const RHIBufferBarrier& barrier)
+void BufferBarrier(VkCommandBuffer commandBuffer, const RHIBufferBarrier& barrier, uint32_t queueFamilyIndex = RHI_QUEUE_FAMILY_IGNORED)
 {
-    VkAccessFlags srcAccessMask = VulkanUtil::ResourceStateToAccessFlags(barrier.srcState);
-    VkAccessFlags dstAccessMask = VulkanUtil::ResourceStateToAccessFlags(barrier.dstState);
-    VkPipelineStageFlags srcStage = VulkanUtil::AccessFlagsToPipelineStageFlags(srcAccessMask);
-    VkPipelineStageFlags dstStage = VulkanUtil::AccessFlagsToPipelineStageFlags(dstAccessMask);
+    // queueFlags：IGNORED→图形族位（图形族直通=不裁剪）；否则取录制队列族能力位（同TextureBarrier）
+    const VkQueueFlags queueFlags = queueFamilyIndex != RHI_QUEUE_FAMILY_IGNORED
+        ? Backend()->GetQueueFamilyProperties()[queueFamilyIndex].queueFlags
+        : VK_QUEUE_GRAPHICS_BIT;
+
+    VkAccessFlags srcAccessMask = VulkanUtil::ResourceStateToAccessFlags(barrier.srcState, queueFlags);
+    VkAccessFlags dstAccessMask = VulkanUtil::ResourceStateToAccessFlags(barrier.dstState, queueFlags);
+    VkPipelineStageFlags srcStage = VulkanUtil::AccessFlagsToPipelineStageFlags(srcAccessMask, queueFlags);
+    VkPipelineStageFlags dstStage = VulkanUtil::AccessFlagsToPipelineStageFlags(dstAccessMask, queueFlags);
+
+    // UNDEFINED源侧与纹理同理（sync validation实证的WAW缺口——帧首转移须与上帧写建立内存依赖）
+    if (barrier.srcState == RESOURCE_STATE_UNDEFINED)
+    {
+        srcStage = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        srcAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
+    }
 
     VkBufferMemoryBarrier memoryBarrier = {};
     memoryBarrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
-    memoryBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    memoryBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    memoryBarrier.srcQueueFamilyIndex = barrier.srcQueueFamily == RHI_QUEUE_FAMILY_IGNORED ? VK_QUEUE_FAMILY_IGNORED : barrier.srcQueueFamily;
+    memoryBarrier.dstQueueFamilyIndex = barrier.dstQueueFamily == RHI_QUEUE_FAMILY_IGNORED ? VK_QUEUE_FAMILY_IGNORED : barrier.dstQueueFamily;
     memoryBarrier.srcAccessMask = srcAccessMask;
     memoryBarrier.dstAccessMask = dstAccessMask;
     memoryBarrier.buffer = ResourceCast(barrier.buffer)->GetHandle();
@@ -1045,8 +1060,6 @@ void GenerateMips(VkCommandBuffer commandBuffer, RHITextureRef src)
     }
 }
 
-
-
 VulkanRHICommandContext::VulkanRHICommandContext(RHICommandPoolRef pool, const VulkanRHIBackend& backend)
 : RHICommandContext(pool)
 {
@@ -1071,6 +1084,7 @@ void VulkanRHICommandContext::Destroy()
 
 void VulkanRHICommandContext::BeginCommand()
 {
+
     vkResetCommandBuffer(handle, 0);
 
     VkCommandBufferBeginInfo beginInfo = {};
@@ -1088,89 +1102,101 @@ void VulkanRHICommandContext::EndCommand()
     }
 }
 
-void VulkanRHICommandContext::Execute(RHIFenceRef fence, RHISemaphoreRef waitSemaphore, RHISemaphoreRef signalSemaphore)
+void VulkanRHICommandContext::Submit(const RHIQueueSubmitBatch& batch, const std::vector<RHICommandContextRef>& contexts)
 {
-    VkPipelineStageFlags stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT;   
-    VkFence signalFence = VK_NULL_HANDLE;
+    std::shared_ptr<VulkanRHIQueue> queue = ResourceCast(batch.queue);
 
-    VkSubmitInfo submitInfo = {};
-    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &handle;
-
-    if (fence != nullptr)
-    {
-        signalFence = ResourceCast(fence)->GetHandle();
-    }
-    if (waitSemaphore != nullptr)
-    {  
-        submitInfo.waitSemaphoreCount = 1;
-        submitInfo.pWaitSemaphores = &ResourceCast(waitSemaphore)->GetHandle();
-        submitInfo.pWaitDstStageMask = &stage;
-    }
-    if (signalSemaphore != nullptr)
-    {
-        submitInfo.signalSemaphoreCount = 1;
-        submitInfo.pSignalSemaphores = &ResourceCast(signalSemaphore)->GetHandle();
-    }
-
-    if (vkQueueSubmit(ResourceCast(pool->GetQueue())->GetHandle(), 1, &submitInfo, signalFence) != VK_SUCCESS)
-    {
-        LOG_FATAL("Failed to submit command buffer!");
-    }
-}
-
-void VulkanRHICommandContext::ExecuteBatch(const std::vector<RHICommandContextRef>& contexts, RHIFenceRef fence, RHISemaphoreRef waitSemaphore, RHISemaphoreRef signalSemaphore)
-{
-    if (contexts.empty()) return;
-
-    // 收集各context的VkCommandBuffer（须全部来自同一pool即同一队列），按序单次提交——
-    // 同一次vkQueueSubmit中的多个primary command buffer按数组顺序执行，语义等价于单buffer串接
-    std::vector<VkCommandBuffer> buffers;
-    buffers.reserve(contexts.size());
+    // 收集命令缓冲（contexts须全部来自目标队列族的pool；空contexts=空提交，仅做信号量中继/帧尾收口）
+    std::vector<VkCommandBufferSubmitInfo> commandBufferInfos;
+    commandBufferInfos.reserve(contexts.size());
     for (const RHICommandContextRef& context : contexts)
     {
-        buffers.push_back(static_cast<VulkanRHICommandContext*>(context.get())->GetHandle());
+        VkCommandBufferSubmitInfo commandInfo{};
+        commandInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
+        commandInfo.commandBuffer = static_cast<VulkanRHICommandContext*>(context.get())->GetHandle();
+        commandBufferInfos.push_back(commandInfo);
     }
 
-    VkPipelineStageFlags stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT;
-    VkFence signalFence = VK_NULL_HANDLE;
+    // wait stage由waitState推导，再按目标队列族能力裁剪（compute族不能带图形专属stage）
+    const VkQueueFlags queueFlags = Backend()->GetQueueFamilyProperties()[queue->GetQueueFamilyIndex()].queueFlags;
+    std::vector<VkSemaphoreSubmitInfo> waitInfos;
+    waitInfos.reserve(batch.waits.size());
+    for (const RHISemaphoreWaitInfo& wait : batch.waits)
+    {
+        if (wait.semaphore == nullptr) continue;
 
-    VkSubmitInfo submitInfo = {};
-    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submitInfo.commandBufferCount = static_cast<uint32_t>(buffers.size());
-    submitInfo.pCommandBuffers = buffers.data();
+        VkPipelineStageFlags2 stage = 0;
+        if (wait.isTimeline)
+        {
+            // 同步点/跨帧链/join的timeline wait=批次级同步：掩码必须覆盖本批【一切】可能的访问阶段。
+            // 单一资源to_state推导会漏阶段（sync validation实证：SSIS合并点只带一个资源的态，
+            // Forward的深度附件读在EARLY_FRAGMENT_TESTS、被COLOR-only掩码漏掉→READ_AFTER_WRITE）。
+            // 批次本来就整批等待，ALL_COMMANDS无性能损失
+            stage = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        }
+        else if (wait.waitState == RESOURCE_STATE_UNDEFINED)
+        {
+            // UNDEFINED=宽掩码约定：兼容旧Execute/ExecuteBatch的固定stage（如swapchain acquire）；
+            // 手动按队列能力门控——COLOR_ATTACHMENT_OUTPUT仅图形族有效，compute/transfer任何族都有效
+            stage = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT |
+                    VK_PIPELINE_STAGE_2_TRANSFER_BIT;
+            if (queueFlags & VK_QUEUE_GRAPHICS_BIT)
+                stage |= VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+        }
+        else
+        {
+            stage = VulkanUtil::AccessFlagsToPipelineStageFlags(
+                VulkanUtil::ResourceStateToAccessFlags(wait.waitState, queueFlags), queueFlags);
+        }
 
-    if (fence != nullptr)
-    {
-        signalFence = ResourceCast(fence)->GetHandle();
-    }
-    if (waitSemaphore != nullptr)
-    {
-        submitInfo.waitSemaphoreCount = 1;
-        submitInfo.pWaitSemaphores = &ResourceCast(waitSemaphore)->GetHandle();
-        submitInfo.pWaitDstStageMask = &stage;
-    }
-    if (signalSemaphore != nullptr)
-    {
-        submitInfo.signalSemaphoreCount = 1;
-        submitInfo.pSignalSemaphores = &ResourceCast(signalSemaphore)->GetHandle();
+        VkSemaphoreSubmitInfo waitInfo{};
+        waitInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
+        waitInfo.semaphore = ResourceCast(wait.semaphore)->GetHandle();
+        waitInfo.stageMask = stage;
+        waitInfo.value = wait.value;        // binary信号量忽略value
+        waitInfos.push_back(waitInfo);
     }
 
-    if (vkQueueSubmit(ResourceCast(pool->GetQueue())->GetHandle(), 1, &submitInfo, signalFence) != VK_SUCCESS)
+    std::vector<VkSemaphoreSubmitInfo> signalInfos;
+    signalInfos.reserve(batch.signals.size());
+    for (const RHISemaphoreSubmitInfo& signal : batch.signals)
     {
-        LOG_FATAL("Failed to submit command buffers!");
+        if (signal.semaphore == nullptr) continue;
+
+        VkSemaphoreSubmitInfo signalInfo{};
+        signalInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
+        signalInfo.semaphore = ResourceCast(signal.semaphore)->GetHandle();
+        signalInfo.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        signalInfo.value = signal.value;
+        signalInfos.push_back(signalInfo);
+    }
+
+    VkSubmitInfo2 submitInfo{};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
+    submitInfo.commandBufferInfoCount = static_cast<uint32_t>(commandBufferInfos.size());
+    submitInfo.pCommandBufferInfos = commandBufferInfos.data();
+    submitInfo.waitSemaphoreInfoCount = static_cast<uint32_t>(waitInfos.size());
+    submitInfo.pWaitSemaphoreInfos = waitInfos.data();
+    submitInfo.signalSemaphoreInfoCount = static_cast<uint32_t>(signalInfos.size());
+    submitInfo.pSignalSemaphoreInfos = signalInfos.data();
+
+    VkFence signalFence = batch.signalFence != nullptr ? ResourceCast(batch.signalFence)->GetHandle() : VK_NULL_HANDLE;
+
+
+    if (vkQueueSubmit2(queue->GetHandle(), 1, &submitInfo, signalFence) != VK_SUCCESS)
+    {
+        LOG_FATAL("Failed to submit queue batch!");
     }
 }
 
 void VulkanRHICommandContext::TextureBarrier(const RHITextureBarrier& barrier)
 {
-    ::TextureBarrier(handle, barrier);
+    ::TextureBarrier(handle, barrier, ResourceCast(pool->GetQueue())->GetFamilyIndex());
 }
 
 void VulkanRHICommandContext::BufferBarrier(const RHIBufferBarrier& barrier)
 {
-    ::BufferBarrier(handle, barrier);
+    ::BufferBarrier(handle, barrier, ResourceCast(pool->GetQueue())->GetFamilyIndex());
 }
 
 void VulkanRHICommandContext::CopyTextureToBuffer(RHITextureRef src, TextureSubresourceLayers srcSubresource, RHIBufferRef dst, uint64_t dstOffset)

@@ -1,0 +1,3 @@
+# 验证层设置：关闭重复消息去重（默认同一条消息只上报约10次即抑制，
+# 会掩盖每帧真实错误数）。取证时通过 VK_LAYER_SETTINGS_PATH 指向本文件。
+khronos_validation.duplicate_message_limit = 1000000

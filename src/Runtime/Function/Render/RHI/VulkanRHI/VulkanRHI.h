@@ -83,7 +83,10 @@ public:
 
     virtual RHIFenceRef CreateFence(bool signaled = false) override final;
 
-    virtual RHISemaphoreRef CreateSemaphore() override final;
+    virtual RHISemaphoreRef CreateSemaphore(bool isTimeline, uint64_t initialValue = 0) override final;
+
+    // 渲染查询（GPU侧逐pass统计，实现见VulkanRHIResource.cpp的VulkanRHIRenderQuery）
+    virtual RHIRenderQueryRef CreateRenderQuery(const RHIRenderQueryInfo& info) override final;
 
     //立即模式的命令接口 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -98,6 +101,7 @@ public:
     inline VkDevice GetLogicalDevice() const            { return logicalDevice; }
     inline VmaAllocator GetMemoryAllocator() const      { return memoryAllocator; }
     inline VkDescriptorPool GetDescriptorPool() const   { return descriptorPool; }
+    inline const std::vector<VkQueueFamilyProperties>& GetQueueFamilyProperties() const { return queueFamilyProperties; }
 
     VkPhysicalDeviceRayTracingPipelinePropertiesKHR GetRayTracingPipelineProperties() { return rayTracingPipelineProperties; }
 
@@ -122,7 +126,8 @@ private:
 
     // 队列
     std::vector<VkQueueFamilyProperties> queueFamilyProperties;
-    std::array<int32_t, QUEUE_TYPE_MAX_ENUM> queueIndices;
+	std::array<int32_t, QUEUE_TYPE_MAX_ENUM> queueIndices; // 每类型对应的族索引（-1表示未分配）
+    std::vector<uint32_t> allocatedQueueCounts;   // 每族实际向设备请求的队列数（CreateQueues取模上限）
     std::array<std::array<RHIQueueRef, MAX_QUEUE_CNT>, QUEUE_TYPE_MAX_ENUM> queues; //预创建的所有队列
 
     // 内存分配
@@ -164,9 +169,7 @@ public:
 
 	virtual void EndCommand() override final;
 
-    virtual void Execute(RHIFenceRef fence, RHISemaphoreRef waitSemaphore, RHISemaphoreRef signalSemaphore) override final;
-
-    virtual void ExecuteBatch(const std::vector<RHICommandContextRef>& contexts, RHIFenceRef fence, RHISemaphoreRef waitSemaphore, RHISemaphoreRef signalSemaphore) override final;   
+    virtual void Submit(const RHIQueueSubmitBatch& batch, const std::vector<RHICommandContextRef>& contexts) override final;
 
     virtual void TextureBarrier(const RHITextureBarrier& barrier) override final;
 
@@ -240,6 +243,7 @@ public:
     virtual void ImGuiRenderDrawData(ImGuiDrawFunc func) override final;
 
     const VkCommandBuffer& GetHandle() { return handle; }
+
 
 private:
     VkCommandBuffer handle;

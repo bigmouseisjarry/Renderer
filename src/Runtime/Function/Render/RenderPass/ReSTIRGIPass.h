@@ -77,5 +77,10 @@ private:
     };
 
     Buffer<RestirGISetting> restirSettingBuffer;
-    ArrayBuffer<GIReservoir, WINDOW_WIDTH * WINDOW_HEIGHT> reservoirsBuffer[3] = {};
+    // TODO:瘦身方案里面这里要统一一下风格，不可以这个直接写
+// GI降采样率（单一事实源：cpp与shader侧restir_gi/include/common.glsl须与此一致）：
+// reservoir三缓冲432MB→108MB，避免6GB显存95%+占用触发WDDM驱逐（被驱逐pass走PCIe慢20-40倍）
+#define WIDTH_DOWNSAMPLE_RATE 2
+#define HEIGHT_DOWNSAMPLE_RATE 2
+    ArrayBuffer<GIReservoir, WINDOW_WIDTH * WINDOW_HEIGHT / (WIDTH_DOWNSAMPLE_RATE * HEIGHT_DOWNSAMPLE_RATE)> reservoirsBuffer[3] = {};
 };

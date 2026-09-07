@@ -132,9 +132,10 @@ void PassBindingPhase::allocate_resources(RDGDependencyGraphRef graph)
             return;
         }
 
-        auto pooledTexture = RDGTexturePool::Get()->Allocate(textureNode->info);
+        auto pooledTexture = RDGTexturePool::Get(EngineContext::ThreadPool()->ThreadFrameIndex())->Allocate(textureNode->info);
         textureNode->texture = pooledTexture.texture;
         textureNode->initState = pooledTexture.state;
+        textureNode->initFamily = pooledTexture.queueFamily;    // 池化跨帧归属族（阶段7帧首acquire判定）
         // 同步解析后的info：节点声明里 mipLevels=0 表示自动推导，池内创建时被解析为实际值
         // （如 extent.MipSize()），必须回写节点，否则下游（如屏障生成的subresource跟踪器）会维度错配
         textureNode->info = pooledTexture.texture->GetInfo();
@@ -149,7 +150,7 @@ void PassBindingPhase::allocate_resources(RDGDependencyGraphRef graph)
             return;
         }
 
-        auto pooledBuffer = RDGBufferPool::Get()->Allocate(bufferNode->info);
+        auto pooledBuffer = RDGBufferPool::Get(EngineContext::ThreadPool()->ThreadFrameIndex())->Allocate(bufferNode->info);
         bufferNode->buffer = pooledBuffer.buffer;
         bufferNode->initState = pooledBuffer.state;
         // 同理：池可能返回size更大的buffer，同步为物理资源实际的info
@@ -266,7 +267,7 @@ void PassBindingPhase::prepare_descriptor_sets(RDGDependencyGraphRef graph)
 
             if (edge->IsOutput()) return;    // 作为output声明时不需要view
 
-            RHITextureViewRef view = RDGTextureViewPool::Get()->Allocate({
+            RHITextureViewRef view = RDGTextureViewPool::Get(EngineContext::ThreadPool()->ThreadFrameIndex())->Allocate({
             .texture = texture->texture,    // Step1 已完成集中分配
             .format = texture->info.format,
             .viewType = edge->viewType,
@@ -278,7 +279,7 @@ void PassBindingPhase::prepare_descriptor_sets(RDGDependencyGraphRef graph)
             if (edge->asColor || edge->asDepthStencil)
             {
 
-                //RHITextureViewRef view = RDGTextureViewPool::Get()->Allocate({
+                //RHITextureViewRef view = RDGTextureViewPool::Get(EngineContext::ThreadPool()->ThreadFrameIndex())->Allocate({
                 //.texture = texture->texture,
                 //.format = texture->info.format,
                 //.viewType = edge->viewType,

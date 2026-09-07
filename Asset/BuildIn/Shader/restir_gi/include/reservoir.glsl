@@ -19,9 +19,26 @@ struct GIReservoir
 	uint numStreamSamples;		// 已处理的采样总数，M 
 };
 
-uint ReservoirIndex(ivec2 pixel)	// 降分辨率像素到reservoir的索引
+// 防护：全有限性检查——NaN/±Inf与任何数的比较都是false，单个lessThan表达式同时拦截两者。
+// 用于跨帧反馈数据（重投影输出、历史reservoir）的消毒
+bool IsFiniteVec3(vec3 v)
 {
-	return pixel.y * int(WINDOW_WIDTH / WIDTH_DOWNSAMPLE_RATE) + pixel.x;
+	return all(lessThan(abs(v), vec3(1e30f)));
+}
+
+// 防护：reservoir有效性——w<=0（空/被清理）或采样位置非有限（越界读/历史毒化）=坏数据，
+// 调用方应视作"无历史/无邻居"丢弃，杜绝坏hitPos流入RayQuery（NaN射线无法被BVH剪枝，
+// 全树遍历——实测会把temporal/spatial reuse从3ms放大到80/34ms并经反馈环永久保持）
+bool IsGIReservoirValid(GIReservoir res)
+{
+	return res.w > 0.0f && res.numStreamSamples > 0 && IsFiniteVec3(res.sampl.hitPos);
+}
+
+uint ReservoirIndex(ivec2 pixel)	// 降分辨率像素到reservoir的索引（钳制到范围内——垃圾坐标防越界）
+{
+	ivec2 clamped = clamp(pixel, ivec2(0),
+		ivec2(int(WINDOW_WIDTH / WIDTH_DOWNSAMPLE_RATE) - 1, int(WINDOW_HEIGHT / HEIGHT_DOWNSAMPLE_RATE) - 1));
+	return clamped.y * int(WINDOW_WIDTH / WIDTH_DOWNSAMPLE_RATE) + clamped.x;
 }
 
 void CleanGIReservoir(inout GIReservoir res)

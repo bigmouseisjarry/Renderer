@@ -3,6 +3,7 @@
 #include "RHIStructs.h"
 #include "RHICommandList.h"
 #include "Platform/HAL/Mutex.h"
+#include "Platform/HAL/ScopeLock.h"
 #include "Platform/HAL/PlatformProcess.h"
 
 #include <cstdint>
@@ -37,12 +38,17 @@ private:
 class RHIQueue : public RHIResource
 {
 public:
-	RHIQueue(const RHIQueueInfo& info) 
+	RHIQueue(const RHIQueueInfo& info)
 	: RHIResource(RHI_QUEUE)
 	, info(info)
 	{}
 
 	virtual void WaitIdle() = 0;
+
+	// 队列族索引——RDG层判定跨队列资源是否需要所有权转移（release/acquire）用
+	virtual uint32_t GetFamilyIndex() const = 0;
+
+	inline QueueType GetQueueType() const { return info.type; }
 
 protected:
 	RHIQueueInfo info;
@@ -86,7 +92,10 @@ public:
 	{}
 
 	RHICommandListRef CreateCommandList(bool byPass = true);
-	
+
+	// 池绑定的队列（list 归属队列的显式化入口：构造提交批次/一致性断言用）
+	inline RHIQueueRef GetQueue() const { return info.queue; }
+
 protected:
 	RHICommandPoolInfo info;
 
@@ -97,7 +106,12 @@ protected:
 	MutexRef sync;
 
 	// 将一个RHICommandList中包裹的Context返回到池中，由RHICommandList在析构时调用
-	void ReturnToPool(RHICommandContextRef commandContext) { idleContexts.push(commandContext); }
+	// （与CreateCommandList的取出对称加锁——多线程析构list时idleContexts是共享数据）
+	void ReturnToPool(RHICommandContextRef commandContext)
+	{
+		ScopeLock lock(sync);
+		idleContexts.push(commandContext);
+	}
 	friend class RHICommandList;
 };
 
@@ -332,8 +346,35 @@ class RHISemaphore : public RHIResource
 {
 public:
 	RHISemaphore()
-	: RHIResource(RHI_SEMAPHORE) 
+	: RHIResource(RHI_SEMAPHORE)
 	{}
+};
+
+// 渲染查询——GPU侧逐pass统计的采集与回读载体。RenderSystem在init期创建并跨帧持有，
+// 每帧经RDGPerFrameResource传入RDG流水线（PassExecutionPhase录制期打点），
+// 帧首fence等待后由RenderSystem调ResolveFrame回读输出。enable语义见RHIRenderQueryInfo
+class RHIRenderQuery : public RHIResource
+{
+public:
+	RHIRenderQuery(const RHIRenderQueryInfo& info)
+	: RHIResource(RHI_RENDER_QUERY)
+	, info(info)
+	{}
+
+	inline const RHIRenderQueryInfo& GetInfo() const { return info; }
+
+	// 录制期打点：pass末尾GPU时间戳（slot=帧槽，queueIndex=队列下标，index=该队列流内pass下标——
+	// worker并行录制时下标天然确定，无分配竞态；查询池按(槽,队列)二维分区，各流索引互不冲突）。
+	// 默认空实现（仅Vulkan后端支持；须在BeginCommand后的录制中调用）
+	virtual void WriteTimestamp(RHICommandListRef command, uint32_t slot, uint32_t queueIndex,
+		uint32_t index, const std::string& passName) {}
+
+	// 帧首回读（fence->Wait()后调用，此时上一帧GPU工作已全部完成）：按info中enable的项
+	// 分派输出（enable_gpu_timing=逐pass耗时Top统计）。默认空实现
+	virtual void ResolveFrame(uint32_t slot) {}
+
+protected:
+	RHIRenderQueryInfo info;
 };
 
 //TODO RenderQuery	StagingBuffer用于拷贝GPU到CPU

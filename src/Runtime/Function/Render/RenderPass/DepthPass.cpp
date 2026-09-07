@@ -59,8 +59,13 @@ void DepthPass::Build(RDGBuilder& builder)
         .OutputRead(prevDepth)
         .Finish();
 
+    // 间接绘制命令buffer的虚拟依赖边（见GPUCullingPass的Import命名）：保证拓扑排序中culling先于本pass
+    std::string cmdIndex = " [" + std::to_string(MESH_DEPTH_PASS) + "][0]";
+
     RDGRenderPassHandle pass = builder.CreateRenderPass(GetName())
         .DepthStencil(depth, ATTACHMENT_LOAD_OP_CLEAR, ATTACHMENT_STORE_OP_STORE, 1.0f, 0)
+        .Dependency(builder.GetBuffer("Mesh Draw Commands" + cmdIndex))
+        .Dependency(builder.GetBuffer("Clusrter Draw Commands" + cmdIndex))
         .Execute([&](RDGPassContext context) {
 
             Extent2D windowExtent = EngineContext::Render()->GetWindowsExtent();

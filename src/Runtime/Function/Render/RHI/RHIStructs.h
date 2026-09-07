@@ -7,16 +7,19 @@
 #include <unordered_set>
 #include <vector>
 
-#define MAX_QUEUE_CNT 2					//每个队列族的最大队列数目
+#define MAX_QUEUE_CNT 3					//每个队列族的最大队列数目
+#define RHI_QUEUE_FAMILY_IGNORED 0xFFFFFFFF	//无队列族归属（映射到VK_QUEUE_FAMILY_IGNORED）
 #define MAX_RENDER_TARGETS 8			//允许同时绑定的最大RT数目
 #define MAX_SHADER_IN_OUT_VARIABLES 8	//允许着色器最大的输入和输出变量数目
 #define MAX_DESCRIPTOR_SETS 8			//允许绑定的最大描述符集数目
 
-// CommandContext与命令缓冲区目前处于一对一的关系
+// CommandContext与命令缓冲区处于一对一的关系（录制侧单位）
 using RHICommandContextImmediateRef = std::shared_ptr<class RHICommandContextImmediate> ;
 using RHICommandContextRef = std::shared_ptr<class RHICommandContext> ;
 
-// CommandList与CommandContext目前处于一对一的关系
+// CommandList与CommandContext处于一对一的关系（录制侧单位）。
+// 注意：这只是录制的粒度——提交以RHIQueueSubmitBatch为单位（0..N个列表 + 显式目标队列），
+// 与一对一关系无关，队列归属不再从list/context/pool隐式推导
 using RHICommandListRef = std::shared_ptr<class RHICommandList>;
 using RHICommandListImmediateRef = std::shared_ptr<class RHICommandListImmediate>;
 
@@ -24,6 +27,7 @@ using RHIBackendRef = std::shared_ptr<class RHIBackend> ;
 using RHIResourceRef = std::shared_ptr<class RHIResource> ;
 using RHIBufferRef = std::shared_ptr<class RHIBuffer> ;
 using RHITextureRef = std::shared_ptr<class RHITexture> ;
+using RHIRenderQueryRef = std::shared_ptr<class RHIRenderQuery> ;
 using RHITextureViewRef = std::shared_ptr<class RHITextureView> ;
 using RHISamplerRef = std::shared_ptr<class RHISampler> ;
 using RHIShaderRef = std::shared_ptr<class RHIShader> ;
@@ -72,8 +76,19 @@ enum RHIResourceType : uint32_t	// 此处的倒序也是有效的析构顺序
 	RHI_COMMAND_CONTEXT_IMMEDIATE,
 	RHI_FENCE,
 	RHI_SEMAPHORE,
+	RHI_RENDER_QUERY,
 
 	RHI_RESOURCE_TYPE_MAX_CNT,	//
+};
+
+// 渲染查询配置——RenderSystem在init期创建RHIRenderQuery时填写并持有，enable位决定
+// 每帧采集与回读的内容（与CommandRecordingConfig的开关是两个独立结构体，录制侧共同判定）
+struct RHIRenderQueryInfo
+{
+	bool enable_gpu_timing = false;                // 逐pass GPU时间戳采集与回读
+	uint32_t timing_slot_count = 2;                // 帧槽数,也可以说是最大并行帧数
+	uint32_t timing_queue_count = 1;               // 每槽内的队列数（查询池按(槽,队列)二维分区——多队列时各各队列的流索引都从0起）
+	uint32_t timing_queries_per_queue = 256;       // 每队列子区间打点上限（须≥该队列每帧pass数）
 };
 
 enum QueueType : uint32_t
@@ -1423,7 +1438,7 @@ struct RHIRayTracingPipelineInfo
 
 };
 
-struct RHIBufferBarrier 
+struct RHIBufferBarrier
 {
     RHIBufferRef buffer;
     RHIResourceState srcState;
@@ -1432,6 +1447,9 @@ struct RHIBufferBarrier
 	uint32_t offset = 0;
 	uint32_t size = 0;
 
+	// 队列族所有权转移（release/acquire对）
+	uint32_t srcQueueFamily = RHI_QUEUE_FAMILY_IGNORED;
+	uint32_t dstQueueFamily = RHI_QUEUE_FAMILY_IGNORED;
 };
 
 struct RHITextureBarrier
@@ -1442,4 +1460,45 @@ struct RHITextureBarrier
 
 	TextureSubresourceRange subresource = {};	// 此时取texture的默认range
 
+	// 队列族所有权转移（release/acquire对）
+	uint32_t srcQueueFamily = RHI_QUEUE_FAMILY_IGNORED;
+	uint32_t dstQueueFamily = RHI_QUEUE_FAMILY_IGNORED;
+};
+
+//多队列提交 ////////////////////////////////////////////////////////////////////////////////////////////////////////
+// 信号量signal项
+struct RHISemaphoreSubmitInfo
+{
+	RHISemaphoreRef semaphore = nullptr;
+	uint64_t value = 0;					
+	bool isTimeline = false;
+};
+
+// 信号量wait项：waitState映射为该wait的pipeline stage mask（后端按等待队列族能力裁剪）
+struct RHISemaphoreWaitInfo
+{
+	RHISemaphoreRef semaphore = nullptr;
+	uint64_t value = 0;					
+	bool isTimeline = false;
+	RHIResourceState waitState = RESOURCE_STATE_UNDEFINED;
+};
+
+// 单个提交批次（唯一提交单元，三种运行模式统于此）：commandLists的归属队列族须与queue一致
+// （RHICommandList::Submit内断言）；数组序=执行序（一次提交内多个primary buffer按序执行，语义等价单buffer串接）。
+// commandLists可为空——空提交合法（纯信号量中继/帧尾合批）。
+// 每命令流独立pool是VkCommandPool外部同步隔离的刻意选择（并行录制安全），
+struct RHIQueueSubmitBatch
+{
+	RHIQueueRef queue = nullptr;
+	std::vector<RHICommandListRef> commandLists;
+
+	std::vector<RHISemaphoreWaitInfo> waits;		// 首条命令前等待
+	std::vector<RHISemaphoreSubmitInfo> signals;	// 末条命令后发信
+
+	RHIFenceRef signalFence = nullptr;			// 可选：批完成时signal（CPU侧帧同步）
+};
+
+struct RHIQueueSubmitPlan
+{
+	std::vector<RHIQueueSubmitBatch> batches;	// 数组序=提交序
 };

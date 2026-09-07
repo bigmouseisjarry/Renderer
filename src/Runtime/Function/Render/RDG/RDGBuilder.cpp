@@ -573,6 +573,23 @@ RDGRenderPassBuilder& RDGRenderPassBuilder::OutputRead(RDGTextureHandle texture,
     return *this;
 }
 
+RDGRenderPassBuilder& RDGRenderPassBuilder::Dependency(RDGBufferHandle buffer)
+{
+    // 无描述符的读向依赖边：声明本pass以间接命令读取该buffer（DrawIndirect不走描述符），
+    // 不参与描述符绑定（绑定阶段按NO_DESCRIPTOR_SET跳过），但进入依赖分析与屏障跟踪——
+    // 拓扑排序据此保证生产者pass（如GPU Culling）先于本pass
+    if (buffer.ID() == UINT64_MAX) return *this;    // 生产者pass未构建（被禁用等），GetBuffer已警告
+
+    RDGBufferEdgeRef edge = new RDGBufferEdge();
+    // TODO:这里这么写死不太对吧
+    edge->state = RESOURCE_STATE_INDIRECT_ARGUMENT;    // 与生产者OutputIndirectDraw的产出状态一致
+    edge->set = NO_DESCRIPTOR_SET;
+
+    graph->Link(graph->GetBufferNode(buffer.ID()), pass, edge);
+
+    return *this;
+}
+
 RDGRenderPassBuilder& RDGRenderPassBuilder::OutputReadWrite(RDGBufferHandle buffer, uint32_t offset, uint32_t size)
 {
     RDGBufferEdgeRef edge = new RDGBufferEdge();

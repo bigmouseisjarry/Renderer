@@ -14,8 +14,8 @@ QueueSchedule::~QueueSchedule() = default;
 void QueueSchedule::reset_for_frame()
 {
     all_queues.clear();
-    schedule_result.queue_schedules.clear();            
-    schedule_result.pass_queue_assignments.clear();     
+    schedule_result.queue_schedules.clear();
+    schedule_result.pass_queue_assignments.clear();
     // 注：schedule_result.all_queues 是指向成员 all_queues 的 span，本帧由
     // assign_passes_to_queues 重新赋值，reset 后悬空属预期（下游都在 Phase 3 完成后读取）
 }
@@ -37,67 +37,69 @@ void QueueSchedule::on_execute(RDGDependencyGraphRef graph, PerFrameCommonResour
     }
 }
 
+std::vector<RHIQueueRef> QueueSchedule::QueryConfiguredQueues(const QueueScheduleConfig& config)
+{
+    auto& Backend = EngineContext::RHI();
+    std::vector<RHIQueueRef> queues;
+
+    if (config.enable_graphic_queues)
+        for (uint32_t i = 0; i < config.enable_graphic_queues; ++i)
+            if (auto gfx_queue = Backend->GetQueue({ QUEUE_TYPE_GRAPHICS, i }))
+                queues.push_back(gfx_queue);
+
+    if (config.enable_async_compute_queues)
+        for (uint32_t i = 0; i < config.enable_async_compute_queues; ++i)
+            if (auto cmpt_queue = Backend->GetQueue({ QUEUE_TYPE_COMPUTE, i }))
+                queues.push_back(cmpt_queue);
+
+    if (config.enable_copy_queues)
+        for (uint32_t i = 0; i < config.enable_copy_queues; ++i)
+            if (auto cpy_queue = Backend->GetQueue({ QUEUE_TYPE_TRANSFER, i }))
+                queues.push_back(cpy_queue);
+
+    return queues;
+}
+
 void QueueSchedule::query_queue_capabilities(RDGDependencyGraphRef graph)
 {
-    // 清空队列信息（简化为单一数组）
-    uint32_t queue_index = 0;
-    auto Backend = EngineContext::RHI();
+    // 清空队列信息（简化为单一数组），队列集合由 QueryConfiguredQueues 统一决定
+    all_queues.clear();
+    const std::vector<RHIQueueRef> configured = QueryConfiguredQueues(config);
 
-    // 添加Graphics队列（总是存在）
-    if (auto gfx_queue = Backend->GetQueue({ QUEUE_TYPE_GRAPHICS, 0 })) {
-        all_queues.push_back(QueueInfo{
-            .type = ERenderGraphQueueType::Graphics,
-            .index = queue_index++,
-            .handle = gfx_queue,
-            .supports_graphics = true,
-            .supports_compute = true,
-            .supports_copy = true,
-            .supports_present = true
-            });
-    }
+    for (uint32_t queue_index = 0; queue_index < configured.size(); queue_index++)
+    {
+        const RHIQueueRef& handle = configured[queue_index];
 
-    // 添加AsyncCompute队列（多个）
-    if (config.enable_async_compute) {
-        for (uint32_t i = 0; i < config.max_async_compute_queues; ++i) {
-            if (auto cmpt_queue = Backend->GetQueue({ QUEUE_TYPE_COMPUTE, i })) {
-                all_queues.push_back(QueueInfo{
-                    .type = ERenderGraphQueueType::AsyncCompute,
-                    .index = queue_index++,
-                    .handle = cmpt_queue,
-                    .supports_compute = true,
-                    .supports_copy = true
-                    });
-            }
+        QueueInfo info{};
+        info.index = queue_index;
+        info.handle = handle;
+        info.family_index = handle->GetFamilyIndex();
+
+        // 能力位按RHI队列类型归位（graphics族全能；compute族无present；transfer族仅copy）
+        switch (handle->GetQueueType())
+        {
+        case QUEUE_TYPE_GRAPHICS:
+            info.type = ERenderGraphQueueType::Graphics;
+            info.supports_graphics = true;
+            info.supports_compute = true;
+            info.supports_copy = true;
+            info.supports_present = true;
+            break;
+        case QUEUE_TYPE_COMPUTE:
+            info.type = ERenderGraphQueueType::AsyncCompute;
+            info.supports_compute = true;
+            info.supports_copy = true;
+            break;
+        case QUEUE_TYPE_TRANSFER:
+            info.type = ERenderGraphQueueType::Copy;
+            info.supports_copy = true;
+            break;
+        default:
+            break;
         }
+
+        all_queues.push_back(info);
     }
-
-    // 添加Copy队列（多个）
-    if (config.enable_copy_queue) {
-        for (uint32_t i = 0; i < config.max_copy_queues; ++i) {
-            if (auto cpy_queue = Backend->GetQueue({ QUEUE_TYPE_TRANSFER, i })) {
-                all_queues.push_back(QueueInfo{
-                    .type = ERenderGraphQueueType::Copy,
-                    .index = queue_index++,
-                    .handle = cpy_queue,
-                    .supports_copy = true
-                    });
-            }
-        }
-    }
-
-    //// 简化的调试输出
-    //uint32_t graphics_count = 0, compute_count = 0, copy_count = 0;
-    //for (const auto& queue : all_queues) {
-    //    switch (queue.type) {
-    //    case ERenderGraphQueueType::Graphics: graphics_count++; break;
-    //    case ERenderGraphQueueType::AsyncCompute: compute_count++; break;
-    //    case ERenderGraphQueueType::Copy: copy_count++; break;
-    //    default: break;
-    //    }
-    //}
-
-    //ENGINE_LOG_INFO("QueueSchedule: Queue setup - Graphics: {}, AsyncCompute: {}, Copy: {}",
-    //    graphics_count, compute_count, copy_count);
 }
 
 // 给定一个 Pass，决定它希望在哪种类型的队列上执行。
@@ -114,7 +116,7 @@ ERenderGraphQueueType QueueSchedule::classify_pass(RDGPassNodeRef pass)
     }
 
     // 3. Copy Pass优先Copy队列（如果标记为可独立执行）
-    if (pass->NodeType() == RDGPassNodeType::RDG_PASS_NODE_TYPE_COPY && config.enable_copy_queue) {
+    if (pass->NodeType() == RDGPassNodeType::RDG_PASS_NODE_TYPE_COPY && config.enable_copy_queues) {
         //auto* copy_pass = static_cast<RDGCopyPassNodeRef>(pass);
         //if (copy_pass->get_can_be_lone()) {
         //    return ERenderGraphQueueType::Copy;
@@ -126,10 +128,34 @@ ERenderGraphQueueType QueueSchedule::classify_pass(RDGPassNodeRef pass)
     }
 
     // 4. Compute Pass仅基于手动标记
-    if (pass->NodeType() == RDGPassNodeType::RDG_PASS_NODE_TYPE_COMPUTE && config.enable_async_compute)
+    if (pass->NodeType() == RDGPassNodeType::RDG_PASS_NODE_TYPE_COMPUTE && config.enable_async_compute_queues)
     {
         if (!pass->has_flags(RDGPassFlags::ForceGraphicsQueue)) {
-            return ERenderGraphQueueType::AsyncCompute;
+//【诊断工具·已禁用】TOY_ASYNC_ALLOW环境变量白名单（bisection隔离用：管道分隔pass名子串，
+// 仅名单内compute pass上async队列）。如需隔离排查取消下方注释：
+//            // 【诊断】TOY_ASYNC_ALLOW：管道分隔的pass名子串白名单——仅名单内的compute pass去
+//            // AsyncCompute，其余回graphics（隔离二分用：找出哪组pass上compute队列产生布局失配）。
+//            // 未设置=全部去（现行為）；"none"=全不去
+//            static const std::string allowEnv = []() {
+//                const char* e = std::getenv("TOY_ASYNC_ALLOW");
+//                return e ? std::string(e) : std::string();
+//            }();
+//            if (allowEnv.empty()) return ERenderGraphQueueType::AsyncCompute;   // 现行为
+//            if (allowEnv == "none") return ERenderGraphQueueType::Graphics;
+//            const std::string name = pass->Name();
+//            size_t start = 0;
+//            while (start <= allowEnv.size()) {
+//                const size_t end = allowEnv.find('|', start);
+//                const std::string token = allowEnv.substr(start, (end == std::string::npos ? allowEnv.size() : end) - start);
+//                if (!token.empty() && name.find(token) != std::string::npos)
+//                    return ERenderGraphQueueType::AsyncCompute;
+//                if (end == std::string::npos) break;
+//                start = end + 1;
+//            }
+//            return ERenderGraphQueueType::Graphics;
+//        }
+//
+            return ERenderGraphQueueType::AsyncCompute;   // 现行为：全部compute pass上async队列
         }
     }
 

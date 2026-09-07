@@ -29,6 +29,10 @@ struct RDGBarrier
     uint32_t source_queue = 0;              // 队列索引（多队列提交期使用）
     uint32_t target_queue = 0;
 
+    // 队列族所有权转移（release/acquire对，仅纹理跨族时非IGNORED；buffer恒IGNORED——信号量覆盖可见性）
+    uint32_t src_family = RHI_QUEUE_FAMILY_IGNORED;
+    uint32_t dst_family = RHI_QUEUE_FAMILY_IGNORED;
+
     RHIResourceState before_state = RESOURCE_STATE_UNDEFINED;
     RHIResourceState after_state = RESOURCE_STATE_UNDEFINED;
 
@@ -82,7 +86,13 @@ struct BarrierGenerationConfig
 // 按 Phase 2 拓扑序遍历每个pass的 resource_accesses 生成转移屏障：
 //   先处理非output访问（屏障在pass之前发射），再处理output访问（屏障在pass之后发射），
 //   与旧路径 输入屏障 → pass → 输出屏障 的时序一致
-// should_barrier 规则：队列不同 / 状态变化 / UAV→UAV（同状态也需要写后读可见性）
+//
+// 族感知发射规则（多队列）：
+//   同队列        → 状态变化 / UAV→UAV（写后读可见性）时发转移屏障
+//   跨队列同族    → timeline信号量wait已建立执行+内存依赖，仅状态变化时发转移屏障（消费者侧）
+//   跨队列异族    → EXCLUSIVE纹理：生产者队列release（pass后）+ 消费者队列acquire（pass前）；
+//                   buffer族恒IGNORED，退化为同族规则（信号量覆盖可见性）
+//   帧首异族      → 池族≠目标族时acquire收回所有权（上一帧由fence隔断=隐式释放）
 //
 // Present/Copy 的pass内动态屏障（swapchain PRESENT循环、generateMip的mip链屏障）
 // 仍由执行期手工发射——它们发生在pass命令之间，访问记录粒度表达不了
@@ -103,6 +113,13 @@ public:
 
     // 下游查询：pass的屏障批次（无键即无屏障）
     const std::vector<BarrierBatch>* get_pass_barrier_batches(RDGPassNodeRef pass) const;
+    // 帧首跨族release集（归巢后 owner=graphics族，帧首首个使用者族G≠graphics时须在graphics流
+    // 起点先执行 release(0→G)，本列表即这些release；由Phase 8录进graphics prologue并配prologueDone信号量边）
+    const std::vector<RDGBarrier>& get_frame_start_releases() const { return frame_start_releases_; }
+    // 资源本帧的最终状态（tracker终态）——Phase 8归还池时记录此值而非边声明状态：
+    // 池化跨帧状态必须与GPU实际布局一致，否则下一帧initState错→漏屏障→layout错位
+    RHIResourceState get_final_texture_state(RDGTextureNodeRef texture) const;
+    RHIResourceState get_final_buffer_state(RDGBufferNodeRef buffer) const;
     const BarrierGenerationResult& get_result() const { return result_; }
 
     const void debug_info()const;
@@ -120,6 +137,7 @@ private:
         RDGPassNodeRef last_pass = nullptr;    // 上一次触碰的pass（跨队列判定用）
         uint32_t mip_levels = 1;
         uint32_t array_layers = 1;
+        uint32_t init_family = RHI_QUEUE_FAMILY_IGNORED;    // 帧首归属族（池化跨帧所有权，Phase 6分配时写入）
 
         inline size_t index(uint32_t mip, uint32_t layer) const { return static_cast<size_t>(mip) * array_layers + layer; }
     };
@@ -144,4 +162,5 @@ private:
     // 工作数据
     std::unordered_map<RDGTextureNodeRef, TextureStateTracker> texture_trackers_;
     std::unordered_map<RDGBufferNodeRef, BufferStateTracker> buffer_trackers_;
+    std::vector<RDGBarrier> frame_start_releases_;    // 帧首跨族release集（见get_frame_start_releases）
 };

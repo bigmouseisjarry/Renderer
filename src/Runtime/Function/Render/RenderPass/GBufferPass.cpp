@@ -183,6 +183,9 @@ void GBufferPass::Build(RDGBuilder& builder)
             .To(historyNormal)
             .Finish();
 
+        // 间接绘制命令buffer的虚拟依赖边（见GPUCullingPass的Import命名）：保证拓扑排序中culling先于本pass
+        std::string cmdIndex = " [" + std::to_string(MESH_G_BUFFER_PASS) + "][0]";
+
         RDGRenderPassHandle pass = builder.CreateRenderPass(GetName())
             .Color(0, diffuse, ATTACHMENT_LOAD_OP_CLEAR, ATTACHMENT_STORE_OP_STORE, {0.0f, 0.0f, 0.0f, 0.0f})
             .Color(1, normal, ATTACHMENT_LOAD_OP_CLEAR, ATTACHMENT_STORE_OP_STORE, {0.0f, 0.0f, 0.0f, 0.0f})
@@ -190,6 +193,8 @@ void GBufferPass::Build(RDGBuilder& builder)
             .Color(3, velocity, ATTACHMENT_LOAD_OP_CLEAR, ATTACHMENT_STORE_OP_STORE, {0.0f, 0.0f, 0.0f, 0.0f})
             .Color(4, objectID, ATTACHMENT_LOAD_OP_CLEAR, ATTACHMENT_STORE_OP_STORE, {0.0f, 0.0f, 0.0f, 0.0f})
             .DepthStencil(depth, ATTACHMENT_LOAD_OP_LOAD, ATTACHMENT_STORE_OP_STORE, 1.0f, 0)
+            .Dependency(builder.GetBuffer("Mesh Draw Commands" + cmdIndex))
+            .Dependency(builder.GetBuffer("Clusrter Draw Commands" + cmdIndex))
             .Execute([&](RDGPassContext context) {
 
                 Extent2D windowExtent = EngineContext::Render()->GetWindowsExtent();

@@ -75,20 +75,32 @@ void RenderSystem::InitBaseResource()
     surface       = backend->CreateSurface(window);
     queue         = backend->GetQueue({ QUEUE_TYPE_GRAPHICS, 0 });
     swapchain     = backend->CreateSwapChain({ surface, queue, FRAMES_IN_FLIGHT, surface->GetExetent(), COLOR_FORMAT });
+
+    // 队列调度配置：编译器与帧槽预建共用同一份（QueryConfiguredQueues按它枚举，保证slot下标与all_queues对齐）
+    QueueScheduleConfig queueCfg{};
+    queueCfg.enable_graphic_queues = 1;
+    queueCfg.enable_async_compute_queues = 1;
+    queueCfg.enable_copy_queues = 0;   // copy队列10条WRW未修（G-Buffer Copy跨DMA族转移竞态），关闭至专项修复
+    queueCfg.enable_debug_output = false;
+
+    // 渲染查询（GPU侧逐pass统计）无任何enable时置空不创建。
+    // 查询池按(帧槽,队列)二维分区——队列数须与QueryConfiguredQueues一致（多队列各流索引都从0起）
+    RHIRenderQueryInfo queryInfo{};
+    queryInfo.enable_gpu_timing = true;             // 逐pass GPU时间戳（输出节流：前2次+每30次回读1行）
+    queryInfo.timing_slot_count = FRAMES_IN_FLIGHT;
+    queryInfo.timing_queue_count = static_cast<uint32_t>(QueueSchedule::QueryConfiguredQueues(queueCfg).size());
+    queryInfo.timing_queries_per_queue = 256;       // 每队列子区间打点上限（须≥该队列每帧pass数）
+    renderQuery = backend->CreateRenderQuery(queryInfo);
+
     for (uint32_t i = 0; i < FRAMES_IN_FLIGHT; i++)
     {
-       // perFrameCommonResources[i].GraphicsCommand = pool->CreateCommandList(false);
-        perFrameCommonResources[i].startSemaphore = backend->CreateSemaphore();
-        perFrameCommonResources[i].finishSemaphore = backend->CreateSemaphore();
+        perFrameCommonResources[i].startSemaphore = backend->CreateSemaphore(false);
+        perFrameCommonResources[i].finishSemaphore = backend->CreateSemaphore(false);
         perFrameCommonResources[i].fence = backend->CreateFence(true);
 
-
-        QueueScheduleConfig queueCfg{};
-        queueCfg.enable_async_compute = true;
-        queueCfg.max_async_compute_queues = 1;
-        queueCfg.max_copy_queues = 1;
-        queueCfg.enable_copy_queue = true;
-        queueCfg.enable_debug_output = false;
+        EnsureQueueFrameSlots(perFrameCommonResources[i], queueCfg);
+        for (RDGQueueFrameSlot& slot : perFrameCommonResources[i].queueSlots)
+            slot.timeline = backend->CreateSemaphore(true);         // 每队列一条时间线，value由Phase 8逐帧推进
 
         ExecutionReorderConfig reorderConfig{};
         reorderConfig.enable_cache_opt = true;
@@ -105,28 +117,33 @@ void RenderSystem::InitBaseResource()
         passBindingConfig.enable_debug_output = false;
 
         BarrierGenerationConfig barrierGenerationConfig{};
-        barrierGenerationConfig.enable_debug_output = false;
+        barrierGenerationConfig.enable_debug_output = false;   // 诊断bisection轮关闭
 
         CommandRecordingConfig commandRecordingConfig{};
         commandRecordingConfig.enable_debug_markers = true;
         commandRecordingConfig.enable_debug_output = false;
-        // commandRecordingConfig.enable_parallel_recording = useParallelRecording;
-        commandRecordingConfig.chunk_count = 3;     // ANY池worker(2) + 主线程(1)
+        commandRecordingConfig.enable_gpu_timing = false;      // 与renderQuery的info.enable_gpu_timing共同判定打点（见record_stream_range）
+        commandRecordingConfig.chunk_count = 3;     // ANY池worker(2) + 主线程(1)——亦是每队列预建命令流数
         rdgCompilers[i] = std::make_shared<RDGCompiler>(queueCfg, reorderConfig, crossQueueSyncConfig, passBindingConfig, barrierGenerationConfig, commandRecordingConfig);
     }
 }
 
-void RenderSystem::EnsureFrameChunkLists(PerFrameCommonResource& resource, uint32_t count)
+void RenderSystem::EnsureQueueFrameSlots(PerFrameCommonResource& resource, const QueueScheduleConfig& config)
 {
-    // 惰性增长到所需chunk数；列表按帧槽持久持有（context独占，跨帧由帧槽fence保证复用安全，
-    // 每帧由各chunk的BeginCommand重置）。主线程调用，无并发分配。
-    // 注意：每个chunk使用独立的命令池——vkBegin/vkEnd/vkResetCommandBuffer要求父VkCommandPool
-    // 外部同步，多worker共享一个池并发BeginCommand是未定义行为（驱动访问冲突）
-    while (static_cast<uint32_t>(resource.ChunkCommands.size()) < count)
+    if (!resource.queueSlots.empty()) return;      // config静态，每槽一次性建齐
+
+    // 预建QueueSchedule将注册的全部队列（同序枚举→slot下标==RDG队列下标，Phase 8对此断言）。
+    // 每队列预建 CommandRecordingConfig::chunk_count 条命令流：worker piece数(2)+串行尾(1)；
+    // 每条独占一个pool——vkBegin/vkEnd/vkResetCommandBuffer要求父VkCommandPool外部同步，
+    // 多worker共享一个池并发BeginCommand是未定义行为（驱动访问冲突）
+    static constexpr uint32_t QUEUE_CHUNK_BUDGET = 3;   // 与CommandRecordingConfig::chunk_count保持一致
+
+    for (RHIQueueRef slotQueue : QueueSchedule::QueryConfiguredQueues(config))
     {
-        RHICommandPoolRef chunkPool = backend->CreateCommandPool({ queue });
-        chunkPools.push_back(chunkPool);                                   // 显式持有池生命周期
-        resource.ChunkCommands.push_back(chunkPool->CreateCommandList(true));   // byPass=true：立即录制
+        RDGQueueFrameSlot slot;
+        slot.queue = slotQueue;
+        slot.EnsureCommandCount(QUEUE_CHUNK_BUDGET);
+        resource.queueSlots.push_back(std::move(slot));
     }
 }
 
@@ -211,16 +228,21 @@ void RenderSystem::Tick()
         ENGINE_TIME_SCOPE(RenderSystem::WaitFence);
         auto& resource = perFrameCommonResources[EngineContext::ThreadPool()->ThreadFrameIndex()];
         resource.fence->Wait();                         // 等待帧栅栏，前一次本帧执行完毕后本帧才可重新开始收集和提交数据
+        resource.renderQuery = renderQuery;             // 每帧灌入RDG流水线（Phase 8打点用；nullptr=本帧无查询）
+
+        // 回读上一帧该帧槽的查询结果（fence已过，GPU工作全部完成；query内部按info的enable分派输出）
+        if (renderQuery != nullptr)
+            renderQuery->ResolveFrame(EngineContext::ThreadPool()->ThreadFrameIndex());
     }
 
     {
         ENGINE_TIME_SCOPE(RenderSystem::TickManagers);
         // meshManager->Tick();             // 先准备各个meshpass的绘制信息
-        // lightManager->Tick();            // 准备光源信息   
+        // lightManager->Tick();            // 准备光源信息
         // surfaceCacheManager->Tick();     // 更新surfaceCache
-        // UpdateGlobalSetting(); 
+        // UpdateGlobalSetting();
 
-        // 非常简单的并行  
+        // 非常简单的并行
         EngineContext::ThreadPool()->AddQueuedWork([this]() {
             surfaceCacheManager->Tick();
             });
@@ -287,33 +309,23 @@ void RenderSystem::ExecuteRDG()
 
     RDGCompilerRef rdgCompiler = rdgCompilers[EngineContext::ThreadPool()->ThreadFrameIndex()];
     auto& frameResource = perFrameCommonResources[EngineContext::ThreadPool()->ThreadFrameIndex()];
-    frameResource.builder = rdgBuilders[EngineContext::ThreadPool()->ThreadFrameIndex()].get();   // PassExecutionPhase 组装RDGPassContext用
 
-    // chunked并行录制：帧首fence已保证本帧槽上一轮的chunk命令缓冲执行完毕（可安全BeginCommand重置）
-    frameResource.chunkCount = 3;
-    EnsureFrameChunkLists(frameResource, 3);
-
-    rdgCompiler->compile_and_execute(
-        rdgDependencyGraph,
-        &frameResource
-    );
+    rdgCompiler->compile_and_execute(rdgDependencyGraph, &frameResource);
 }
 
 void RenderSystem::SubmitRHI()
 {
-    ENGINE_TIME_SCOPE(RenderSystem::RecordCommands);
+    ENGINE_TIME_SCOPE(RenderSystem::SubmitRHI);
 
     auto& resource = perFrameCommonResources[EngineContext::ThreadPool()->ThreadFrameIndex()];
+
+    // acquire先于全部提交：startSemaphore由graphics首批次wait（Present屏障在graphics流内）
     RHITextureRef swapchainTexture = swapchain->GetNewFrame(nullptr, resource.startSemaphore);
-    assert(resource.chunkCount > 0);
-    
 
-    // 并行录制：各chunk已在录制线程各自Begin/End，此处按chunk序单次批量提交
-    // （一次vkQueueSubmit内多个primary buffer按序执行，语义等价于单buffer串接）
-    std::vector<RHICommandListRef> chunks(resource.ChunkCommands.begin(),
-                                            resource.ChunkCommands.begin() + resource.chunkCount);
-    RHICommandList::ExecuteBatch(chunks, resource.fence, resource.startSemaphore, resource.finishSemaphore);
+    assert(!resource.queueSlots.empty() && !resource.queueSlots.front().commands.empty());
+    resource.queueSlots.front().commands.front()->ExecuteQueueSubmitPlan(resource.submitPlan);
 
+    // Present所在批次已signal finishSemaphore
     swapchain->Present(resource.finishSemaphore);
 }
 

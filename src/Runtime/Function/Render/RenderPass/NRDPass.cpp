@@ -52,7 +52,9 @@ void NRDPass::Init()
             .AddEntry({ 1, 3, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE })   // RESTIR_DIFFUSE_COLOR
             .AddEntry({ 1, 4, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE })   // RESTIR_SPECULAR_COLOR
             .AddEntry({ 1, 5, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE })   // NRD_VIEW_Z
-            .AddEntry({ 1, 6, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE });  // NRD_NORMAL
+            .AddEntry({ 1, 6, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE })  // NRD_NORMAL
+            .AddPushConstant({128, SHADER_FREQUENCY_COMPUTE});   
+                                                                 
 
         viewZRootSignature = backend->CreateRootSignature(viewZRootSignatureInfo);
 
@@ -70,7 +72,8 @@ void NRDPass::Init()
             .AddEntry({ 1, 2, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })      // G_BUFFER_NORMAL_ROUGHNESS
             .AddEntry({ 1, 3, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })      // NRD_OUT_DIFFUSE
             .AddEntry({ 1, 4, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })      // NRD_OUT_SPECULAR
-            .AddEntry({ 1, 5, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE });  // OUT
+            .AddEntry({ 1, 5, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE })  // OUT
+            .AddPushConstant({128, SHADER_FREQUENCY_COMPUTE});  
 
         combineRootSignature = backend->CreateRootSignature(combineRootSignatureInfo);
 
@@ -84,7 +87,8 @@ void NRDPass::Init()
         RHIRootSignatureInfo copySssrRootSignatureInfo = {};
         copySssrRootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetPerFrameRootSignature()->GetInfo())
             .AddEntry({ 1, 1, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE })
-            .AddEntry({ 1, 2, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE });
+            .AddEntry({ 1, 2, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })
+            .AddPushConstant({128, SHADER_FREQUENCY_COMPUTE});  
 
         copySssrRootSignature = backend->CreateRootSignature(copySssrRootSignatureInfo);
 

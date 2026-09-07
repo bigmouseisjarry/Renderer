@@ -59,11 +59,20 @@ public:
 
 	void EndCommand();
 
-	void Execute(RHIFenceRef fence = nullptr, RHISemaphoreRef waitSemaphore = nullptr, RHISemaphoreRef signalSemaphore = nullptr);
+	RHIQueueRef GetQueue() const;
 
-	// 批量提交：多条命令流（chunked并行录制）按序做一次提交，执行语义等价于单buffer串接；
-	// 延迟模式（byPass=false）的列表会先各自回放到自己的context，byPass=true的列表队列已空直接提交
-	static void ExecuteBatch(const std::vector<RHICommandListRef>& lists, RHIFenceRef fence = nullptr, RHISemaphoreRef waitSemaphore = nullptr, RHISemaphoreRef signalSemaphore = nullptr);
+	void Submit(const RHIQueueSubmitBatch& batch);
+
+	// 模式一（单列表）：等价于构造单元素批次走Submit，队列=本列表归属队列
+	void Execute(RHIFenceRef signalFence = nullptr, RHISemaphoreRef waitSemaphore = nullptr, RHISemaphoreRef signalSemaphore = nullptr);
+
+	// 模式二（同队列多列表一次提交，chunked并行录制汇聚）：执行语义等价于单buffer串接；
+	// 载体=lists.front()，队列取首列表归属队列，并断言全部列表归属队列族一致
+	static void ExecuteBatch(const std::vector<RHICommandListRef>& lists, RHIFenceRef signalFence = nullptr, RHISemaphoreRef waitSemaphore = nullptr, RHISemaphoreRef signalSemaphore = nullptr);
+
+	// 模式三（整帧多队列提交计划）：载体=this，逐批Submit（含空批次），
+	// 每批次一次设备级提交；数组序即提交序（timeline值按此序严格递增）
+	void ExecuteQueueSubmitPlan(const RHIQueueSubmitPlan& plan);
 
     void TextureBarrier(const RHITextureBarrier& barrier);
 
@@ -139,6 +148,10 @@ public:
 
 protected:
 	CommandListInfo info;
+
+	// 延迟模式（byPass=false）命令队列回放到自己的context；byPass列表队列已空为空操作。
+	// 各提交入口的公共前置步骤（原Execute/ExecuteBatch/ExecuteQueueSubmitPlan三处重复逻辑合并）
+	static void ReplayList(RHICommandList* list);
 
     inline void AddCommand(RHICommand* command) { commands.push_back(command); }
     std::vector<RHICommand*> commands;

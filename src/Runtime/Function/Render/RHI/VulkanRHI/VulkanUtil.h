@@ -33,7 +33,9 @@ static const std::vector<VkValidationFeatureEnableEXT> ENABLED_VALIDATION_FEATUR
 #if ENABLE_DEBUG_MODE
     //VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT,
     //VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT,
-    VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT
+    // 诊断结论（2026-09-03 sync validation实证后移除环境变量门控）：需要跑sync validation时
+    // 取消下一行注释（或临时加回env门控）——它是多队列同步掩码正确性的最终裁判
+    //VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT
 #endif
 };
 
@@ -71,6 +73,13 @@ static const char* RAY_TRACING_DEVICE_EXTENTIONS[] = {
 
 static const char* DEVICE_LAYERS[] = {
     "VK_LAYER_KHRONOS_validation",
+};
+
+// mesh shader扩展：push constants的stageFlags由SHADER_FREQUENCY_GRAPHICS/ALL生成（含MESH位），
+// 未启用扩展时验证层报vkCmdPushConstants/VkPushConstantRange-stageFlags-parameter。
+// 仅启用扩展、不链任何feature（meshShader等默认false）——对现有管线零行为影响
+static const char* MESH_SHADER_DEVICE_EXTENTIONS[] = {
+    VK_EXT_MESH_SHADER_EXTENSION_NAME,
 };
 
 static const float QUEUE_PRIORITIES[] = {   //TODO没做排序
@@ -642,25 +651,31 @@ public:
         return aspectFlags;
     }
     
-    static VkAccessFlags ResourceStateToAccessFlags(RHIResourceState state)
-    {   
-        // 各个资源状态决定了访问用途，作为src和dst是一致的
+    // state → access，并按录制队列族能力过滤
+    // 图形专属访问（顶点/索引/颜色/深度模板/间接参数）只在图形族有效；
+    // shader/AS访问需要compute能力（带GRAPHICS位的族必带COMPUTE位）；
+    // transfer访问任何族都有效。作为src和dst是一致的
+    static VkAccessFlags ResourceStateToAccessFlags(RHIResourceState state, VkQueueFlags queueFlags)
+    {
+        const bool graphics = (queueFlags & VK_QUEUE_GRAPHICS_BIT) != 0;
+        const bool compute  = graphics || (queueFlags & VK_QUEUE_COMPUTE_BIT) != 0;
+
         VkAccessFlags accessFlags = VK_ACCESS_NONE;
         switch (state) {
         case RESOURCE_STATE_UNDEFINED:                      accessFlags = VK_ACCESS_NONE;                                           break;     // 无效？
-        case RESOURCE_STATE_COMMON:                         accessFlags = VK_ACCESS_NONE;                                           break;     // 无效？   
+        case RESOURCE_STATE_COMMON:                         accessFlags = VK_ACCESS_NONE;                                           break;     // 无效？
+        case RESOURCE_STATE_PRESENT:                        accessFlags = VK_ACCESS_NONE;                                           break;     // 无效？
         case RESOURCE_STATE_TRANSFER_SRC:                   accessFlags = VK_ACCESS_TRANSFER_READ_BIT;                              break;
         case RESOURCE_STATE_TRANSFER_DST:                   accessFlags = VK_ACCESS_TRANSFER_WRITE_BIT;                             break;
-        case RESOURCE_STATE_VERTEX_BUFFER:                  accessFlags = VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT;                      break;
-        case RESOURCE_STATE_INDEX_BUFFER:                   accessFlags = VK_ACCESS_INDEX_READ_BIT;                                 break;
-        case RESOURCE_STATE_COLOR_ATTACHMENT:               accessFlags = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;                     break;
-        case RESOURCE_STATE_DEPTH_STENCIL_ATTACHMENT:       accessFlags = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;             break; 
-        case RESOURCE_STATE_UNORDERED_ACCESS:               accessFlags = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;   break;
-        case RESOURCE_STATE_SHADER_RESOURCE:                accessFlags = VK_ACCESS_SHADER_READ_BIT;                                break;
-        case RESOURCE_STATE_INDIRECT_ARGUMENT:              accessFlags = VK_ACCESS_INDIRECT_COMMAND_READ_BIT;                      break; 
-        case RESOURCE_STATE_PRESENT:                        accessFlags = VK_ACCESS_NONE;                                           break;      // 无效？ 
-        case RESOURCE_STATE_ACCELERATION_STRUCTURE:         accessFlags = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;   break;
-        default:                                            LOG_FATAL("Unsupported resource state!");  
+        case RESOURCE_STATE_VERTEX_BUFFER:                  accessFlags = graphics ? VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT : VK_ACCESS_NONE;                      break;
+        case RESOURCE_STATE_INDEX_BUFFER:                   accessFlags = graphics ? VK_ACCESS_INDEX_READ_BIT : VK_ACCESS_NONE;                               break;
+        case RESOURCE_STATE_COLOR_ATTACHMENT:               accessFlags = graphics ? (VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT) : VK_ACCESS_NONE;               break;     // 须含READ：loadOp=LOAD的附件读（sync validation实证缺位导致READ_AFTER_WRITE竞态）
+        case RESOURCE_STATE_DEPTH_STENCIL_ATTACHMENT:       accessFlags = graphics ? (VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT) : VK_ACCESS_NONE;       break;     // 须含READ+EARLY/LATE_FRAGMENT_TESTS阶段（深度附件读在fragment test阶段）
+        case RESOURCE_STATE_UNORDERED_ACCESS:               accessFlags = compute ? (VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT) : VK_ACCESS_NONE; break;
+        case RESOURCE_STATE_SHADER_RESOURCE:                accessFlags = compute ? VK_ACCESS_SHADER_READ_BIT : VK_ACCESS_NONE;                               break;
+        case RESOURCE_STATE_INDIRECT_ARGUMENT:              accessFlags = graphics ? VK_ACCESS_INDIRECT_COMMAND_READ_BIT : VK_ACCESS_NONE;                    break;
+        case RESOURCE_STATE_ACCELERATION_STRUCTURE:         accessFlags = compute ? (VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR) : VK_ACCESS_NONE;   break;
+        default:                                            LOG_FATAL("Unsupported resource state!");
         }
         return accessFlags;
     }
@@ -693,48 +708,62 @@ public:
 		return bitmask;
 	}
 
-    static VkPipelineStageFlags AccessFlagsToPipelineStageFlags(VkAccessFlags accessFlags)
+    // access → stage，并裁剪到录制队列族支持的stage集合
+    // 非图形族上使用其不支持的stage是未定义行为（如transfer族命令缓冲带COMPUTE_SHADER、compute族带COLOR_ATTACHMENT_OUTPUT）
+    // compute族保留compute/RT/AS_BUILD/transfer/host；transfer族仅transfer/host
+    static VkPipelineStageFlags AccessFlagsToPipelineStageFlags(VkAccessFlags accessFlags, VkQueueFlags queueFlags)
     {
         // 根据所有的accessFlags来分析涉及到的stage阶段 参考Sakura
+        const bool graphics = (queueFlags & VK_QUEUE_GRAPHICS_BIT) != 0;
+        const bool compute  = graphics || (queueFlags & VK_QUEUE_COMPUTE_BIT) != 0;
 
         VkPipelineStageFlags flags = 0;
 
-        if(accessFlags & VK_ACCESS_INDIRECT_COMMAND_READ_BIT)               flags |=    VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT;                    // 0x00000002
+        if(graphics && (accessFlags & VK_ACCESS_INDIRECT_COMMAND_READ_BIT))             flags |=    VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT;                    // 0x00000002
 
-        if(accessFlags & (  VK_ACCESS_INDEX_READ_BIT | 
-                            VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT))           flags |=    VK_PIPELINE_STAGE_VERTEX_INPUT_BIT;                     // 0x00000004
+        if(graphics && (accessFlags & (  VK_ACCESS_INDEX_READ_BIT |
+                                         VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT)))          flags |=    VK_PIPELINE_STAGE_VERTEX_INPUT_BIT;                     // 0x00000004
 
-        if(accessFlags & (  VK_ACCESS_UNIFORM_READ_BIT | 
-                            VK_ACCESS_SHADER_READ_BIT | 
-                            VK_ACCESS_SHADER_WRITE_BIT))                    flags |=    VK_PIPELINE_STAGE_VERTEX_SHADER_BIT |                   // 0x00000008
-                                                                                        VK_PIPELINE_STAGE_TESSELLATION_CONTROL_SHADER_BIT |     // 0x00000010
-                                                                                        VK_PIPELINE_STAGE_TESSELLATION_EVALUATION_SHADER_BIT |  // 0x00000020
-                                                                                        VK_PIPELINE_STAGE_GEOMETRY_SHADER_BIT |                 // 0x00000040
-                                                                                        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |                 // 0x00000080
-                                                                                        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT |                  // 0x00000800
-                                                                                        VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR;           // 0x00200000
+        if(accessFlags & (  VK_ACCESS_UNIFORM_READ_BIT |
+                            VK_ACCESS_SHADER_READ_BIT |
+                            VK_ACCESS_SHADER_WRITE_BIT))
+        {
+            if(graphics)    flags |=    VK_PIPELINE_STAGE_VERTEX_SHADER_BIT |                   // 0x00000008
+                                        VK_PIPELINE_STAGE_TESSELLATION_CONTROL_SHADER_BIT |     // 0x00000010
+                                        VK_PIPELINE_STAGE_TESSELLATION_EVALUATION_SHADER_BIT |  // 0x00000020
+                                        VK_PIPELINE_STAGE_GEOMETRY_SHADER_BIT |                 // 0x00000040
+                                        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;                  // 0x00000080
+            if(compute)     flags |=    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT |                  // 0x00000800
+                                        VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR;           // 0x00200000
+        }
 
-        if(accessFlags &    VK_ACCESS_INPUT_ATTACHMENT_READ_BIT)            flags |=    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;                  // 0x00000080
+        if(graphics && (accessFlags &   VK_ACCESS_INPUT_ATTACHMENT_READ_BIT))            flags |=    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;                  // 0x00000080
 
-        if(accessFlags & (  VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | 
-                            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT))  flags |=    VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |            // 0x00000100
+        if(graphics && (accessFlags & ( VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+                                        VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT)))  flags |=    VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |            // 0x00000100
                                                                                         VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;              // 0x00000200
 
-        if(accessFlags & (  VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | 
-                            VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT))          flags |=    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;          // 0x00000400 
+        if(graphics && (accessFlags & ( VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
+                                        VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT)))          flags |=    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;          // 0x00000400
 
-        if(accessFlags & (  VK_ACCESS_TRANSFER_READ_BIT | 
-                            VK_ACCESS_TRANSFER_WRITE_BIT))                  flags |=    VK_PIPELINE_STAGE_TRANSFER_BIT;                         // 0x00001000
+        if(accessFlags & (  VK_ACCESS_TRANSFER_READ_BIT |
+                            VK_ACCESS_TRANSFER_WRITE_BIT))                              flags |=    VK_PIPELINE_STAGE_TRANSFER_BIT;                         // 0x00001000
 
         if(accessFlags & (  VK_ACCESS_HOST_READ_BIT |
-                            VK_ACCESS_HOST_WRITE_BIT))                      flags |=    VK_PIPELINE_STAGE_HOST_BIT;                             // 0x00004000
+                            VK_ACCESS_HOST_WRITE_BIT))                                  flags |=    VK_PIPELINE_STAGE_HOST_BIT;                             // 0x00004000
 
         // AS构建/读取：写侧必须含构建阶段，否则屏障的srcStage落在TOP_OF_PIPE等不到构建写
-        if(accessFlags &    VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR) flags |=    VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR;
-        if(accessFlags &    VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR)  flags |=    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT |
+        if(compute && (accessFlags & VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR))   flags |=    VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR;
+        if(compute && (accessFlags & VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR))    flags |=    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT |
                                                                                         VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR;
 
-        if(flags == 0) flags = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+        if(flags == 0)
+        {
+            // access为0沿用TOP_OF_PIPE；access非0但stage全被队列能力裁掉时回落到该族的自然stage
+            flags = (accessFlags == 0) ? VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT
+                 : compute ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT
+                           : VK_PIPELINE_STAGE_TRANSFER_BIT;
+        }
         return flags;
     }
 

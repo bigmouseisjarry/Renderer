@@ -65,6 +65,7 @@ void main()
 
 	uint reservoirIndex = ReservoirIndex(pixel);
 	GIReservoir res = RESERVOIRS[reservoirIndex];
+	if (!IsGIReservoirValid(res)) res = NewGIReservoir();	// 防护：毒化/垃圾数据视作空reservoir
 	Rand rand = SeedRand(GLOBAL_SETTING.totalTicks, pixel.y * GLOBAL_SETTING.totalTicks + pixel.x);
 
 	vec3 neighborNormal[NUM_NEIGHBORS];
@@ -110,30 +111,35 @@ void main()
 			}
 
 			GIReservoir randRes = RESERVOIRS[randIndex];
-			float newPHat = EvaluatePHat(randRes.sampl) * CalculateJacobian(worldPos.xyz, neighborWorldPos[j].xyz, randRes.sampl); 
-			CombineGIReservoirs(res, randRes, newPHat, rand);  
+			if (!IsGIReservoirValid(randRes)) continue;	// 防护：坏邻居视作无邻居
+			float newPHat = EvaluatePHat(randRes.sampl) * CalculateJacobian(worldPos.xyz, neighborWorldPos[j].xyz, randRes.sampl);
+			CombineGIReservoirs(res, randRes, newPHat, rand);
 		}
 
 		if(RESTIR_GI_SETTING.unbias != 0)
 		{
             uint z = originNumStreamSamples;
+            // 防护：res持有有效采样（w>0且hitPos有限）才做可见性射线——空/毒化reservoir的
+            // hitPos会产生无法被BVH剪枝的NaN射线（可见性测试是最主要的性能开销）
+            const bool visibilityTrace = RESTIR_GI_SETTING.visibilityReuse != 0
+                && res.w > 0.0f && IsFiniteVec3(res.sampl.hitPos);
             for(int j = 0; j < NUM_NEIGHBORS; j++)
-            {		
-                if(RESTIR_GI_SETTING.visibilityReuse != 0)		// 可见性测试是最主要的性能开销
+            {
+                if(visibilityTrace)
                 {
                     bool shadowed = RayQueryVisibility(neighborWorldPos[j].xyz, res.sampl.hitPos, GLOBAL_SETTING.rayTracingOffset);
                     if(shadowed) continue;
                 }
-                        
-                z = z + neighborNumStreamSamples[j]; 				
+
+                z = z + neighborNumStreamSamples[j];
             }
 
-            if(RESTIR_GI_SETTING.visibilityReuse != 0)
+            if(visibilityTrace)
             {
                 bool shadowed = RayQueryVisibility(worldPos.xyz, res.sampl.hitPos, GLOBAL_SETTING.rayTracingOffset);
-                if(shadowed) 
+                if(shadowed)
                 {
-                    CleanGIReservoir(res);			
+                    CleanGIReservoir(res);
                 }
             }
             

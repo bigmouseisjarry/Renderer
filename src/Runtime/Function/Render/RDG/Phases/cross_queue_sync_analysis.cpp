@@ -275,8 +275,10 @@ void CrossQueueSyncAnalysis::apply_ssis_optimization(RDGDependencyGraphRef graph
 
             if (!found_coverage)
             {
-                // 无法覆盖剩余队列，退出
-                ENGINE_LOG_INFO("    Warning: Pass {} cannot cover remaining queues", pass->Name());
+                // 无法覆盖剩余队列，退出——同步点被真实消费后这里意味着缺依赖（错失跨队列同步），
+                // 排查期间可临时 enable_ssis_optimization=false 用raw超集兜底
+                ENGINE_LOG_WARN("    SSIS under-coverage: pass '{}' cannot cover remaining queues", pass->Name());
+                ssis_result_.uncovered_consumers++;
                 break;
             }
 
@@ -329,9 +331,16 @@ void CrossQueueSyncAnalysis::calculate_optimization_statistics()
     }
 }
 
-uint32_t CrossQueueSyncAnalysis::get_pass_queue_index(RDGPassNodeRef pass) const 
+uint32_t CrossQueueSyncAnalysis::get_pass_queue_index(RDGPassNodeRef pass) const
 {
     return queue_schedule_.get_schedule_result().pass_queue_assignments.find(pass)->second;
+}
+
+uint32_t CrossQueueSyncAnalysis::get_queue_family_index(uint32_t queue_index) const
+{
+    const std::span<QueueInfo>& all_queues = queue_schedule_.get_schedule_result().all_queues;
+    if (queue_index >= all_queues.size()) return RHI_QUEUE_FAMILY_IGNORED;
+    return all_queues[queue_index].family_index;
 }
 
 void CrossQueueSyncAnalysis::dump_ssis_analysis() const 

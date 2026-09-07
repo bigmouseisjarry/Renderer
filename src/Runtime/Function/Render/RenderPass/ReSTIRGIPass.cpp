@@ -7,8 +7,7 @@
 #include <cstdint>
 
 #define NUM_NEIGHBORS 1
-#define WIDTH_DOWNSAMPLE_RATE 1   
-#define HEIGHT_DOWNSAMPLE_RATE 1    
+// GI降采样率定义在ReSTIRGIPass.h（单一事实源；shader侧restir_gi/include/common.glsl须一致）
 
 void ReSTIRGIPass::Init()
 {

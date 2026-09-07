@@ -41,7 +41,7 @@ struct IRenderGraphPhase;
 // 状态设置等信息由一个parameters结构体描述，这个结构体的生命周期也应该与RDG一致（单帧），builder会给一个allocateParameters函数来返回
 
 // 目前的RDG只实现了最基本的功能，相当多特性还未完成，例如：
-// pass排序，pass剔除，多线程录制，multi queue，资源池GC，细粒度的资源处理（内存对齐，subresource屏障等），……
+// pass排序，pass剔除，资源池GC，细粒度的资源处理（内存对齐，subresource屏障等），……
 class RDGBuilder
 {
 public:
@@ -170,7 +170,11 @@ public:
                                         TextureSubresourceRange subresource = {});
     RDGRenderPassBuilder& Multiview(uint32_t multiviewCount);                                
     RDGRenderPassBuilder& OutputRead(RDGBufferHandle buffer, uint32_t offset = 0, uint32_t size = 0);             // 在执行完Pass后作为输出，自动屏障，可能还会在其他地方使用
-    RDGRenderPassBuilder& OutputRead(RDGTextureHandle texture, TextureSubresourceRange subresource = {});      
+    RDGRenderPassBuilder& OutputRead(RDGTextureHandle texture, TextureSubresourceRange subresource = {});    
+    // 无描述符的虚拟依赖边：声明"本pass以间接命令读取该buffer"的排序/屏障关系
+    // （如mesh绘制pass对GPU Culling产出的间接命令buffer——DrawIndirect不走描述符），
+    // 不参与描述符绑定。资源经由其他pass Import进图后即可引用
+    RDGRenderPassBuilder& Dependency(RDGBufferHandle buffer);
     RDGRenderPassBuilder& OutputReadWrite(RDGBufferHandle buffer, uint32_t offset = 0, uint32_t size = 0);
     RDGRenderPassBuilder& OutputReadWrite(RDGTextureHandle texture, TextureSubresourceRange subresource = {});  
     RDGRenderPassBuilder& Execute(const RDGPassExecuteFunc& execute);

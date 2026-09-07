@@ -8,7 +8,9 @@
 #include <SDL3/SDL.h>
 #include <vma.h>
 #include <cstdint>
+#include <atomic>
 #include <memory>
+#include <string>
 #include <vector>
 
 class VulkanRHIBackend;
@@ -27,6 +29,7 @@ public:
 
 	virtual void WaitIdle() override final { vkQueueWaitIdle(handle); }
 	virtual void* RawHandle() override final { return handle; };
+	virtual uint32_t GetFamilyIndex() const override final { return queueFamilyIndex; }
 
 	const VkQueue& GetHandle() { return handle; }
 	uint32_t GetQueueFamilyIndex() { return queueFamilyIndex; }
@@ -425,20 +428,52 @@ private:
 class VulkanRHISemaphore : public RHISemaphore
 {
 public:
-	VulkanRHISemaphore(VulkanRHIBackend& backend);
+	VulkanRHISemaphore(VulkanRHIBackend& backend, bool isTimeline = false, uint64_t initialValue = 0);
 
 	const VkSemaphore& GetHandle() { return handle; }
+	bool IsTimeline() const { return isTimeline; }
 
 	virtual void Destroy() override final;
 	virtual void* RawHandle() override final { return handle; };
 
 private:
 	VkSemaphore handle;
+	bool isTimeline = false;
 };
 
+//渲染查询 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+class VulkanRHIRenderQuery : public RHIRenderQuery
+{
+public:
+	VulkanRHIRenderQuery(const RHIRenderQueryInfo& info, VulkanRHIBackend& backend);
 
+	// 录制期打点：pass末尾GPU时间戳（BOTTOM_OF_PIPE保证按完成序单调；须在命令流录制中调用）。
+	// 查询索引=(槽,队列)子区间内偏移——多队列各流索引都从0起，二维分区保证互不冲突
+	virtual void WriteTimestamp(RHICommandListRef command, uint32_t slot, uint32_t queueIndex,
+		uint32_t index, const std::string& passName) override final;
 
+	// 帧首回读（fence->Wait()后调用）：读回上一帧该槽全部队列的打点。时长只在【同一队列子区间内】
+	// 相邻打点间有效（跨队列时间戳并发交错，差值无意义）；各队列分别计算后合并Top10。
+	// 节流：前2次+每30次输出1行
+	virtual void ResolveFrame(uint32_t slot) override final;
+
+	virtual void Destroy() override final;
+
+private:
+	// (槽,队列)子区间的池内基址
+	uint32_t SubRangeBase(uint32_t slot, uint32_t queueIndex) const
+	{
+		return (slot * info.timing_queue_count + queueIndex) * info.timing_queries_per_queue;
+	}
+
+	VkDevice device = VK_NULL_HANDLE;                        // 池的创建/回读/重置/销毁（构造时从backend取，设备生命周期覆盖查询资源）
+	VkQueryPool pool = VK_NULL_HANDLE;
+	double periodNs = 1.0;                                   // timestampPeriod：tick→纳秒
+	uint64_t resolveCounter = 0;                             // 回读节流计数
+	std::vector<std::string> names;                          // slotCount*queueCount*perQueue，构造时定型（每pass独占下标，录制worker并发写安全）
+	std::unique_ptr<std::atomic<uint32_t>[]> used;           // 每(槽,队列)已打点数（relaxed并发更新，回读时exchange清零）
+};
 
 
 

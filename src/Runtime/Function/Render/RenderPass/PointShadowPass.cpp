@@ -108,6 +108,12 @@ void PointShadowPass::Build(RDGBuilder& builder)
             //     .AllowDepthStencil()
             //     .Finish();
 
+            // 间接绘制命令buffer的虚拟依赖边：Draw()在execute内以DrawIndirect消费GPU Culling
+            // 写入的命令buffer（不走描述符），必须在图内声明依赖，否则拓扑排序可能把本pass排到
+            // culling之前执行，DrawIndirect读到未写入的命令（阴影图无几何）
+
+            std::string cmdIndex = " [" + std::to_string(MESH_POINT_SHADOW_PASS) + "][";
+
             RDGRenderPassHandle pass = builder.CreateRenderPass(GetName() + index)
                 .PassIndex(i)
                 .Color(0, color, ATTACHMENT_LOAD_OP_CLEAR, ATTACHMENT_STORE_OP_STORE, 
@@ -115,6 +121,18 @@ void PointShadowPass::Build(RDGBuilder& builder)
                 .DepthStencil(depth, ATTACHMENT_LOAD_OP_CLEAR, ATTACHMENT_STORE_OP_STORE, 
                     1.0f, 0, {TEXTURE_ASPECT_DEPTH, 0, 1, 0, 6})
                 //.Multiview(6)
+                .Dependency(builder.GetBuffer("Mesh Draw Commands" + cmdIndex + std::to_string(i * 6 + 0) + "]"))
+                .Dependency(builder.GetBuffer("Clusrter Draw Commands" + cmdIndex + std::to_string(i * 6 + 0) + "]"))
+                .Dependency(builder.GetBuffer("Mesh Draw Commands" + cmdIndex + std::to_string(i * 6 + 1) + "]"))
+                .Dependency(builder.GetBuffer("Clusrter Draw Commands" + cmdIndex + std::to_string(i * 6 + 1) + "]"))
+                .Dependency(builder.GetBuffer("Mesh Draw Commands" + cmdIndex + std::to_string(i * 6 + 2) + "]"))
+                .Dependency(builder.GetBuffer("Clusrter Draw Commands" + cmdIndex + std::to_string(i * 6 + 2) + "]"))
+                .Dependency(builder.GetBuffer("Mesh Draw Commands" + cmdIndex + std::to_string(i * 6 + 3) + "]"))
+                .Dependency(builder.GetBuffer("Clusrter Draw Commands" + cmdIndex + std::to_string(i * 6 + 3) + "]"))
+                .Dependency(builder.GetBuffer("Mesh Draw Commands" + cmdIndex + std::to_string(i * 6 + 4) + "]"))
+                .Dependency(builder.GetBuffer("Clusrter Draw Commands" + cmdIndex + std::to_string(i * 6 + 4) + "]"))
+                .Dependency(builder.GetBuffer("Mesh Draw Commands" + cmdIndex + std::to_string(i * 6 + 5) + "]"))
+                .Dependency(builder.GetBuffer("Clusrter Draw Commands" + cmdIndex + std::to_string(i * 6 + 5) + "]"))
                 .Execute([&](RDGPassContext context) {
 
                     Extent2D windowExtent = EngineContext::Render()->GetWindowsExtent();

@@ -21,8 +21,8 @@ struct CrossQueueSyncPoint
     RDGPassNodeRef consumer_pass;          // 消费者Pass
     RDGResourceNodeRef resource;           // 相关资源
     RHIResourceState from_state;    // 源状态
-    RHIResourceState to_state;      // 目标状态
-    uint32_t sync_value;              // 同步值（用于时间线信号量）
+    RHIResourceState to_state;      // 目标状态（执行期据此推导消费者队列上的wait stage mask）
+    uint32_t sync_value;              // 保持0（相对值未分配）：timeline的绝对value由Phase 8按提交序统一分配
 };
 
 // SSIS (Sufficient Synchronization Index Set) 分析结果
@@ -39,6 +39,7 @@ struct SSISAnalysisResult
     uint32_t total_optimized_syncs = 0;
     uint32_t sync_reduction_count = 0;
     float optimization_ratio = 0.0f;
+    uint32_t uncovered_consumers = 0;   // SSIS覆盖失败次数（>0=有跨队列依赖未被同步点覆盖，见WARN日志）
 };
 
 // SSIS分析配置
@@ -65,6 +66,7 @@ public:
 
     // 获取分析结果
     uint32_t get_pass_queue_index(RDGPassNodeRef pass) const ;
+    uint32_t get_queue_family_index(uint32_t queue_index) const;   // 队列→族（Phase 7所有权转移判定用）
     const SSISAnalysisResult& get_ssis_result() const { return ssis_result_; }
     const std::vector<CrossQueueSyncPoint>& get_optimized_sync_points() const { return ssis_result_.optimized_sync_points; }
     const PassDependencyAnalysis& get_dependency_analysis() const { return dependency_analysis_; }

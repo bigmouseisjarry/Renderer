@@ -13,34 +13,133 @@
 #include <cstring>
 #include <regex>
 #include <spirv_reflect.h>
+#include <atomic>
 #include <memory>
 #include <algorithm>
 #include <cstdint>
+#include <cstdio>
 #include <iostream>
 #include <string>
 #include <vector>
 
+//渲染查询 ////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+VulkanRHIRenderQuery::VulkanRHIRenderQuery(const RHIRenderQueryInfo& queryInfo, VulkanRHIBackend& backend)
+	: RHIRenderQuery(queryInfo)
+{
+	device = backend.GetLogicalDevice();
+
+	VkQueryPoolCreateInfo ci{};
+    ci.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+	ci.queryType = VK_QUERY_TYPE_TIMESTAMP;
+	ci.queryCount = info.timing_slot_count * info.timing_queue_count * info.timing_queries_per_queue;
+	vkCreateQueryPool(device, &ci, nullptr, &pool);
+	vkResetQueryPool(device, pool, 0, ci.queryCount);    // 首次写入前查询须处于reset态（否则验证层ERROR触发断点）
+
+	VkPhysicalDeviceProperties props{};
+	vkGetPhysicalDeviceProperties(backend.GetPhysicalDevice(), &props);
+	periodNs = static_cast<double>(props.limits.timestampPeriod);
+
+	names.assign(ci.queryCount, {});
+	used.reset(new std::atomic<uint32_t>[info.timing_slot_count * info.timing_queue_count]());
+}
+
+void VulkanRHIRenderQuery::WriteTimestamp(RHICommandListRef command, uint32_t slot, uint32_t queueIndex,uint32_t index, const std::string& passName)
+{
+	if (!info.enable_gpu_timing) return;
+	if (slot >= info.timing_slot_count || queueIndex >= info.timing_queue_count ||
+		index >= info.timing_queries_per_queue) return;
+
+	// BOTTOM_OF_PIPE保证时间戳按完成序单调；(槽,队列)子区间内相邻打点差=后一pass的时长。
+	// names下标由(队列,流内pass下标)唯一确定——录制worker并发写不同下标安全，无需加锁
+	const uint32_t base = SubRangeBase(slot, queueIndex);
+	vkCmdWriteTimestamp2(static_cast<VkCommandBuffer>(command->RawHandle()),
+		VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, pool, base + index);
+	names[base + index] = passName;
+
+	std::atomic<uint32_t>& usedCounter = used[slot * info.timing_queue_count + queueIndex];
+	uint32_t cur = usedCounter.load(std::memory_order_relaxed);
+	while (index + 1 > cur &&
+	       !usedCounter.compare_exchange_weak(cur, index + 1, std::memory_order_relaxed)) {}
+}
+
+void VulkanRHIRenderQuery::ResolveFrame(uint32_t slot)
+{
+	if (!info.enable_gpu_timing || slot >= info.timing_slot_count) return;
+
+	struct Dur { double ms; std::string name; };   // 按值持有——names在打印前清理，指针会悬垂
+	std::vector<Dur> durs;
+	std::vector<double> queueSpans(info.timing_queue_count, 0.0);   // 各队列首末打点跨度（并发重叠，不可加总）
+	bool anyData = false;
+
+	for (uint32_t q = 0; q < info.timing_queue_count; q++)
+	{
+		const uint32_t usedIndex = slot * info.timing_queue_count + q;
+		const uint32_t count = used[usedIndex].exchange(0, std::memory_order_relaxed);
+		if (count == 0) continue;
+		anyData = true;
+
+		const uint32_t base = SubRangeBase(slot, q);
+		std::vector<uint64_t> stamps(count, 0);
+		if (vkGetQueryPoolResults(device, pool, base, count,
+			stamps.size() * sizeof(uint64_t), stamps.data(), sizeof(uint64_t),
+			VK_QUERY_RESULT_64_BIT) != VK_SUCCESS)
+		{
+			for (uint32_t i = 0; i < count; i++) names[base + i].clear();   // 结果未就绪（理论不可达：fence已过）——丢弃
+			continue;
+		}
+		vkResetQueryPool(device, pool, base, count);    // 复用前重置（hostQueryReset特性）
+
+		// 时长只在该队列子区间内相邻打点间有效（跨队列时间戳并发交错）
+		for (uint32_t i = 1; i < count; i++)
+		{
+			const std::string& name = names[base + i];
+			if (name.empty()) continue;
+			durs.push_back({static_cast<double>(stamps[i] - stamps[i - 1]) * periodNs / 1e6, name});
+		}
+		if (count >= 2)
+			queueSpans[q] = static_cast<double>(stamps[count - 1] - stamps[0]) * periodNs / 1e6;
+
+		for (uint32_t i = 0; i < count; i++) names[base + i].clear();   // 本帧重新收集
+	}
+	if (!anyData) return;
+
+	std::sort(durs.begin(), durs.end(), [](const Dur& a, const Dur& b) { return a.ms > b.ms; });
+
+	resolveCounter++;
+	if (resolveCounter <= 2 || resolveCounter % 30 == 0)    // 节流：前2次+每30次输出1行
+	{
+		printf("[GpuTiming] frame#%llu", (unsigned long long)resolveCounter);
+		for (uint32_t q = 0; q < info.timing_queue_count; q++)
+			if (queueSpans[q] > 0.0) printf(" q%u=%.2fms", q, queueSpans[q]);
+		printf(" top10:");
+		for (uint32_t i = 0; i < durs.size() && i < 10; i++)
+			printf(" %s=%.2f", durs[i].name.c_str(), durs[i].ms);
+		printf("\n");
+	}
+}
+
+void VulkanRHIRenderQuery::Destroy()
+{
+	if (pool != VK_NULL_HANDLE)
+	{
+		vkDestroyQueryPool(device, pool, nullptr);
+		pool = VK_NULL_HANDLE;
+	}
+}
+
+RHIRenderQueryRef VulkanRHIBackend::CreateRenderQuery(const RHIRenderQueryInfo& info)
+{
+	RHIRenderQueryRef query = std::make_shared<VulkanRHIRenderQuery>(info, *this);
+	RegisterResource(query);
+
+	return query;
+}
+
 //基本资源 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-//VulkanRHISurface::VulkanRHISurface(GLFWwindow* window, VulkanRHIBackend& backend)
-//: RHISurface()
-//{
-//    int width, height;
-//    glfwGetWindowSize(window, &width, &height);
-//    extent = { (uint32_t)width, (uint32_t)height };
-//
-//    //glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
-//    //window = glfwCreateWindow(extent.width, extent.height, "", nullptr, nullptr);
-//
-//    //glfwSetWindowUserPointer(window, this);
-//    //glfwSetWindowSizeCallback(window, nullptr); //TODO
-//    //glfwSetCursorPosCallback(window, nullptr);
-//
-//    if (glfwCreateWindowSurface(backend.GetInstance(), window, nullptr, &handle) != VK_SUCCESS) 
-//    {
-//        LOG_FATAL("Failed to create window surface!");
-//    }
-//}
+// 队列是被动句柄：提交原语已迁至命令线路（VulkanRHICommandContext::Submit，
+// 由RHICommandList门面经载体context调用），队列仅在彼处被读取句柄与队列族
 
 VulkanRHISurface::VulkanRHISurface(SDL_Window* window, VulkanRHIBackend& backend)
     :RHISurface()
@@ -1945,10 +2044,20 @@ void VulkanRHIFence::Destroy()
     vkDestroyFence(Backend()->GetLogicalDevice(), handle, nullptr);
 }
 
-VulkanRHISemaphore::VulkanRHISemaphore(VulkanRHIBackend& backend)
+VulkanRHISemaphore::VulkanRHISemaphore(VulkanRHIBackend& backend, bool isTimeline, uint64_t initialValue)
+	:isTimeline(isTimeline)
 {
+
+	VkSemaphoreTypeCreateInfo typeInfo{};
+	typeInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO;
+    typeInfo.semaphoreType = isTimeline ? VK_SEMAPHORE_TYPE_TIMELINE : VK_SEMAPHORE_TYPE_BINARY;
+
+    if (isTimeline)
+        typeInfo.initialValue = initialValue;
+
     VkSemaphoreCreateInfo semaphoreInfo{};
     semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+    semaphoreInfo.pNext = &typeInfo;
 
     vkCreateSemaphore(backend.GetLogicalDevice(), &semaphoreInfo, nullptr, &handle);
 }

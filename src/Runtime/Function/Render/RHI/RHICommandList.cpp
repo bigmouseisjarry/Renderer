@@ -32,50 +32,92 @@ void RHICommandList::EndCommand()
     else ADD_COMMAND(EndCommand);
 }
 
-void RHICommandList::Execute(RHIFenceRef waitFence, RHISemaphoreRef waitSemaphore, RHISemaphoreRef signalSemaphore)
+RHIQueueRef RHICommandList::GetQueue() const
 {
-    if (!info.byPass) 
-    {
-        // LOG_DEBUG("Recording GraphicsCommand list in delay mode.");
-        for (int32_t i = 0; i < commands.size(); i++) 
-        {
-            commands[i]->Execute(info.context);
-            delete commands[i];
-        }
-        commands.clear();
-    }
-
-    info.context->Execute(waitFence, waitSemaphore, signalSemaphore);
+    return info.pool->GetQueue();
 }
 
-void RHICommandList::ExecuteBatch(const std::vector<RHICommandListRef>& lists, RHIFenceRef fence, RHISemaphoreRef waitSemaphore, RHISemaphoreRef signalSemaphore)
+void RHICommandList::ReplayList(RHICommandList* list)
 {
-    if (lists.empty()) return;
+    if (!list->info.byPass)     // 延迟模式：先回放各自队列到自己的context；byPass列表队列已空
+    {
+        // LOG_DEBUG("Recording GraphicsCommand list in delay mode.");
+        for (int32_t i = 0; i < list->commands.size(); i++)
+        {
+            list->commands[i]->Execute(list->info.context);
+            delete list->commands[i];
+        }
+        list->commands.clear();
+    }
+}
 
+void RHICommandList::Submit(const RHIQueueSubmitBatch& batch)
+{
+    assert(batch.queue != nullptr);
+
+    // 回放延迟模式的列表到各自的context（byPass列表命令队列已空，直接收集）
     std::vector<RHICommandContextRef> contexts;
-    contexts.reserve(lists.size());
-
-    for (const RHICommandListRef& list : lists)
+    contexts.reserve(batch.commandLists.size());
+    for (const RHICommandListRef& list : batch.commandLists)
     {
         if (list == nullptr) continue;
 
-        if (!list->info.byPass)     // 延迟模式：先回放各自队列到自己的context
-        {
-            for (int32_t i = 0; i < list->commands.size(); i++)
-            {
-                list->commands[i]->Execute(list->info.context);
-                delete list->commands[i];
-            }
-            list->commands.clear();
-        }
+        ReplayList(list.get());
+
+        // 批次内列表的归属队列族必须与目标队列一致（原注释级约定升级为断言：
+        // 命令缓冲只能在分配它的队列族上提交执行）
+        assert(list->GetQueue()->GetFamilyIndex() == batch.queue->GetFamilyIndex());
 
         contexts.push_back(list->info.context);
     }
 
-    if (contexts.empty()) return;
+    // 经载体context发出（空contexts=空提交：信号量中继/join收口批，合法）
+    info.context->Submit(batch, contexts);
+}
 
-    // 所有chunk来自同一pool（同队列），由第一个context提供提交队列
-    contexts.front()->ExecuteBatch(contexts, fence, waitSemaphore, signalSemaphore);
+void RHICommandList::Execute(RHIFenceRef signalFence, RHISemaphoreRef waitSemaphore, RHISemaphoreRef signalSemaphore)
+{
+    ReplayList(this);
+
+    // 单列表批次
+    RHIQueueSubmitBatch batch;
+    batch.queue = GetQueue();
+    batch.signalFence = signalFence;
+    if (waitSemaphore != nullptr)
+        batch.waits.push_back({waitSemaphore, 0, false, RESOURCE_STATE_UNDEFINED});   // UNDEFINED=宽掩码约定（如swapchain acquire）
+    if (signalSemaphore != nullptr)
+        batch.signals.push_back({signalSemaphore, 0, false});
+
+    std::vector<RHICommandContextRef> contexts = {info.context};
+    info.context->Submit(batch, contexts);
+}
+
+void RHICommandList::ExecuteBatch(const std::vector<RHICommandListRef>& lists, RHIFenceRef signalFence, RHISemaphoreRef waitSemaphore, RHISemaphoreRef signalSemaphore)
+{
+    if (lists.empty()) return;
+
+    RHIQueueSubmitBatch batch;
+    batch.queue = lists.front()->GetQueue();
+    batch.commandLists = lists;
+    batch.signalFence = signalFence;
+    if (waitSemaphore != nullptr)
+        batch.waits.push_back({waitSemaphore, 0, false, RESOURCE_STATE_UNDEFINED});
+    if (signalSemaphore != nullptr)
+        batch.signals.push_back({signalSemaphore, 0, false});
+
+    lists.front()->Submit(batch);   // 载体=首列表（同队列断言在Submit内）
+}
+
+void RHICommandList::ExecuteQueueSubmitPlan(const RHIQueueSubmitPlan& plan)
+{
+    // 载体=this：各批次目标队列由批次显式携带，与载体归属无关；
+    // 空commandLists批次（信号量中继/join收口）亦经载体context发出
+    for (const RHIQueueSubmitBatch& batch : plan.batches)
+    {
+        if (batch.queue == nullptr) continue;
+
+        Submit(batch);
+    }
 }
 
 void RHICommandList::TextureBarrier(const RHITextureBarrier& barrier)

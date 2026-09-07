@@ -16,6 +16,8 @@
 
 // TODO 目前并没有做池化后的GC，冗余资源没有定期删除
 
+// TODO:这个文件的修改还是有一段没有看懂，为什么从单队列转向多队列后，上面3个pool也都需要按照槽分池？
+
 class RDGBufferPool
 {
 public:
@@ -61,11 +63,14 @@ public:
     inline uint32_t AllocatedSize() { return allocatedSize; }
     void Clear()                    { pooledBuffers.clear(); pooledSize = 0; }
 
-    static std::shared_ptr<RDGBufferPool> Get()
+    // 按帧槽分池：FRAMES_IN_FLIGHT内两帧GPU并发（多队列下不再按提交序串行），
+    // 共享池会把帧N尚未执行完的资源重新分配给帧N+1——跨帧GPU竞态。
+    // 与RDGDescriptorSetPool同理（池条目还携带跨帧状态/归属族，同样不能跨帧共享）
+    static std::shared_ptr<RDGBufferPool> Get(uint32_t frameIndex)
     {
-        static std::shared_ptr<RDGBufferPool> pool;
-        if(pool == nullptr) pool = std::make_shared<RDGBufferPool>();
-        return pool;
+        static std::shared_ptr<RDGBufferPool> pool[FRAMES_IN_FLIGHT];
+        if(pool[frameIndex] == nullptr) pool[frameIndex] = std::make_shared<RDGBufferPool>();
+        return pool[frameIndex];
     }
 
 private:
@@ -80,8 +85,9 @@ class RDGTexturePool
 public:
     struct PooledTexture
     {
-        RHITextureRef texture;  
-        RHIResourceState state; 
+        RHITextureRef texture;
+        RHIResourceState state;
+        uint32_t queueFamily = RHI_QUEUE_FAMILY_IGNORED;    // 归还时的归属族（跨帧所有权转移：下一帧异族首用发acquire）
     };
 
     struct Key
@@ -111,11 +117,12 @@ public:
     inline uint32_t AllocatedSize() { return allocatedSize; }
     void Clear()                    { pooledTextures.clear(); pooledSize = 0; }
 
-    static std::shared_ptr<RDGTexturePool> Get()
+    // 按帧槽分池（见RDGBufferPool::Get注释：跨帧GPU竞态）
+    static std::shared_ptr<RDGTexturePool> Get(uint32_t frameIndex)
     {
-        static std::shared_ptr<RDGTexturePool> pool;
-        if(pool == nullptr) pool = std::make_shared<RDGTexturePool>();
-        return pool;
+        static std::shared_ptr<RDGTexturePool> pool[FRAMES_IN_FLIGHT];
+        if(pool[frameIndex] == nullptr) pool[frameIndex] = std::make_shared<RDGTexturePool>();
+        return pool[frameIndex];
     }
 
 private:
@@ -160,11 +167,12 @@ public:
     inline uint32_t AllocatedSize() { return allocatedSize; }
     void Clear()                    { pooledTextureViews.clear(); pooledSize = 0; }
 
-    static std::shared_ptr<RDGTextureViewPool> Get()
+    // 按帧槽分池（见RDGBufferPool::Get注释：跨帧GPU竞态）
+    static std::shared_ptr<RDGTextureViewPool> Get(uint32_t frameIndex)
     {
-        static std::shared_ptr<RDGTextureViewPool> pool;
-        if(pool == nullptr) pool = std::make_shared<RDGTextureViewPool>();
-        return pool;
+        static std::shared_ptr<RDGTextureViewPool> pool[FRAMES_IN_FLIGHT];
+        if(pool[frameIndex] == nullptr) pool[frameIndex] = std::make_shared<RDGTextureViewPool>();
+        return pool[frameIndex];
     }
 
 private:

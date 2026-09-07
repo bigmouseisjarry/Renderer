@@ -53,7 +53,7 @@ void PassDependencyAnalysis::analyze_pass_dependencies(RDGDependencyGraphRef gra
     ENGINE_TIME_SCOPE(PassDependencyAnalysis::analyze_pass_dependencies);
 
     // 优化版本：O(n) 复杂度，为每个资源维护最后访问者索引
-    auto& all_passes = get_passes(graph);
+    std::vector<RDGPassNodeRef>& all_passes = get_passes(graph);
 
     // 为每个资源维护最后访问的Pass和访问信息
     std::unordered_map<RDGResourceNodeRef, LastResourceAccess> resource_last_access_;
@@ -511,7 +511,7 @@ void PassDependencyAnalysis::generate_cross_queue_sync_points(const QueueSchedul
                 sync_point.resource = resource_dep.resource;
                 sync_point.from_state = resource_dep.previous_state;
                 sync_point.to_state = resource_dep.current_state;
-                sync_point.sync_value = 0;
+                sync_point.sync_value = 0;     // 相对值未分配：timeline绝对value由Phase 8按提交序统一分配
 
                 sync_points.push_back(sync_point);
             }

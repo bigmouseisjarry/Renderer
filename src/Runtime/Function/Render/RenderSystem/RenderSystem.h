@@ -62,10 +62,7 @@ private:
     RHISurfaceRef surface;
     RHIQueueRef queue;
     RHISwapchainRef swapchain;
-
-    // 每chunk一个独立的命令池：vkBegin/vkEnd/vkResetCommandBuffer要求父VkCommandPool外部同步，
-    // 并行录制时各worker同时BeginCommand会违反规范（驱动层访问冲突），必须物理隔离
-    std::vector<RHICommandPoolRef> chunkPools;
+    RHIRenderQueryRef renderQuery = nullptr;   // GPU侧逐pass统计（info无enable时不创建；每帧灌入executor供Phase 8打点）
 
     using PerFrameCommonResource = RDGPerFrameResource;
     std::array<PerFrameCommonResource, FRAMES_IN_FLIGHT> perFrameCommonResources;
@@ -82,8 +79,10 @@ private:
     void SubmitRHI();
     void UpdateGlobalSetting();
 
-    // 惰性创建帧槽的chunk命令流（byPass=true，独占context），见RDGPerFrameResource::ChunkCommands
-    void EnsureFrameChunkLists(PerFrameCommonResource& resource, uint32_t count);
+    // 预建帧槽的全部队列slot（与QueueSchedule::QueryConfiguredQueues同序，slot下标==RDG队列下标）。
+    // 每队列预建 chunk_count 条命令流（每条独占一个pool：VkCommandPool外部同步，并行录制必须物理隔离）；
+    // 同步点密集致批次数超出时由Phase 8规划期经RDGQueueFrameSlot::EnsureCommandCount按需增长
+    void EnsureQueueFrameSlots(PerFrameCommonResource& resource, const QueueScheduleConfig& config);
 
     std::shared_ptr<RenderMeshManager> meshManager;
     std::shared_ptr<RenderLightManager> lightManager;

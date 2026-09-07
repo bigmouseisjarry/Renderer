@@ -36,7 +36,7 @@ struct LogicalTopologyResult
     uint32_t max_logical_dependency_depth = 0;           // 最大逻辑依赖深度
 };
 
-// Pass dependencies result (逻辑依赖信息)
+// pass逻辑依赖信息
 struct PassDependencies {
     // === 逻辑依赖信息（永不变，不受重排序影响） ===
     std::vector<ResourceDependency> resource_dependencies; // All resource dependencies of this pass
