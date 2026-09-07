@@ -1,7 +1,7 @@
-# Bob's Toy Renderer
+# Renderer
 
 ## 关于此仓库
-本仓库是我学习图形学过程中开发的一个玩具渲染器，支持基本的实时渲染算法及框架功能。
+本仓库是我学习图形学过程中开发的一个简易渲染器，支持基本的实时渲染算法及框架功能。
 
 **与渲染相关的主要目录及功能如下：**
 |  目录   | 功能描述  |
@@ -125,8 +125,8 @@ xmake project -k vsxmake
 
 https://github.com/SakuraEngine/SakuraEngine  
 https://github.com/google/filament  
-https://github.com/EpicGames/UnrealEngine
-https://github.com/CPJ-BO/ToyRenderer
-https://github.com/NVIDIA-RTX/NRD
+https://github.com/EpicGames/UnrealEngine  
+https://github.com/CPJ-BO/ToyRenderer  
+https://github.com/NVIDIA-RTX/NRD  
 
 
