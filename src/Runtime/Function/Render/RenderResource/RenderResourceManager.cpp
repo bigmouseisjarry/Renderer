@@ -376,9 +376,21 @@ void RenderResourceManager::InitGlobalResources()
             Extent3D(windowExtent.width, windowExtent.height, 1),
             1, 1);
 
-        multiFrameResource.objectIDTexture[1] = std::make_shared<Texture>( 
-            TEXTURE_TYPE_2D, 
+        multiFrameResource.objectIDTexture[1] = std::make_shared<Texture>(
+            TEXTURE_TYPE_2D,
             FORMAT_R32_UINT,
+            Extent3D(windowExtent.width, windowExtent.height, 1),
+            1, 1);
+
+        multiFrameResource.finalColorHistoryTexture[0] = std::make_shared<Texture>(      // rgba16f是RW格式，Texture封装自动带STORAGE位（TAA kernel直写需要）
+            TEXTURE_TYPE_2D,
+            EngineContext::Render()->GetHdrColorFormat(),
+            Extent3D(windowExtent.width, windowExtent.height, 1),
+            1, 1);
+
+        multiFrameResource.finalColorHistoryTexture[1] = std::make_shared<Texture>(
+            TEXTURE_TYPE_2D,
+            EngineContext::Render()->GetHdrColorFormat(),
             Extent3D(windowExtent.width, windowExtent.height, 1),
             1, 1);
 

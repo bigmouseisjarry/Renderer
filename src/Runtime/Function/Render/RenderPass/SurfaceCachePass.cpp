@@ -138,6 +138,13 @@ void SurfaceCachePass::Build(RDGBuilder& builder)
             .ReadWrite(1, 3, 0, lightingTex)
             .Read(1, 4, 0, depthTex)
             .ReadWrite(1, 5, 0, directLightingBuf)
+            // 隐形依赖边（图外通道消费）：直接光照采样方向光阴影图与点阴影（经per-frame set）
+            .Dependency(builder.GetTexture("Directional Depth [0]"), RESOURCE_STATE_SHADER_RESOURCE)
+            .Dependency(builder.GetTexture("Directional Depth [1]"), RESOURCE_STATE_SHADER_RESOURCE)
+            .Dependency(builder.GetTexture("Directional Depth [2]"), RESOURCE_STATE_SHADER_RESOURCE)
+            .Dependency(builder.GetTexture("Directional Depth [3]"), RESOURCE_STATE_SHADER_RESOURCE)
+            .Dependency(builder.GetTexture("Point Shadow Filtered Color [0]"), RESOURCE_STATE_SHADER_RESOURCE)
+            .Dependency(builder.GetTexture("Point Shadow Filtered Color [1]"), RESOURCE_STATE_SHADER_RESOURCE)
             .Execute([&](RDGPassContext context) {       
                 
                 auto& dispatches = EngineContext::Render()->GetSurfaceCacheManager()->GetDirectLightingDispatches();

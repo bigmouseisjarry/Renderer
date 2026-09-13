@@ -193,8 +193,8 @@ void GBufferPass::Build(RDGBuilder& builder)
             .Color(3, velocity, ATTACHMENT_LOAD_OP_CLEAR, ATTACHMENT_STORE_OP_STORE, {0.0f, 0.0f, 0.0f, 0.0f})
             .Color(4, objectID, ATTACHMENT_LOAD_OP_CLEAR, ATTACHMENT_STORE_OP_STORE, {0.0f, 0.0f, 0.0f, 0.0f})
             .DepthStencil(depth, ATTACHMENT_LOAD_OP_LOAD, ATTACHMENT_STORE_OP_STORE, 1.0f, 0)
-            .Dependency(builder.GetBuffer("Mesh Draw Commands" + cmdIndex))
-            .Dependency(builder.GetBuffer("Clusrter Draw Commands" + cmdIndex))
+            .Dependency(builder.GetBuffer("Mesh Draw Commands" + cmdIndex), RESOURCE_STATE_INDIRECT_ARGUMENT)
+            .Dependency(builder.GetBuffer("Clusrter Draw Commands" + cmdIndex), RESOURCE_STATE_INDIRECT_ARGUMENT)
             .Execute([&](RDGPassContext context) {
 
                 Extent2D windowExtent = EngineContext::Render()->GetWindowsExtent();

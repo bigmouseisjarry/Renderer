@@ -10,6 +10,7 @@
 #include "Function/Render/RDG/Phases/pass_binding_phase.h"
 #include "Function/Render/RDG/Phases/barrier_generation_phase.h"
 #include "Function/Render/RDG/Phases/pass_execution_phase.h"
+#include "Function/Render/RDG/Phases/cross_frame_registry.h"
 
 
 // RDGCompiler：编排 Phase pipeline
@@ -24,10 +25,12 @@
 class RDGCompiler
 {
 public:
-    RDGCompiler() = default;
-    RDGCompiler(const QueueScheduleConfig& queueConfig = {}, const ExecutionReorderConfig& reorderConfig = {}, const CrossQueueSyncConfig& queueSyncConfig = {}
+    RDGCompiler(RDGCrossFrameRegistry& crossFrameRegistry, RHIRenderQueryRef renderQuery = nullptr
+        , const QueueScheduleConfig& queueConfig = {}, const ExecutionReorderConfig& reorderConfig = {}, const CrossQueueSyncConfig& queueSyncConfig = {}
         , const PassBindingConfig& bindingConfig = {}, const BarrierGenerationConfig& barrierConfig = {}, const CommandRecordingConfig& executionConfig = {})
-        : queueConfig_(queueConfig),reorderConfig_(reorderConfig), queueSyncConfig_(queueSyncConfig), bindingConfig_(bindingConfig), barrierConfig_(barrierConfig), executionConfig_(executionConfig) {}
+        : crossFrameRegistry_(crossFrameRegistry)
+        , renderQuery_(renderQuery)
+        , queueConfig_(queueConfig),reorderConfig_(reorderConfig), queueSyncConfig_(queueSyncConfig), bindingConfig_(bindingConfig), barrierConfig_(barrierConfig), executionConfig_(executionConfig) {}
 
     void reset();
 
@@ -48,6 +51,13 @@ public:
     const PassExecutionPhase& GetPassExecutionPhase() const { return passExecution; }
 
 private:
+    // 跨帧注册表（RenderSystem拥有，所有帧槽编译器共享同一实例——跨帧数据不能做编译器成员，
+    // 每槽一个实例会读到同槽上上帧（=帧N-1）的旧数据）。声明于各Phase之前：引用先于使用初始化
+    RDGCrossFrameRegistry& crossFrameRegistry_;
+
+    // pass历史耗时（EMA，RenderSystem的renderQuery；HEFT调度权重。跨帧槽共享——声明先于使用）
+    RHIRenderQueryRef renderQuery_;
+
     // 阶段 1: 信息收集
     PassInfoAnalysis passInfoAnalysis;
 
@@ -55,8 +65,8 @@ private:
     PassDependencyAnalysis passDependencyAnalysis{ passInfoAnalysis };
 
     // 阶段3
-    QueueScheduleConfig queueConfig_;                          
-    QueueSchedule queueSchedule{ passDependencyAnalysis, queueConfig_ };  
+    QueueScheduleConfig queueConfig_;
+    QueueSchedule queueSchedule{ passDependencyAnalysis, passInfoAnalysis, queueConfig_, renderQuery_ };
 
     // 阶段4
     ExecutionReorderConfig reorderConfig_;
@@ -76,6 +86,6 @@ private:
 
     // 阶段8: Pass执行——实际录制command，替代 RDGBuilder::Execute()
     CommandRecordingConfig executionConfig_;
-    PassExecutionPhase passExecution{ queueSchedule,executionReorder,crossQueueSyncAnalysis,barrierGeneration,passBinding,executionConfig_ };
+    PassExecutionPhase passExecution{ queueSchedule,executionReorder,crossQueueSyncAnalysis,barrierGeneration,passBinding,crossFrameRegistry_,executionConfig_ };
 };
 using RDGCompilerRef = std::shared_ptr<RDGCompiler>;

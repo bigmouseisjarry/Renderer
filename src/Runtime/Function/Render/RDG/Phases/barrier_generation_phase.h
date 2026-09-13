@@ -137,7 +137,12 @@ private:
         RDGPassNodeRef last_pass = nullptr;    // 上一次触碰的pass（跨队列判定用）
         uint32_t mip_levels = 1;
         uint32_t array_layers = 1;
-        uint32_t init_family = RHI_QUEUE_FAMILY_IGNORED;    // 帧首归属族（池化跨帧所有权，Phase 6分配时写入）
+        // 所有权追踪（init_family的扩展）：帧首=池族/imported族（跨帧静止归属，Phase 6分配时
+        // 写入节点initFamily；imported恒graphics族），帧内随每次跨族转移对更新为目标族。
+        // 与旧"由last_pass队列推导"等价：读访问推进last_pass但不改变所有权，两次转移之间
+        // 所有触碰者都在现任族上。显式化的意义：屏障摆放位置与last_pass位置解耦后
+        //（Phase 8批次合并已使release可位于批中部）推导式写法会失真，追踪式不受影响
+        uint32_t owner_family = RHI_QUEUE_FAMILY_IGNORED;
 
         inline size_t index(uint32_t mip, uint32_t layer) const { return static_cast<size_t>(mip) * array_layers + layer; }
     };

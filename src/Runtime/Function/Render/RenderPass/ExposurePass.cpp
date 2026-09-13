@@ -50,7 +50,9 @@ void ExposurePass::Build(RDGBuilder& builder)
         .Import(exposureDataBuffer.buffer, RESOURCE_STATE_UNDEFINED)
         .Finish();
 
+    // 第3刀·尾部加强：post链钉graphics队列（与Forward/Bloom同流，帧尾零跨队列跳）
     RDGComputePassHandle pass0 = builder.CreateComputePass("Luminance Histogram")
+        .AddFlag(RDGPassFlags::ForceGraphicsQueue)
         .RootSignature(rootSignature)
         .Read(0, 0, 0, taaOutColor)
         .ReadWrite(0, 1, 0, exposureData)
@@ -66,6 +68,7 @@ void ExposurePass::Build(RDGBuilder& builder)
         .Finish();
 
     RDGComputePassHandle pass1 = builder.CreateComputePass("Luminance Exposure")
+        .AddFlag(RDGPassFlags::ForceGraphicsQueue)
         .RootSignature(rootSignature)
         .Read(0, 0, 0, taaOutColor)
         .ReadWrite(0, 1, 0, exposureData)

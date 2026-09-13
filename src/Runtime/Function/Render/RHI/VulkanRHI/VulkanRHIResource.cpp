@@ -70,6 +70,9 @@ void VulkanRHIRenderQuery::ResolveFrame(uint32_t slot)
 	struct Dur { double ms; std::string name; };   // 按值持有——names在打印前清理，指针会悬垂
 	std::vector<Dur> durs;
 	std::vector<double> queueSpans(info.timing_queue_count, 0.0);   // 各队列首末打点跨度（并发重叠，不可加总）
+	// 整链dump素材：按队列保留本帧时间戳与名字（索引序=队列流序）
+	std::vector<std::vector<uint64_t>> chainStamps(info.timing_queue_count);
+	std::vector<std::vector<std::string>> chainNames(info.timing_queue_count);
 	bool anyData = false;
 
 	for (uint32_t q = 0; q < info.timing_queue_count; q++)
@@ -89,6 +92,22 @@ void VulkanRHIRenderQuery::ResolveFrame(uint32_t slot)
 			continue;
 		}
 		vkResetQueryPool(device, pool, base, count);    // 复用前重置（hostQueryReset特性）
+
+		chainStamps[q] = stamps;    // names随后清理，链路dump需按值另存
+		chainNames[q].assign(count, {});
+		for (uint32_t i = 0; i < count; i++) chainNames[q][i] = names[base + i];
+
+		// per-pass执行时长EMA（HEFT调度权重，2026-09-11）：exec对=ts[2i+1]-ts[2i]（不含等待，
+		// 等待由调度器自己建模）。首采样直接采纳，之后alpha=0.25滑动；名字含实例index帧间稳定
+		for (uint32_t i = 0; i * 2 + 1 < count; i++)
+		{
+			const std::string& execName = chainNames[q][i * 2 + 1];
+			if (execName.empty()) continue;
+			const double execMs = static_cast<double>(stamps[i * 2 + 1] - stamps[i * 2]) * periodNs / 1e6;
+			auto& entry = passDurationEMA[execName];
+			entry.first = (entry.second == 0) ? execMs : entry.first * 0.75 + execMs * 0.25;
+			entry.second++;
+		}
 
 		// 时长只在该队列子区间内相邻打点间有效（跨队列时间戳并发交错）
 		for (uint32_t i = 1; i < count; i++)
@@ -117,6 +136,49 @@ void VulkanRHIRenderQuery::ResolveFrame(uint32_t slot)
 			printf(" %s=%.2f", durs[i].name.c_str(), durs[i].ms);
 		printf("\n");
 	}
+
+	// 整链dump（比top10更稀疏）：双打点按索引序还原每队列pass链
+	if (resolveCounter == 2 || resolveCounter % 300 == 0)
+	{
+		uint64_t gmin = UINT64_MAX, gmax = 0;
+		for (uint32_t q = 0; q < info.timing_queue_count; q++)
+			if (!chainStamps[q].empty())
+			{
+				gmin = std::min(gmin, chainStamps[q].front());
+				gmax = std::max(gmax, chainStamps[q].back());
+			}
+		if (gmin == UINT64_MAX) return;
+		const double p = periodNs / 1e6;
+		printf("[GpuChain] f=%llu window=%.2fms\n", (unsigned long long)resolveCounter,
+		       static_cast<double>(gmax - gmin) * p);
+		for (uint32_t q = 0; q < info.timing_queue_count; q++)
+		{
+			const std::vector<uint64_t>& ts = chainStamps[q];
+			const std::vector<std::string>& nm = chainNames[q];
+			if (ts.empty()) continue;
+			printf("[GpuChain] f=%llu q%u span=%.2fms t0=+%.2fms passes=%zu\n", (unsigned long long)resolveCounter, q,
+			       static_cast<double>(ts.back() - ts.front()) * p, static_cast<double>(ts.front() - gmin) * p, ts.size() / 2);
+			for (uint32_t i = 0; i * 2 + 1 < ts.size(); i++)
+			{
+				if (nm[i * 2 + 1].empty()) continue;
+				if (i == 0)
+					printf("[GpuChain] %llu q%u #%02d %-30s w=     -- e=%6.2f t=%7.2f\n", (unsigned long long)resolveCounter, q, i,
+					       nm[i * 2 + 1].c_str(), static_cast<double>(ts[1] - ts[0]) * p,
+					       static_cast<double>(ts[0] - gmin) * p);
+				else
+					printf("[GpuChain] %llu q%u #%02d %-30s w=%6.2f e=%6.2f t=%7.2f\n", (unsigned long long)resolveCounter, q, i,
+					       nm[i * 2 + 1].c_str(), static_cast<double>(ts[i * 2] - ts[i * 2 - 1]) * p,
+					       static_cast<double>(ts[i * 2 + 1] - ts[i * 2]) * p, static_cast<double>(ts[i * 2] - gmin) * p);
+			}
+		}
+	}
+}
+
+double VulkanRHIRenderQuery::GetPassDurationMs(const std::string& passName, double fallbackMs) const
+{
+	auto found = passDurationEMA.find(passName);
+	if (found == passDurationEMA.end() || found->second.second < 3) return fallbackMs;   // 采样<3帧视为冷启动噪声（首帧冷数据百ms级假象），调度权重不可信
+	return found->second.first;
 }
 
 void VulkanRHIRenderQuery::Destroy()

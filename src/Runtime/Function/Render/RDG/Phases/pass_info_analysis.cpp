@@ -120,7 +120,11 @@ void PassInfoAnalysis::extract_resource_info(RDGPassNodeRef pass, PassResourceIn
         access_info.resource_state = edge->state;
         access_info.is_output = edge->IsOutput();
 
-        if (edge->asShaderReadWrite || edge->asOutputReadWrite)
+        // buffer访问判定：间接输出边是写（2026-09-12修复——Gizmo Init的icon闪烁根因：
+        // asOutputIndirectDraw曾落Read分支，生产者被判纯读者→与消费者（Dependency读边）
+        // 在写者锚定下无边→pass对无序，旧classify靠级别序偶然排对，HEFT的tie-break翻转后
+        // 所有权链记反方向（Gizmo读上帧buffer）。GPU Culling链靠额外ReadWrite声明侥幸正确）
+        if (edge->asShaderReadWrite || edge->asOutputReadWrite || edge->asOutputIndirectDraw)
             access_info.access_type = EResourceAccessType::ReadWrite;
         else
             access_info.access_type = EResourceAccessType::Read;

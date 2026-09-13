@@ -5,8 +5,9 @@
 
 layout(set = 1, binding = 0) uniform texture2D CURRENT_COLOR;
 layout(set = 1, binding = 1) uniform texture2D HISTORY_COLOR;
-layout(set = 1, binding = 2) uniform texture2D REPROJECTION_RESULT;	
+layout(set = 1, binding = 2) uniform texture2D REPROJECTION_RESULT;
 layout(set = 1, binding = 3, rgba16f) uniform image2D OUT_COLOR;
+layout(set = 1, binding = 4, rgba16f) uniform image2D HISTORY_OUT;   // 下帧history直写（ping-pong另一侧，原Copy History pass已删）
 
 layout(push_constant) uniform TAASetting 
 {
@@ -159,5 +160,6 @@ void main()
         outColor = valid ? vec4(1.0f) : vec4(0.0f);
 
     imageStore(OUT_COLOR, pixel, outColor);
+    imageStore(HISTORY_OUT, pixel, outColor);
 }
 

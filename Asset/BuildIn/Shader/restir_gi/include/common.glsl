@@ -50,9 +50,9 @@ layout (set = 1, binding = 3) buffer ResultReservoirs
 	GIReservoir RESULT_RESERVOIRS[];                  // 本帧Reservoir空域合并的结果
 };
 
-layout(set = 2, binding = 0, rgba8)         uniform image2D G_BUFFER_DIFFUSE_METALLIC;	        // 本帧G-Buffer
-layout(set = 2, binding = 1, rgba8_snorm)   uniform image2D G_BUFFER_NORMAL_ROUGHNESS;	
-layout(set = 2, binding = 2, rgba16f)       uniform image2D G_BUFFER_EMISSION;
+layout(set = 2, binding = 0)               uniform texture2D G_BUFFER_DIFFUSE_METALLIC;	// 本帧G-Buffer（samplerless texelFetch读，2026-09-11降级：纯读无写入）
+layout(set = 2, binding = 1)               uniform texture2D G_BUFFER_NORMAL_ROUGHNESS;	// 同上
+layout(set = 2, binding = 2)               uniform texture2D G_BUFFER_EMISSION;		// 同上
 layout(set = 2, binding = 3)   				uniform texture2D REPROJECTION_RESULT;				// 重投影结果	
 
 layout(set = 2, binding = 4, rgba16f)       uniform image2D FINAL_COLOR;	                    // lighting的输出，无降噪

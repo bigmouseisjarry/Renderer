@@ -77,6 +77,35 @@ void PassDependencyAnalysis::analyze_pass_dependencies(RDGDependencyGraphRef gra
 
             // 如果这个资源之前被访问过，创建两个pass间的依赖
             // 这里会为 last_pass---read---->resource ----read---->current_pass间也创建依赖
+        //    if (last_access.last_pass != nullptr && last_access.last_pass != current_pass)
+        //    {
+        //        ResourceDependency dep;
+        //        dep.dependent_pass = last_access.last_pass;
+        //        dep.resource = resource;
+        //        dep.current_access = current_access.access_type;
+        //        dep.previous_access = last_access.last_access_type;
+        //        dep.current_state = current_access.resource_state;
+        //        dep.previous_state = last_access.last_state;
+        //        current_deps.resource_dependencies.push_back(dep);
+
+        //        // 唯一性的插入
+        //        if (std::find(current_deps.dependent_passes.begin(), current_deps.dependent_passes.end(), dep.dependent_pass) == current_deps.dependent_passes.end())
+        //            current_deps.dependent_passes.push_back(dep.dependent_pass);
+        //    }
+
+        //    // 更新该资源的最后一次访问信息
+        //    last_access.last_pass = current_pass;
+        //    last_access.last_access_type = current_access.access_type;
+        //    last_access.last_state = current_access.resource_state;
+        //}
+            // [实验v3 2026-09-11] 写者锚定 + WAR读者登记：
+            //  v1（R-R不建边）已证伪：R2悬空丢失RAW因果（闪烁）。
+            //  v2（纯读者不推进锚）RAW保留、QFO零断裂，但帧内W-R-W序列的WAR洞导致仍有闪烁
+            //  ——第二写者只锚第一写者，不等读者读完就覆盖。
+            //  v3：读者登记进readers_since_write；写者到来时对全体读者逐个建R-W边
+            //  （读者间无序，不能只等最近一个）。R-R边依然不存在（读者各自锚写者）。
+            //  同pass的重复访问由last_pass!=current_pass与读者登记去重共同挡住自环。
+            const bool pureRead = current_access.access_type == EResourceAccessType::Read;
             if (last_access.last_pass != nullptr && last_access.last_pass != current_pass)
             {
                 ResourceDependency dep;
@@ -93,10 +122,44 @@ void PassDependencyAnalysis::analyze_pass_dependencies(RDGDependencyGraphRef gra
                     current_deps.dependent_passes.push_back(dep.dependent_pass);
             }
 
-            // 更新该资源的最后一次访问信息
-            last_access.last_pass = current_pass;
-            last_access.last_access_type = current_access.access_type;
-            last_access.last_state = current_access.resource_state;
+            if (!pureRead)
+            {
+                // WAR：写者（含ReadWrite）须等本帧自最近写者以来的全体读者读完
+                for (const auto& [reader, readerState] : last_access.readers_since_write)
+                {
+                    if (reader == current_pass) continue;
+                    if (std::find(current_deps.dependent_passes.begin(), current_deps.dependent_passes.end(), reader) != current_deps.dependent_passes.end())
+                        continue;   // 该读者已有pass级依赖（多资源同对），跳过重复边
+
+                    ResourceDependency dep;
+                    dep.dependent_pass = reader;
+                    dep.resource = resource;
+                    dep.current_access = current_access.access_type;
+                    dep.previous_access = EResourceAccessType::Read;
+                    dep.current_state = current_access.resource_state;
+                    dep.previous_state = readerState;
+                    current_deps.resource_dependencies.push_back(dep);
+                    current_deps.dependent_passes.push_back(reader);
+                }
+            }
+
+            // 更新锚与读者登记——纯读者不推进last_pass锚（写者锚定），但登记自己；
+            // 写者推进锚并清空读者登记（后续读者改锚定新写者）
+            if (pureRead)
+            {
+                bool alreadyRegistered = false;
+                for (const auto& [reader, _] : last_access.readers_since_write)
+                    if (reader == current_pass) { alreadyRegistered = true; break; }
+                if (!alreadyRegistered)
+                    last_access.readers_since_write.emplace_back(current_pass, current_access.resource_state);
+            }
+            else
+            {
+                last_access.last_pass = current_pass;
+                last_access.last_access_type = current_access.access_type;
+                last_access.last_state = current_access.resource_state;
+                last_access.readers_since_write.clear();
+            }
         }
     }
 
@@ -493,7 +556,7 @@ void PassDependencyAnalysis::generate_cross_queue_sync_points(const QueueSchedul
     {
         uint32_t consumer_queue = queue_result.pass_queue_assignments.find(consumer_pass)->second;
 
-        // 检查每个资源依赖
+        // 检查当前pass的每个资源依赖
         for (const auto& resource_dep : deps.resource_dependencies)
         {
             RDGPassNodeRef producer_pass = resource_dep.dependent_pass;
@@ -517,4 +580,83 @@ void PassDependencyAnalysis::generate_cross_queue_sync_points(const QueueSchedul
             }
         }
     }
+}
+
+// ---- HEFT回写接口 ///////////////////////////////////////////////////////////////////////
+
+void PassDependencyAnalysis::add_scheduling_order_edges(const std::vector<SchedulingOrderEdge>& edges)
+{
+    // 所有权链序边追加（幂等：pass对+资源三元组去重）。边的状态对从pass_info_analysis的实际
+    // 访问取（HEFT只管访问序不管状态——SSIS点的wait stage推导与Phase 7的屏障语义需要真实状态）
+    for (const auto& edge : edges)
+    {
+        if (!edge.from || !edge.to || edge.from == edge.to || !edge.resource) continue;
+
+        PassDependencies& deps = pass_dependencies_[edge.to];
+
+        // 幂等：同pass对+同资源已建边则跳过
+        bool exists = false;
+        for (const auto& dep : deps.resource_dependencies)
+            if (dep.dependent_pass == edge.from && dep.resource == edge.resource) { exists = true; break; }
+        if (exists) continue;
+
+        ResourceDependency dep;
+        dep.dependent_pass = edge.from;
+        dep.resource = edge.resource;
+        dep.current_access = edge.toAccess;
+        dep.previous_access = edge.fromAccess;
+        dep.current_state = pass_info_analysis.get_resource_state(edge.to, edge.resource);
+        dep.previous_state = pass_info_analysis.get_resource_state(edge.from, edge.resource);
+        deps.resource_dependencies.push_back(dep);
+
+        // 双向表同步维护（Kahn入度=前向dependent_passes计数、递减遍历反向dependent_by_passes
+        // ——只更前向会让入度永不归零、拓扑序缺pass，下游绑定/屏障缺失→录制期崩溃）
+        if (std::find(deps.dependent_passes.begin(), deps.dependent_passes.end(), edge.from) == deps.dependent_passes.end())
+            deps.dependent_passes.push_back(edge.from);
+        PassDependencies& fromDeps = pass_dependencies_[edge.from];
+        if (std::find(fromDeps.dependent_by_passes.begin(), fromDeps.dependent_by_passes.end(), edge.to) == fromDeps.dependent_by_passes.end())
+            fromDeps.dependent_by_passes.push_back(edge.to);
+    }
+}
+
+void PassDependencyAnalysis::apply_schedule_order(const std::vector<RDGPassNodeRef>& order)
+{
+    // 按HEFT调度序直接重建拓扑（合法序：就绪集保证前驱先于后继调度）。级别=前驱最大级别+1
+    // 按序一次遍历（前驱必已计算）。关键路径照旧（高度DP按dependent_by_passes，遍历序无关）
+    logical_topology_.logical_topological_order.clear();
+    logical_topology_.logical_levels.clear();
+    logical_topology_.logical_critical_path.clear();
+    logical_topology_.max_logical_dependency_depth = 0;
+
+    uint32_t maxLevel = 0;
+    for (RDGPassNodeRef pass : order)
+    {
+        auto found = pass_dependencies_.find(pass);
+        if (found == pass_dependencies_.end()) continue;
+        PassDependencies& deps = found->second;
+
+        uint32_t level = 0;
+        for (RDGPassNodeRef pred : deps.dependent_passes)
+        {
+            auto predFound = pass_dependencies_.find(pred);
+            if (predFound != pass_dependencies_.end())
+                level = std::max(level, predFound->second.logical_dependency_level + 1);
+        }
+        deps.logical_dependency_level = level;
+        deps.logical_topological_order = static_cast<uint32_t>(logical_topology_.logical_topological_order.size());
+        logical_topology_.logical_topological_order.push_back(pass);
+        maxLevel = std::max(maxLevel, level);
+    }
+
+    logical_topology_.max_logical_dependency_depth = maxLevel;
+    logical_topology_.logical_levels.resize(maxLevel + 1);
+    for (uint32_t i = 0; i <= maxLevel; ++i)
+    {
+        logical_topology_.logical_levels[i].level = i;
+        logical_topology_.logical_levels[i].passes.clear();
+    }
+    for (RDGPassNodeRef pass : logical_topology_.logical_topological_order)
+        logical_topology_.logical_levels[pass_dependencies_[pass].logical_dependency_level].passes.push_back(pass);
+
+    identify_logical_critical_path();
 }

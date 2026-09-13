@@ -41,7 +41,9 @@ void PostProcessingPass::Build(RDGBuilder& builder)
         .AllowRenderTarget()
         .Finish();  
 
+    // 第3刀·尾部加强：post链钉graphics队列（与Forward/Bloom同流，帧尾零跨队列跳）
     RDGComputePassHandle pass = builder.CreateComputePass(GetName())
+        .AddFlag(RDGPassFlags::ForceGraphicsQueue)
         .RootSignature(rootSignature)
         .Read(0, 0, 0, taaOutColor)
         .ReadWrite(0, 1, 0, outColor)

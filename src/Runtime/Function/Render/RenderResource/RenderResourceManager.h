@@ -174,6 +174,8 @@ public:
     RHITextureRef GetVelocityTexture()                      { return multiFrameResource.velocityTexture->texture; }
     RHITextureRef GetObjectIDTexture()                      { return multiFrameResource.objectIDTexture[0]->texture; }
     RHITextureRef GetPrevObjectIDTexture()                  { return multiFrameResource.objectIDTexture[1]->texture; }
+    // 上帧最终颜色ping-pong（读写两侧由parity决定，parity=EngineContext::CurrentFrameIndex()——FRAMES_IN_FLIGHT=2严格交替）
+    RHITextureRef GetFinalColorHistoryTexture(uint32_t i)   { return multiFrameResource.finalColorHistoryTexture[i]->texture; }
     TextureRef GetSurfaceCacheTexture(uint32_t id)          { return multiFrameResource.surfaceCacheTexture[id]; }
 
     void SetRenderGlobalSetting(const RenderGlobalSetting& globalSetting);
@@ -256,6 +258,7 @@ private:
         std::array<TextureRef, 2> depthPyramidTexture;  // MIN, MAX 
         TextureRef velocityTexture;
         std::array<TextureRef, 2> objectIDTexture;      // current, history
+        std::array<TextureRef, 2> finalColorHistoryTexture;    // 上帧最终颜色ping-pong：TAA kernel直写（消Copy History pass），SSSR Color Pyramid采上帧颜色
         std::array<TextureRef, 5> surfaceCacheTexture;
         std::vector<SamplerRef> samplers; 
     };

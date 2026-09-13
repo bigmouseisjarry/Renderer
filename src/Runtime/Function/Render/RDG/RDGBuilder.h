@@ -171,10 +171,13 @@ public:
     RDGRenderPassBuilder& Multiview(uint32_t multiviewCount);                                
     RDGRenderPassBuilder& OutputRead(RDGBufferHandle buffer, uint32_t offset = 0, uint32_t size = 0);             // 在执行完Pass后作为输出，自动屏障，可能还会在其他地方使用
     RDGRenderPassBuilder& OutputRead(RDGTextureHandle texture, TextureSubresourceRange subresource = {});    
-    // 无描述符的虚拟依赖边：声明"本pass以间接命令读取该buffer"的排序/屏障关系
+    // 无描述符的虚拟依赖边：声明"本pass以指定状态读取该buffer"的排序/屏障关系
     // （如mesh绘制pass对GPU Culling产出的间接命令buffer——DrawIndirect不走描述符），
-    // 不参与描述符绑定。资源经由其他pass Import进图后即可引用
-    RDGRenderPassBuilder& Dependency(RDGBufferHandle buffer);
+    // 不参与描述符绑定。资源经由其他pass Import进图后即可引用。
+    // state须如实声明本pass的访问类别（buffer无布局概念，state=访问类别令牌，供屏障
+    // 生成差分与access/stage推导，无默认值强制显式）：间接绘制命令buffer用
+    // INDIRECT_ARGUMENT，与GPU Culling的OutputIndirectDraw产出状态对齐
+    RDGRenderPassBuilder& Dependency(RDGBufferHandle buffer, RHIResourceState state);
     RDGRenderPassBuilder& OutputReadWrite(RDGBufferHandle buffer, uint32_t offset = 0, uint32_t size = 0);
     RDGRenderPassBuilder& OutputReadWrite(RDGTextureHandle texture, TextureSubresourceRange subresource = {});  
     RDGRenderPassBuilder& Execute(const RDGPassExecuteFunc& execute);
@@ -212,6 +215,12 @@ public:
     RDGComputePassBuilder& OutputIndirectDraw(RDGBufferHandle buffer, uint32_t offset = 0, uint32_t size = 0);
     RDGComputePassBuilder& AddFlag(const RDGPassFlags flag);
 
+    // 无描述符的虚拟依赖边（与Render/RayTracing版同语义）：本pass经图外通道（per-frame set等）
+    // 以指定状态读取该资源——拓扑排序据此保证生产者pass先行。补"隐形依赖边"用：消费者经
+    // GetPerFrameDescriptorSet采样阴影图/聚类结构/TLAS等，无此边时调度器看不到真实数据流
+    RDGComputePassBuilder& Dependency(RDGBufferHandle buffer, RHIResourceState state);
+    RDGComputePassBuilder& Dependency(RDGTextureHandle texture, RHIResourceState state);
+
     RDGComputePassBuilder& Execute(const RDGPassExecuteFunc& execute);
 
     RDGComputePassHandle Finish() { return pass->GetHandle(); }
@@ -244,9 +253,12 @@ public:
     RDGRayTracingPassBuilder& OutputReadWrite(RDGBufferHandle buffer, uint32_t offset = 0, uint32_t size = 0);
     RDGRayTracingPassBuilder& OutputReadWrite(RDGTextureHandle texture, TextureSubresourceRange subresource = {});
 
-    // 无描述符的虚拟依赖边：声明"本pass读取该资源"的排序/屏障关系（如RT pass对TLAS存储buffer），
-    // 不参与描述符绑定。资源经由其他pass Import进图后即可引用
-    RDGRayTracingPassBuilder& Dependency(RDGBufferHandle buffer);
+    // 无描述符的虚拟依赖边：声明"本pass以指定状态读取该buffer"的排序/屏障关系
+    // （如RT pass对TLAS存储buffer），不参与描述符绑定。资源经由其他pass Import进图后即可引用。
+    // state须如实声明访问类别（无默认值强制显式）：TLAS存储buffer用ACCELERATION_STRUCTURE
+    // ——RT/ray query读AS的真实类别，AS_READ的stage覆盖见AccessFlagsToPipelineStageFlags
+    RDGRayTracingPassBuilder& Dependency(RDGBufferHandle buffer, RHIResourceState state);
+    RDGRayTracingPassBuilder& Dependency(RDGTextureHandle texture, RHIResourceState state);   // 纹理版（图外通道消费，如阴影图采样）
     RDGRayTracingPassBuilder& AddFlag(const RDGPassFlags flag);
 
     RDGRayTracingPassBuilder& Execute(const RDGPassExecuteFunc& execute);

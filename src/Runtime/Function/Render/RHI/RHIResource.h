@@ -373,6 +373,11 @@ public:
 	// 分派输出（enable_gpu_timing=逐pass耗时Top统计）。默认空实现
 	virtual void ResolveFrame(uint32_t slot) {}
 
+	// 按pass名的跨帧执行耗时估计（EMA，ResolveFrame持续更新；跨帧槽共享——同一渲染负载下
+	// 两帧槽的pass耗时统计同源）。未命中返回fallback。供QueueSchedule的HEFT调度做权重
+	// （2026-09-11：调度器从NodeType+白名单升级为EFT决策，需要pass级历史耗时）
+	virtual double GetPassDurationMs(const std::string& passName, double fallbackMs) const { return fallbackMs; }
+
 protected:
 	RHIRenderQueryInfo info;
 };

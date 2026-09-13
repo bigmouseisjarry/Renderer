@@ -458,6 +458,10 @@ public:
 	// 节流：前2次+每30次输出1行
 	virtual void ResolveFrame(uint32_t slot) override final;
 
+	// 按pass名的跨帧执行耗时估计（EMA，仅exec对ts[2i+1]-ts[2i]不含等待；ResolveFrame持续
+	// 更新，跨帧槽共享）。QueueSchedule的HEFT调度权重来源
+	virtual double GetPassDurationMs(const std::string& passName, double fallbackMs) const override final;
+
 	virtual void Destroy() override final;
 
 private:
@@ -473,6 +477,8 @@ private:
 	uint64_t resolveCounter = 0;                             // 回读节流计数
 	std::vector<std::string> names;                          // slotCount*queueCount*perQueue，构造时定型（每pass独占下标，录制worker并发写安全）
 	std::unique_ptr<std::atomic<uint32_t>[]> used;           // 每(槽,队列)已打点数（relaxed并发更新，回读时exchange清零）
+	// pass名→{EMA耗时ms, 采样次数}（主线程串行访问：ResolveFrame更新+编译期查询，无需锁）
+	std::unordered_map<std::string, std::pair<double, uint32_t>> passDurationEMA;
 };
 
 

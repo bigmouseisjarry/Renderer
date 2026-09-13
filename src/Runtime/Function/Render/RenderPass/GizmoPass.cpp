@@ -157,7 +157,12 @@ void GizmoPass::Build(RDGBuilder& builder)
 
         RDGRenderPassHandle pass1 = builder.CreateRenderPass(GetName())
             .Color(0, outColor, ATTACHMENT_LOAD_OP_LOAD, ATTACHMENT_STORE_OP_STORE, {0.0f, 0.0f, 0.0f, 0.0f})
-            .DepthStencil(depth, ATTACHMENT_LOAD_OP_LOAD, ATTACHMENT_STORE_OP_STORE, 1.0f, 0)  
+            .DepthStencil(depth, ATTACHMENT_LOAD_OP_LOAD, ATTACHMENT_STORE_OP_STORE, 1.0f, 0)
+            // [修复2026-09-12]indirect读边缺失（与278bb04阴影消失同款坑）：DrawIndexedIndirect
+            // 消费Gizmo Data但未声明依赖——图不知道Gizmo依赖Init，旧classify靠级别序偶然
+            // 保序，HEFT按ranku排序立刻翻转（Init排到Gizmo/Present之后，icon闪烁/消失实锤：
+            // 时间线Gizmo#52先行、Init#63在后）。Dependency建读边（GBufferPass:196先例）
+            .Dependency(dataBuffer, RESOURCE_STATE_INDIRECT_ARGUMENT)
             .Execute([&](RDGPassContext context) {
                 
                 Extent2D windowExtent = EngineContext::Render()->GetWindowsExtent();

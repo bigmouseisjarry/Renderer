@@ -16,7 +16,12 @@
 
 // TODO 目前并没有做池化后的GC，冗余资源没有定期删除
 
-// TODO:这个文件的修改还是有一段没有看懂，为什么从单队列转向多队列后，上面3个pool也都需要按照槽分池？
+// 三个资源池按帧槽分池的原因（多队列改造，c981e32a）：
+// 池条目在录制结束后立即归还（release_sweep），此时帧N的GPU工作仍在飞——旧单队列下依赖"单队列提交按FIFO串行执行"保证帧N/N+1两次使用永不并发，故可全局共享；
+// 多队列下帧间无任何排序（帧内timeline链不跨帧），共享池会把帧N还在用的资源发给帧N+1造成真并发竞态（纹理还叠加layout/QFO冲突）。
+// 按槽分池后资源只在帧N与帧N+2间复用，而同槽复用被RenderSystem::Tick的帧栅栏挡住——安全保证从"队列FIFO"换成"帧栅栏"。
+// TextureView池同理的原因：view绑定创建时的具体纹理实例，共享会绕过纹理池的槽隔离；
+// 描述符池则自初始提交就分槽（录制期被CPU写入，host写连单队列FIFO都救不了）。
 
 class RDGBufferPool
 {
@@ -63,9 +68,6 @@ public:
     inline uint32_t AllocatedSize() { return allocatedSize; }
     void Clear()                    { pooledBuffers.clear(); pooledSize = 0; }
 
-    // 按帧槽分池：FRAMES_IN_FLIGHT内两帧GPU并发（多队列下不再按提交序串行），
-    // 共享池会把帧N尚未执行完的资源重新分配给帧N+1——跨帧GPU竞态。
-    // 与RDGDescriptorSetPool同理（池条目还携带跨帧状态/归属族，同样不能跨帧共享）
     static std::shared_ptr<RDGBufferPool> Get(uint32_t frameIndex)
     {
         static std::shared_ptr<RDGBufferPool> pool[FRAMES_IN_FLIGHT];
@@ -117,7 +119,6 @@ public:
     inline uint32_t AllocatedSize() { return allocatedSize; }
     void Clear()                    { pooledTextures.clear(); pooledSize = 0; }
 
-    // 按帧槽分池（见RDGBufferPool::Get注释：跨帧GPU竞态）
     static std::shared_ptr<RDGTexturePool> Get(uint32_t frameIndex)
     {
         static std::shared_ptr<RDGTexturePool> pool[FRAMES_IN_FLIGHT];
@@ -167,7 +168,6 @@ public:
     inline uint32_t AllocatedSize() { return allocatedSize; }
     void Clear()                    { pooledTextureViews.clear(); pooledSize = 0; }
 
-    // 按帧槽分池（见RDGBufferPool::Get注释：跨帧GPU竞态）
     static std::shared_ptr<RDGTextureViewPool> Get(uint32_t frameIndex)
     {
         static std::shared_ptr<RDGTextureViewPool> pool[FRAMES_IN_FLIGHT];

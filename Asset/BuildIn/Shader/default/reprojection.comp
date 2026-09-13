@@ -3,9 +3,9 @@
 
 #include "../common/common.glsl"
 
-layout(set = 1, binding = 0)            uniform texture2D CURRENT_NORMAL;	
-layout(set = 1, binding = 1)   		    uniform texture2D HISTORY_NORMAL;	
-layout(set = 1, binding = 2, rgba32f)   uniform image2D REPROJECTION_RESULT;		
+layout(set = 1, binding = 0)            uniform texture2D CURRENT_NORMAL;
+layout(set = 1, binding = 1)   		    uniform texture2D HISTORY_NORMAL;
+layout(set = 1, binding = 2, rgba32f)   uniform image2D REPROJECTION_RESULT;
 
 
 

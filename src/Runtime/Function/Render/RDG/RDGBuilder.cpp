@@ -573,16 +573,19 @@ RDGRenderPassBuilder& RDGRenderPassBuilder::OutputRead(RDGTextureHandle texture,
     return *this;
 }
 
-RDGRenderPassBuilder& RDGRenderPassBuilder::Dependency(RDGBufferHandle buffer)
+RDGRenderPassBuilder& RDGRenderPassBuilder::Dependency(RDGBufferHandle buffer, RHIResourceState state)
 {
-    // 无描述符的读向依赖边：声明本pass以间接命令读取该buffer（DrawIndirect不走描述符），
-    // 不参与描述符绑定（绑定阶段按NO_DESCRIPTOR_SET跳过），但进入依赖分析与屏障跟踪——
+    // 无描述符的读向依赖边（DrawIndirect等不走描述符的访问）：不参与描述符绑定
+    // （绑定阶段按NO_DESCRIPTOR_SET跳过），但进入依赖分析与屏障跟踪——
     // 拓扑排序据此保证生产者pass（如GPU Culling）先于本pass
     if (buffer.ID() == UINT64_MAX) return *this;    // 生产者pass未构建（被禁用等），GetBuffer已警告
 
     RDGBufferEdgeRef edge = new RDGBufferEdge();
-    // TODO:这里这么写死不太对吧
-    edge->state = RESOURCE_STATE_INDIRECT_ARGUMENT;    // 与生产者OutputIndirectDraw的产出状态一致
+    // buffer的state无布局概念，是"访问类别"令牌：屏障生成用它查access/stage并与状态跟踪器
+    // 差分决定是否发屏障。调用方须如实声明（无默认值强制显式）：间接绘制命令buffer=
+    // INDIRECT_ARGUMENT，与生产者OutputIndirectDraw边的收敛状态对齐——UAV→INDIRECT的
+    // 写→读屏障挂生产者pass后，本边声明同状态则不再发多余屏障
+    edge->state = state;
     edge->set = NO_DESCRIPTOR_SET;
 
     graph->Link(graph->GetBufferNode(buffer.ID()), pass, edge);
@@ -686,6 +689,40 @@ RDGComputePassBuilder& RDGComputePassBuilder::Read(uint32_t set, uint32_t bindin
     edge->index = index;
     edge->type = RESOURCE_TYPE_TEXTURE;
     edge->viewType = viewType;
+
+    graph->Link(graph->GetTextureNode(texture.ID()), pass, edge);
+
+    return *this;
+}
+
+// 无描述符的读向依赖边（compute版，与Render版同语义）：经图外通道（per-frame set）消费的资源
+// 用此补边——进入依赖分析与屏障跟踪，不参与描述符绑定（绑定阶段按NO_DESCRIPTOR_SET跳过）
+RDGComputePassBuilder& RDGComputePassBuilder::Dependency(RDGBufferHandle buffer, RHIResourceState state)
+{
+    if (buffer.ID() == UINT64_MAX) return *this;    // 生产者pass未构建（被禁用等），GetBuffer已警告
+
+    RDGBufferEdgeRef edge = new RDGBufferEdge();
+    edge->state = state;
+    edge->set = NO_DESCRIPTOR_SET;
+
+    graph->Link(graph->GetBufferNode(buffer.ID()), pass, edge);
+
+    return *this;
+}
+
+RDGComputePassBuilder& RDGComputePassBuilder::Dependency(RDGTextureHandle texture, RHIResourceState state)
+{
+    if (texture.ID() == UINT64_MAX) return *this;    // 生产者pass未构建（被禁用等），GetTexture已警告
+
+    RDGTextureEdgeRef edge = new RDGTextureEdge();
+    edge->state = state;
+    edge->subresource = {};
+    edge->asShaderRead = true;
+    edge->set = NO_DESCRIPTOR_SET;
+    edge->binding = 0;
+    edge->index = 0;
+    edge->type = RESOURCE_TYPE_TEXTURE;
+    edge->viewType = VIEW_TYPE_2D;
 
     graph->Link(graph->GetTextureNode(texture.ID()), pass, edge);
 
@@ -950,17 +987,40 @@ RDGRayTracingPassBuilder& RDGRayTracingPassBuilder::OutputReadWrite(RDGTextureHa
     return *this;
 }
 
-RDGRayTracingPassBuilder& RDGRayTracingPassBuilder::Dependency(RDGBufferHandle buffer)
+RDGRayTracingPassBuilder& RDGRayTracingPassBuilder::Dependency(RDGBufferHandle buffer, RHIResourceState state)
 {
     // 无描述符的读向依赖边：不参与描述符绑定（绑定阶段按NO_DESCRIPTOR_SET跳过），
     // 但进入依赖分析与屏障跟踪——拓扑排序据此保证生产者pass（如TLAS Update）先于本pass
     if (buffer.ID() == UINT64_MAX) return *this;    // 生产者pass未构建（被禁用等），GetBuffer已警告
 
     RDGBufferEdgeRef edge = new RDGBufferEdge();
-    edge->state = RESOURCE_STATE_SHADER_RESOURCE;
+    // 语义同render版Dependency：state为访问类别令牌，调用方须如实声明（无默认值强制显式）。
+    // TLAS Storage=ACCELERATION_STRUCTURE（RT/ray query读AS的真实类别），与TLASUpdatePass
+    // 产出边(UAV)衔接成构建写→RT读屏障；AS_READ的stage覆盖见AccessFlagsToPipelineStageFlags
+    edge->state = state;
     edge->set = NO_DESCRIPTOR_SET;
 
     graph->Link(graph->GetBufferNode(buffer.ID()), pass, edge);
+
+    return *this;
+}
+
+RDGRayTracingPassBuilder& RDGRayTracingPassBuilder::Dependency(RDGTextureHandle texture, RHIResourceState state)
+{
+    // 纹理版虚拟依赖边（语义同buffer版）：图外通道（per-frame set）消费的纹理补边用
+    if (texture.ID() == UINT64_MAX) return *this;    // 生产者pass未构建（被禁用等），GetTexture已警告
+
+    RDGTextureEdgeRef edge = new RDGTextureEdge();
+    edge->state = state;
+    edge->subresource = {};
+    edge->asShaderRead = true;
+    edge->set = NO_DESCRIPTOR_SET;
+    edge->binding = 0;
+    edge->index = 0;
+    edge->type = RESOURCE_TYPE_TEXTURE;
+    edge->viewType = VIEW_TYPE_2D;
+
+    graph->Link(graph->GetTextureNode(texture.ID()), pass, edge);
 
     return *this;
 }

@@ -66,6 +66,10 @@ private:
 
     using PerFrameCommonResource = RDGPerFrameResource;
     std::array<PerFrameCommonResource, FRAMES_IN_FLIGHT> perFrameCommonResources;
+
+    // 跨帧注册表：RDG编译管线唯一的跨帧持久状态（跨帧队列链/细链的数据源）。
+    // 必须单一实例由全部帧槽编译器共享（声明于rdgCompilers前：构造注入、析构后于其使用）
+    RDGCrossFrameRegistry crossFrameRegistry;
     std::array<RDGCompilerRef, FRAMES_IN_FLIGHT> rdgCompilers;
 
     RenderGlobalSetting globalSetting = {};

@@ -37,9 +37,14 @@ void ReprojectionPass::Build(RDGBuilder& builder)
         .MipLevels(1)
         .MemoryUsage(MEMORY_USAGE_GPU_ONLY)
         .AllowReadWrite()
-        .Finish();  
+        .Finish();
 
+
+    // 第3刀：Reproj钉graphics队列——Reprojection Out被q0的SSSR Trace消费，若Reproj留q1则
+    // 跨族移交须覆盖q1上更晚的ReSTIR读（分段release按提交序配对），Trace被拖到ReSTIR之后；
+    // 钉到q0后Reproj→Trace→Resolve同族连跑，ReSTIR在q1上分段重取Reprojection Out
     RDGComputePassHandle pass = builder.CreateComputePass(GetName())
+        .AddFlag(RDGPassFlags::ForceGraphicsQueue)
         .RootSignature(rootSignature)
         .Read(1, 0, 0, normal)
         .Read(1, 1, 0, historyNormal)

@@ -77,10 +77,13 @@ void RenderSystem::InitBaseResource()
     swapchain     = backend->CreateSwapChain({ surface, queue, FRAMES_IN_FLIGHT, surface->GetExetent(), COLOR_FORMAT });
 
     // 队列调度配置：编译器与帧槽预建共用同一份（QueryConfiguredQueues按它枚举，保证slot下标与all_queues对齐）
-    QueueScheduleConfig queueCfg{};
+    // 第3刀·动作1：两队列（graphics族0 + 专用async compute族）。copy队列弃用——copy pass回q0（帧首小copy与
+    // 帧尾Bloom Copy本就等graphics产物，同队列零跳；10条WRW问题随之过期）
+    // 2026-09-13闪烁定案修复（隐形依赖边家族补边，详见RDGBuilder的Dependency虚拟边）后HEFT验收通过
+    QueueScheduleConfig queueCfg{}; queueCfg.use_heft = true;
     queueCfg.enable_graphic_queues = 1;
     queueCfg.enable_async_compute_queues = 1;
-    queueCfg.enable_copy_queues = 0;   // copy队列10条WRW未修（G-Buffer Copy跨DMA族转移竞态），关闭至专项修复
+    queueCfg.enable_copy_queues = 0;
     queueCfg.enable_debug_output = false;
 
     // 渲染查询（GPU侧逐pass统计）无任何enable时置空不创建。
@@ -122,9 +125,10 @@ void RenderSystem::InitBaseResource()
         CommandRecordingConfig commandRecordingConfig{};
         commandRecordingConfig.enable_debug_markers = true;
         commandRecordingConfig.enable_debug_output = false;
-        commandRecordingConfig.enable_gpu_timing = false;      // 与renderQuery的info.enable_gpu_timing共同判定打点（见record_stream_range）
+        commandRecordingConfig.enable_gpu_timing = true;       // 与renderQuery的info.enable_gpu_timing共同判定打点（见record_stream_range）
         commandRecordingConfig.chunk_count = 3;     // ANY池worker(2) + 主线程(1)——亦是每队列预建命令流数
-        rdgCompilers[i] = std::make_shared<RDGCompiler>(queueCfg, reorderConfig, crossQueueSyncConfig, passBindingConfig, barrierGenerationConfig, commandRecordingConfig);
+        commandRecordingConfig.coarse_cross_frame_sync = false;    // 细链（V2）：imported资源首触批wait上帧末触点；true=粗链A/B回退
+        rdgCompilers[i] = std::make_shared<RDGCompiler>(crossFrameRegistry, renderQuery, queueCfg, reorderConfig, crossQueueSyncConfig, passBindingConfig, barrierGenerationConfig, commandRecordingConfig);
     }
 }
 
@@ -268,7 +272,7 @@ void RenderSystem::Tick()
         ENGINE_TIME_SCOPE(RenderSystem::SyncRHI);                                   // GPU端瓶颈会导致此处的WaitIdle等待
         EngineContext::ThreadPool()->WaitIdle(ENGINE_THREAD_TYPE_RHI);  // loop里唯一和RHI线程同步的时点，RHI最多会延迟主线程一帧
         EngineContext::ThreadPool()->AddQueuedWork([this]() {
-            SubmitRHI();    // TLAS更新已收编进RDG（TLASUpdatePass在帧命令流内录制构建，不再有独立提交与等待）
+            SubmitRHI();    
             }, ENGINE_THREAD_TYPE_RHI);
     }
 }
@@ -327,6 +331,7 @@ void RenderSystem::SubmitRHI()
 
     // Present所在批次已signal finishSemaphore
     swapchain->Present(resource.finishSemaphore);
+
 }
 
 void RenderSystem::UpdateGlobalSetting()

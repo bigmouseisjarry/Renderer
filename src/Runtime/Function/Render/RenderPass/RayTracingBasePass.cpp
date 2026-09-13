@@ -38,7 +38,7 @@ void RayTracingBasePass::Build(RDGBuilder& builder)
 
         RDGRayTracingPassHandle pass = builder.CreateRayTracingPass(GetName())
         .RootSignature(rootSignature)
-        .Dependency(builder.GetBuffer("TLAS Storage"))      // 依赖TLAS Update的产出（虚拟边，不绑定描述符）
+        .Dependency(builder.GetBuffer("TLAS Storage"), RESOURCE_STATE_ACCELERATION_STRUCTURE)      // 依赖TLAS Update的产出（虚拟边，不绑定描述符；RT读AS）
         .ReadWrite(1, 0, 0, outColor)
         .Execute([&](RDGPassContext context) {       
 

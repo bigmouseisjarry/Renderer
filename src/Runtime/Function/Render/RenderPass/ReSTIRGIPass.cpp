@@ -23,9 +23,9 @@ void ReSTIRGIPass::Init()
                      .AddEntry({1, 1, 1, SHADER_FREQUENCY_RAY_TRACING | SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_BUFFER})     // RESERVOIRS
                      .AddEntry({1, 2, 1, SHADER_FREQUENCY_RAY_TRACING | SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_BUFFER})     // PREV_RESERVOIRS
                      .AddEntry({1, 3, 1, SHADER_FREQUENCY_RAY_TRACING | SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_BUFFER})     // RESULT_RESERVOIRS
-                     .AddEntry({2, 0, 1, SHADER_FREQUENCY_RAY_TRACING | SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE})    // G_BUFFER_DIFFUSE_METALLIC
-                     .AddEntry({2, 1, 1, SHADER_FREQUENCY_RAY_TRACING | SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE})    // G_BUFFER_NORMAL_ROUGHNESS
-                     .AddEntry({2, 2, 1, SHADER_FREQUENCY_RAY_TRACING | SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE})    // G_BUFFER_EMISSION
+                     .AddEntry({2, 0, 1, SHADER_FREQUENCY_RAY_TRACING | SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE})       // G_BUFFER_DIFFUSE_METALLIC（samplerless texelFetch读，2026-09-11降级：shader零写入，RW假写者边把SSSR链钉在ReSTIR后）
+                     .AddEntry({2, 1, 1, SHADER_FREQUENCY_RAY_TRACING | SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE})       // G_BUFFER_NORMAL_ROUGHNESS（同上）
+                     .AddEntry({2, 2, 1, SHADER_FREQUENCY_RAY_TRACING | SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE})       // G_BUFFER_EMISSION（同上）
                      .AddEntry({2, 3, 1, SHADER_FREQUENCY_RAY_TRACING | SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE})       // REPROJECTION_RESULT
                      .AddEntry({2, 4, 1, SHADER_FREQUENCY_RAY_TRACING | SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE})    // FINAL_COLOR
                      .AddEntry({2, 5, 1, SHADER_FREQUENCY_RAY_TRACING | SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE})    // GI_DIFFUSE_COLOR
@@ -113,16 +113,19 @@ void ReSTIRGIPass::Build(RDGBuilder& builder)
         RDGComputePassHandle pass0 = builder.CreateComputePass(GetName() + " Temporal Reuse")
             .PassIndex(currentIndex)
             .RootSignature(rootSignature)
-            .ReadWrite(2, 0, 0, diffuse)
-            .ReadWrite(2, 1, 0, normal)
-            .ReadWrite(2, 2, 0, emission)
+            .Read(2, 0, 0, diffuse)
+            .Read(2, 1, 0, normal)
+            .Read(2, 2, 0, emission)
             .Read(2, 3, 0, reprojectionOut)
             .ReadWrite(1, 1, 0, resBuffer0)
             .ReadWrite(1, 2, 0, resBuffer1)
             .ReadWrite(1, 3, 0, resBuffer2)
-            .Execute([&](RDGPassContext context) {       
-                
-                RHICommandListRef command = context.command; 
+            // 隐形依赖边（图外通道消费）：ray query读TLAS + FetchSurfaceCacheLighting采样表面缓存
+            .Dependency(builder.GetBuffer("TLAS Storage"), RESOURCE_STATE_ACCELERATION_STRUCTURE)
+            .Dependency(builder.GetTexture("Surface Cache Lighting"), RESOURCE_STATE_SHADER_RESOURCE)
+            .Execute([&](RDGPassContext context) {
+
+                RHICommandListRef command = context.command;
                 command->SetComputePipeline(computePipeline[0]);
                 command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);  
                 command->BindDescriptorSet(descriptorSet[context.passIndex[0]], 1);
@@ -136,16 +139,18 @@ void ReSTIRGIPass::Build(RDGBuilder& builder)
         RDGComputePassHandle pass1 = builder.CreateComputePass(GetName() + " Spatial Reuse")
             .PassIndex(currentIndex)
             .RootSignature(rootSignature)
-            .ReadWrite(2, 0, 0, diffuse)
-            .ReadWrite(2, 1, 0, normal)
-            .ReadWrite(2, 2, 0, emission)
+            .Read(2, 0, 0, diffuse)
+            .Read(2, 1, 0, normal)
+            .Read(2, 2, 0, emission)
             .Read(2, 3, 0, reprojectionOut)
             .ReadWrite(1, 1, 0, resBuffer0)
             .ReadWrite(1, 2, 0, resBuffer1)
             .ReadWrite(1, 3, 0, resBuffer2)
-            .Execute([&](RDGPassContext context) {       
+            // 隐形依赖边（图外通道消费）：RayQueryVisibility可见性判定读TLAS
+            .Dependency(builder.GetBuffer("TLAS Storage"), RESOURCE_STATE_ACCELERATION_STRUCTURE)
+            .Execute([&](RDGPassContext context) {
 
-                RHICommandListRef command = context.command; 
+                RHICommandListRef command = context.command;
                 command->SetComputePipeline(computePipeline[1]);
                 command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);  
                 command->BindDescriptorSet(descriptorSet[context.passIndex[0]], 1);
@@ -159,9 +164,9 @@ void ReSTIRGIPass::Build(RDGBuilder& builder)
         RDGComputePassHandle pass2 = builder.CreateComputePass(GetName() + " Lighting")
             .PassIndex(currentIndex)
             .RootSignature(rootSignature)
-            .ReadWrite(2, 0, 0, diffuse)
-            .ReadWrite(2, 1, 0, normal)
-            .ReadWrite(2, 2, 0, emission)
+            .Read(2, 0, 0, diffuse)
+            .Read(2, 1, 0, normal)
+            .Read(2, 2, 0, emission)
             .Read(2, 3, 0, reprojectionOut)
             .ReadWrite(2, 4, 0, outColor)
             .ReadWrite(2, 5, 0, restirDiffuseColor)
@@ -169,6 +174,8 @@ void ReSTIRGIPass::Build(RDGBuilder& builder)
             .ReadWrite(1, 1, 0, resBuffer0)
             .ReadWrite(1, 2, 0, resBuffer1)
             .ReadWrite(1, 3, 0, resBuffer2)
+            // 隐形依赖边（图外通道消费）：FetchSurfaceCacheLighting采样表面缓存（经per-frame set）
+            .Dependency(builder.GetTexture("Surface Cache Lighting"), RESOURCE_STATE_SHADER_RESOURCE)
             .Execute([&](RDGPassContext context) {       
 
                 RHICommandListRef command = context.command; 

@@ -106,7 +106,12 @@ void DDGIPass::Build(RDGBuilder& builder)
                 RDGRayTracingPassHandle pass = builder.CreateRayTracingPass(GetName() + " Trace Ray" + index)
                     .PassIndex(i)
                     .RootSignature(rootSignature)
-                    .Dependency(builder.GetBuffer("TLAS Storage"))      // 依赖TLAS Update的产出（虚拟边，不绑定描述符）
+                    .Dependency(builder.GetBuffer("TLAS Storage"), RESOURCE_STATE_ACCELERATION_STRUCTURE)      // 依赖TLAS Update的产出（虚拟边，不绑定描述符；ray query读AS）
+                    // 隐形依赖边（图外通道消费）：radiance采样方向光阴影图（经per-frame set）
+                    .Dependency(builder.GetTexture("Directional Depth [0]"), RESOURCE_STATE_SHADER_RESOURCE)
+                    .Dependency(builder.GetTexture("Directional Depth [1]"), RESOURCE_STATE_SHADER_RESOURCE)
+                    .Dependency(builder.GetTexture("Directional Depth [2]"), RESOURCE_STATE_SHADER_RESOURCE)
+                    .Dependency(builder.GetTexture("Directional Depth [3]"), RESOURCE_STATE_SHADER_RESOURCE)
                     .ReadWrite(1, 0, 0, diffuseTex)
                     .ReadWrite(1, 1, 0, normalTex)
                     .ReadWrite(1, 2, 0, emissionTex)

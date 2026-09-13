@@ -54,12 +54,11 @@ struct RDGPassContext
 {
     RHICommandListRef command;                              // 本pass录制的命令流（属于其队列的pool）
 
-    uint32_t queueIndex = 0;                                // QueueSchedule::all_queues 下标
-    ERenderGraphQueueType queueType = ERenderGraphQueueType::Graphics;
-
     std::array<RHIDescriptorSetRef, MAX_DESCRIPTOR_SETS> descriptors;
 
-    // TODO:这个是什么
+    // pass实例参数（builder端.PassIndex(x,y,z)设置，节点上存储、执行期拷入此处）：
+    // 一个Pass类循环注册N个图pass共享同一execute lambda时，用它区分实例
+    // （mip级/立方体面/光源index/volume index/描述符index等，见各RenderPass用法）
     uint32_t passIndex[3] = { 0, 0, 0};
 };
 

@@ -1,5 +1,6 @@
 
 #include "Core/Math/Math.h"
+#include <crtdbg.h>
 #include "Function/Framework/Component/MeshRendererComponent.h"
 #include "Function/Framework/Component/PointLightComponent.h"
 #include "Function/Framework/Component/TransformComponent.h"
@@ -889,8 +890,14 @@ void InitScene()
     EngineContext::World()->SetActiveScene("defaultScene");
 }
 
-int main() 
-{  
+int main()
+{
+#ifdef _DEBUG
+    // [二分仪器]断言重定向到stderr（不弹窗——assert的文件:行:表达式直接落日志，弹窗时序竞态取证用）
+    _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE | _CRTDBG_MODE_DEBUG);
+    _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+#endif
+
     EngineContext::Init();
 
     //InitCornellBoxScene();

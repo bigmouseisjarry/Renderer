@@ -53,6 +53,17 @@ void DeferredLightingPass::Build(RDGBuilder& builder)
             .Read(1, 1, 0, normal)
             .Read(1, 2, 0, emission)
             .ReadWrite(1, 3, 0, outColor)
+            // 隐形依赖边（2026-09-12闪烁根因）：阴影图/点阴影/聚类光照结构经GetPerFrameDescriptorSet
+            // （图外通道）采样——无声明边时调度器看不到真实数据流，ranku把零后继写者排到帧尾，
+            // 本pass读到上一帧的阴影/光照=转视角闪烁。级别序碰巧安全掩盖了多年。虚拟边不占描述符槽
+            .Dependency(builder.GetTexture("Directional Depth [0]"), RESOURCE_STATE_SHADER_RESOURCE)
+            .Dependency(builder.GetTexture("Directional Depth [1]"), RESOURCE_STATE_SHADER_RESOURCE)
+            .Dependency(builder.GetTexture("Directional Depth [2]"), RESOURCE_STATE_SHADER_RESOURCE)
+            .Dependency(builder.GetTexture("Directional Depth [3]"), RESOURCE_STATE_SHADER_RESOURCE)
+            .Dependency(builder.GetTexture("Point Shadow Filtered Color [0]"), RESOURCE_STATE_SHADER_RESOURCE)
+            .Dependency(builder.GetTexture("Point Shadow Filtered Color [1]"), RESOURCE_STATE_SHADER_RESOURCE)
+            .Dependency(builder.GetTexture("Light Cluster Grid"), RESOURCE_STATE_SHADER_RESOURCE)
+            .Dependency(builder.GetBuffer("Light Cluster Index"), RESOURCE_STATE_SHADER_RESOURCE)
             .Execute([&](RDGPassContext context) {       
 
                 DeferredLightingSetting newSetting = setting;

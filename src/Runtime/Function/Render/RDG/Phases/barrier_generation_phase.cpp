@@ -58,18 +58,18 @@ void BarrierGenerationPhase::on_execute(RDGDependencyGraphRef graph, PerFrameCom
     // 初始化状态跟踪器：
     //   imported → Build期声明的 initState
     //   created  → 池化跨帧状态（阶段6集中分配时由池条目写入 node->initState）
-    //   init_family → 跨帧归属族（created=阶段6写入；imported=graphics族——Builder的Import
-    //                不设族，节点initFamily恒为IGNORED，若沿用则帧首跨族判定永不触发：上帧末
-    //                留在异族的imported图（如copy队列做完Depth Copy），本帧graphics首用时不发
-    //                acquire、布局转移落在错误的族上——validation布局失配的来源。与池化资源
-    //                同语义：帧间静止归属恒为graphics族，配合下方帧末归巢）
+    //   owner_family初值 → 跨帧归属族（created=阶段6写入节点initFamily；imported=graphics族
+    //                ——Builder的Import不设族，节点initFamily恒为IGNORED，若沿用则帧首跨族判定
+    //                永不触发：上帧末留在异族的imported图（如copy队列做完Depth Copy），本帧
+    //                graphics首用时不发acquire、布局转移落在错误的族上——validation布局失配的
+    //                来源。与池化资源同语义：帧间静止归属恒为graphics族，配合下方帧末归巢）
     graph->ForEachTextureNode([&](RDGTextureNodeRef texture) {
         TextureStateTracker tracker;
         assert(texture->info.mipLevels > 0 && texture->info.arrayLayers > 0);
         tracker.mip_levels = texture->info.mipLevels;
         tracker.array_layers = texture->info.arrayLayers;
         tracker.states.assign(static_cast<size_t>(tracker.mip_levels) * tracker.array_layers, texture->initState);
-        tracker.init_family = texture->IsImported() ? graphicsFamily : texture->initFamily;
+        tracker.owner_family = texture->IsImported() ? graphicsFamily : texture->initFamily;
         texture_trackers_[texture] = std::move(tracker);
     });
 
@@ -86,13 +86,13 @@ void BarrierGenerationPhase::on_execute(RDGDependencyGraphRef graph, PerFrameCom
     // 帧末归巢：本帧最终归属族≠graphics族的纹理（含imported——深度图等持久资源同样会被copy
     // 队列带离graphics族），向最后一个触碰pass的after批次追加 release(F→graphics)。帧槽fence
     // 保证下一帧开始前该release已执行——资源静止归属恒为graphics族（池条目由Phase 8归还时记录；
-    // imported由tracker.init_family=graphics承接）。不归巢的帧首异族acquire无法配对release
+    // imported由tracker.owner_family初值=graphics承接）。不归巢的帧首异族acquire无法配对release
     // （上一帧不知道下一帧的首用族），prologue机制见get_frame_start_releases
     for (auto& [texture, tracker] : texture_trackers_)
     {
         if (tracker.last_pass == nullptr) continue;
 
-        const uint32_t lastFamily = sync_analysis_.get_queue_family_index(sync_analysis_.get_pass_queue_index(tracker.last_pass));
+        const uint32_t lastFamily = tracker.owner_family;   // 帧终所有权（显式追踪，与旧"由last_pass推导"等价）
         if (lastFamily == graphicsFamily || lastFamily == RHI_QUEUE_FAMILY_IGNORED) continue;
 
         RDGBarrier home{};
@@ -264,9 +264,9 @@ void BarrierGenerationPhase::process_access(RDGPassNodeRef pass, const ResourceA
 
         const uint32_t source_queue = tracker.last_pass != nullptr
             ? sync_analysis_.get_pass_queue_index(tracker.last_pass) : target_queue;
-        // 族归属：帧内取上次触碰pass的族；帧首（无last_pass）取池族（跨帧所有权，Phase 6写入）
-        const uint32_t source_family = tracker.last_pass != nullptr
-            ? sync_analysis_.get_queue_family_index(source_queue) : tracker.init_family;
+        // 族归属：直接读所有权追踪（帧首=池族/imported族初值；帧内=最近转移后的现任族）。
+        // 与旧"由last_pass队列推导"等价（见TextureStateTracker::owner_family注释）
+        const uint32_t source_family = tracker.owner_family;
         const bool cross_queue = tracker.last_pass != nullptr && source_queue != target_queue;
         const bool cross_family = source_family != RHI_QUEUE_FAMILY_IGNORED && source_family != target_family;
 
@@ -315,7 +315,7 @@ void BarrierGenerationPhase::process_access(RDGPassNodeRef pass, const ResourceA
             RDGBarrier acquire{};
             acquire.resource = texture;
             acquire.type = EBarrierType::ResourceTransition;
-            acquire.source_pass = tracker.last_pass;     // 帧首跨族时为nullptr（来自init_family）
+            acquire.source_pass = tracker.last_pass;     // 帧首跨族时为nullptr（所有权来自owner_family初值）
             acquire.target_pass = pass;
             acquire.source_queue = source_queue;
             acquire.target_queue = target_queue;
@@ -349,6 +349,10 @@ void BarrierGenerationPhase::process_access(RDGPassNodeRef pass, const ResourceA
             if (consumer_batches.empty()) consumer_batches.push_back({{}, EBarrierType::ResourceTransition});
             consumer_batches.front().barriers.push_back(acquire);
             result_.total_barriers++;
+
+            // 所有权随转移对更新为目标族（后续同族访问不再发转移——判定读owner_family而非
+            // 由last_pass推导，见tracker注释）
+            tracker.owner_family = target_family;
         }
         else
         {
@@ -384,6 +388,10 @@ void BarrierGenerationPhase::process_access(RDGPassNodeRef pass, const ResourceA
             for (uint32_t l = array_base; l < array_base + array_count; l++)
                 tracker.states[tracker.index(m, l)] = access.resource_state;
         tracker.last_pass = pass;
+        if (tracker.owner_family == RHI_QUEUE_FAMILY_IGNORED)
+            tracker.owner_family = target_family;   // 初值IGNORED（未指定所有权，如新池条目）：
+                                                    // 首触采纳本族为基线——与旧"由last_pass队列推导"
+                                                    // 等价（旧推导在第二次访问即从触碰者队列恢复族属）
     }
     else
     {

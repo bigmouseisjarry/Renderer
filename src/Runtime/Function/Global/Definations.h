@@ -1,7 +1,10 @@
 #pragma once
 
-#define ENABLE_DEBUG_MODE 0                         //启用调试模式
+#define ENABLE_DEBUG_MODE 0                         //启用调试模式（验证层特性与逐命令printf，见VulkanUtil.h/RHICommandList.h）
 #define ENABLE_RAY_TRACING 1                        //启用硬件光追
+
+// RDG统一审计开关：提交计划构造性不变量的运行时断言
+#define ENABLE_RDG_AUDIT 0
 
 #define FRAMES_IN_FLIGHT 2							//帧缓冲数目
 #define WINDOW_WIDTH 2048                           //32 * 64   16 * 128

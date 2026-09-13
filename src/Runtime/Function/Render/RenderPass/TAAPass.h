@@ -35,7 +35,7 @@ private:
 
     RHIRootSignatureRef rootSignature;
     RHIComputePipelineRef computePipeline;
-    RHITextureRef historyTex;
+    // history ping-pong对移至RenderResourceManager（SSSR pyramid也读上帧最终颜色；parity=CurrentFrameIndex()）
 
 	EnablePassEditourUI()
 };

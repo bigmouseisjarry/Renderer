@@ -3,7 +3,6 @@
 #include "Function/Global/EngineContext.h"
 #include <algorithm>
 
-
 CrossQueueSyncAnalysis::CrossQueueSyncAnalysis(
     const PassDependencyAnalysis& dependency_analysis,
     const QueueSchedule& queue_schedule,
@@ -24,8 +23,7 @@ void CrossQueueSyncAnalysis::reset_for_frame()
 
 void CrossQueueSyncAnalysis::on_execute(RDGDependencyGraphRef graph, PerFrameCommonResourceRef executor)
 {
-    //ENGINE_LOG_INFO("CrossQueueSyncAnalysis");
-    //ENGINE_LOG_INFO("CrossQueueSyncAnalysis: Starting SSIS analysis");
+    ENGINE_TIME_SCOPE(CrossQueueSyncAnalysis::on_execute);
 
     // 构建Pass到队列的映射缓存
     const TimelineScheduleResult& queue_result = queue_schedule_.get_schedule_result();
@@ -124,8 +122,11 @@ void CrossQueueSyncAnalysis::apply_ssis_optimization(RDGDependencyGraphRef graph
     // 为每个Pass计算初始SSIS
     for (auto* pass : get_passes(graph))
     {
+        // 当前pass所在的队列
         uint32_t pass_queue = get_pass_queue_index(pass);
+        // 当前pass的SSIS值
         std::vector<uint32_t>& ssis = pass_ssis_[pass];
+        // 当前pass需要同步的跨队列节点
         std::vector<RDGPassNodeRef>& nodes_to_sync = pass_nodes_to_sync_with_[pass];
 
         // 找到每个队列上最近的依赖节点
@@ -134,7 +135,9 @@ void CrossQueueSyncAnalysis::apply_ssis_optimization(RDGDependencyGraphRef graph
 
         for (RDGPassNodeRef dep_node : nodes_to_sync)
         {
+            // 当前跨队列同步节点所在的队列
             uint32_t dep_queue = get_pass_queue_index(dep_node);
+            // 当前跨队列同步节点在所在的队列中的下标
             uint32_t dep_local_idx = pass_local_to_queue_indices_[dep_node];
 
             RDGPassNodeRef& closest = closest_nodes_per_queue[dep_queue];
@@ -149,6 +152,7 @@ void CrossQueueSyncAnalysis::apply_ssis_optimization(RDGDependencyGraphRef graph
         nodes_to_sync.clear();
         for (uint32_t q = 0; q < total_queue_count_; ++q)
         {
+            // 当前队列上最晚（最近）执行的依赖
             if (RDGPassNodeRef closest = closest_nodes_per_queue[q])
             {
                 // 更新SSIS

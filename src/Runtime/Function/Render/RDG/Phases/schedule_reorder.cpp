@@ -24,9 +24,34 @@ void ExecutionReorderPhase::reset_for_frame()
 
 void ExecutionReorderPhase::on_execute(RDGDependencyGraphRef graph, PerFrameCommonResourceRef executor)
 {
-    ENGINE_TIME_SCOPE("ExecutionReorderPhase");
+    ENGINE_TIME_SCOPE(ExecutionReorderPhase::on_execute);
 
     render_graph = graph;
+
+    // ============================ 第二层优化设计备忘（未实现，启用重排时先读这里） ============================
+    // 问题：Step B按同步点逐边切批，q0/q1之间形成pass级锯齿（如剔除→6个阴影pass→滤波，12批/12wait）。
+    // 依赖边只要求"消费者等其生产者"，不等值更晚的信号永远安全——同步粒度可以粗于边粒度。
+    //
+    // 目标形态（块级乒乓）：
+    //   q1: [全部Culling块] → q0: [Depth+PointShadow[0..1]+DirectionalShadow[0..3]一块，块头等全部所需signal]
+    //   → q1: [全部Filter+Pyramid块] ...锯齿区从~12批/12wait坍缩为~3批/2~3wait
+    //
+    // 粗化原则：同步粒度匹配生产者的完成时刻聚簇——生产者完成时间挤在一起的边合并成一次等待
+    // （等max值），散得很开的才单独等。粗化的代价=消费者多等生产者间的完成时间差。
+    //
+    // 验收判据：makespan不退化（模拟或GPU时间戳；q1负载是下界）、提交批次数下降、
+    // 时间线signal值单调性自检保持。参照2026-09-09的A/B分析基建（日志脚本）可量化前后对比。
+    //
+    // 启用重排前必须处理的耦合（否则错误）：
+    //   1. CrossQueueSyncAnalysis的pass_local_to_queue_indices_消费的是【重排前】的queue_schedules
+    //      （见pass_execution_phase.h头注"顺序一致性注意"）——重排改变pass队列归属时，同步点会按
+    //      错误的队列生成。必须统一改为消费optimized_timeline。
+    //   2. Phase 7屏障生成的tracker按拓扑序推进（依赖保序），重排在【同队列内】不得违反拓扑序；
+    //      跨队列的流内顺序仍由canonical序（不变量：排序键序==流构造序）约束。
+    //   3. Step B切批的consumer/producer锚定按pass查表——与重排正交，但重排后同队列相邻pass
+    //      的生产者/消费者关系变化会改变批次构成，需重跑蕴含断言与sync validation。
+    // ====================================================================================================
+
     if (false)
     {
         // Step 1: 从 QueueSchedule 中创建一个时间线副本

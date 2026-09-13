@@ -52,6 +52,11 @@ void DepthPyramidPass::Build(RDGBuilder& builder, uint32_t mode, RDGTextureHandl
 
         auto passBuilder = builder.CreateComputePass(GetName() + minmax + index)
             .PassIndex(i, mode)
+            // [调度实验2026-09-11] pyramid挪q0：其输入Depth在q0 t≈2.5完成，原classify排q1
+            // 深链（被SCDL 4.1ms挡前+与ReSTIR交替串行到10.4）——SSSR Trace等pyramid空窗
+            // 2.95ms的根源，且钉死NRD Spec/Diff同窗重叠（L2互踩）。q0化后pyramid帧首~3ms
+            // 完成，SSSR Trace起跑10.5→7.6，Spec链前移与Diff链错峰
+            .AddFlag(RDGPassFlags::ForceGraphicsQueue)
             .RootSignature(rootSignature)
             .Read(0, 0, 0, 
                 (i == 0) ? depth : depthMip, 

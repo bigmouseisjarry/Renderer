@@ -11,7 +11,12 @@
 #include "Function/Render/RenderResource/RenderResourceManager.h"
 #include "Platform/File/FileSystem.h"
 #include "Platform/HAL/PlatformProcess.h"
+#include <algorithm>
+#include <array>
+#include <map>
 #include <memory>
+#include <string>
+#include <vector>
 
 std::shared_ptr<EngineContext> EngineContext::context = std::make_shared<EngineContext>();
 
@@ -110,11 +115,57 @@ void EngineContext::UpdateTimers()
 {
     historyTimers = timers[currentTick % (2 * FRAMES_IN_FLIGHT)];
 
+    // [CpuTiming]节流聚合导出（CPU帧用时分析，风格同RHIRenderQuery的[GpuTiming]）：按scope名跨帧
+    // 聚合均值/最大值/每帧命中数，每300帧输出一批（含全部ENGINE_TIME_SCOPE/ENGINE_TIME_SCOPE_STR
+    // 函数——per-pass动态名亦在其中）。数据源=historyTimers（上一帧全部线程的scope集，worker任务
+    // 在帧内WaitIdle join后闭合）；唯RHI线程的SubmitRHI在Tick返回后仍可能在录——Valid()==false
+    //（有scope未Pop）的线程该帧跳过，避免读到半开区间
+    static uint32_t dumpCounter = 0;
+    static uint32_t dumpFrames = 0;
+    static double frameMsSum = 0.0;
+    static double loopMsSum = 0.0;
+    static std::map<std::string, std::array<double, 3>> cpuTimingAgg;   // name → {sumMs, maxMs, hits}
+    constexpr uint32_t CPU_TIMING_DUMP_INTERVAL = 300;
+
+    dumpFrames++;
+    frameMsSum += deltaTime;
+    for (auto& [threadID, scopes] : historyTimers)
+    {
+        if (!scopes || !scopes->Valid()) continue;
+        for (const auto& scope : scopes->GetScopes())
+        {
+            const double ms = scope->GetMilliSeconds();
+            auto& agg = cpuTimingAgg[scope->name];
+            agg[0] += ms;
+            agg[1] = std::max(agg[1], ms);
+            agg[2] += 1.0;
+            if (scope->name == "EngineContext::MainLoopInternal") loopMsSum += ms;
+        }
+    }
+
+    if (++dumpCounter >= CPU_TIMING_DUMP_INTERVAL)
+    {
+        dumpCounter = 0;
+        std::vector<std::pair<std::string, std::array<double, 3>>> sorted(cpuTimingAgg.begin(), cpuTimingAgg.end());
+        std::sort(sorted.begin(), sorted.end(),
+            [](const auto& a, const auto& b) { return a.second[0] > b.second[0]; });
+        //ENGINE_LOG_INFO("[CpuTiming] ===== dump: frames={} frameAvg={:.2f}ms loopAvg={:.2f}ms names={} =====",
+        //    dumpFrames, frameMsSum / dumpFrames, loopMsSum / dumpFrames, sorted.size());
+        for (const auto& [name, agg] : sorted)
+            //ENGINE_LOG_INFO("[CpuTiming] '{}' avg={:.3f}ms max={:.2f}ms hits={:.1f}/frame",
+            //    name.c_str(), agg[0] / dumpFrames, agg[1], agg[2] / dumpFrames);
+
+        cpuTimingAgg.clear();
+        dumpFrames = 0;
+        frameMsSum = 0.0;
+        loopMsSum = 0.0;
+    }
+
     for(auto& timerPair : timers[currentTick % (2 * FRAMES_IN_FLIGHT)])    // 计时需要在全部同步之后做更新
         timerPair.second = std::make_shared<TimeScopes>(); // 重新生成对象，不clear了
-    
+
     timer.EndAfterMilliSeconds(renderSystem->GetGlobalSetting()->minFrameTime);
     deltaTime = timer.GetMilliSeconds();
     timer.Clear();
-    timer.Begin();  
+    timer.Begin();
 }

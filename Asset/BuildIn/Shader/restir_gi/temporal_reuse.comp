@@ -1,4 +1,5 @@
 #version 460
+#extension GL_EXT_samplerless_texture_functions : enable
 #extension GL_EXT_ray_tracing : enable
 #extension GL_ARB_separate_shader_objects : enable
 #extension GL_GOOGLE_include_directive : enable
@@ -54,9 +55,9 @@ void main()
 	ivec2 screenPixel = ivec2(pixel.x * WIDTH_DOWNSAMPLE_RATE, pixel.y * HEIGHT_DOWNSAMPLE_RATE);
     vec2 uv         = ScreenPixToUV(screenPixel); 
 
-    vec4 gbffer0    = imageLoad(G_BUFFER_DIFFUSE_METALLIC, screenPixel);
-    vec4 gbffer1    = imageLoad(G_BUFFER_NORMAL_ROUGHNESS, screenPixel);
-    vec4 gbffer2    = imageLoad(G_BUFFER_EMISSION, screenPixel);
+    vec4 gbffer0    = texelFetch(G_BUFFER_DIFFUSE_METALLIC, screenPixel, 0);
+    vec4 gbffer1    = texelFetch(G_BUFFER_NORMAL_ROUGHNESS, screenPixel, 0);
+    vec4 gbffer2    = texelFetch(G_BUFFER_EMISSION, screenPixel, 0);
     vec3 diffuse    = gbffer0.xyz;
     vec3 normal     = gbffer1.xyz;
     vec3 emission   = gbffer2.xyz;

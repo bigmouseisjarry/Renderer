@@ -64,8 +64,8 @@ void DepthPass::Build(RDGBuilder& builder)
 
     RDGRenderPassHandle pass = builder.CreateRenderPass(GetName())
         .DepthStencil(depth, ATTACHMENT_LOAD_OP_CLEAR, ATTACHMENT_STORE_OP_STORE, 1.0f, 0)
-        .Dependency(builder.GetBuffer("Mesh Draw Commands" + cmdIndex))
-        .Dependency(builder.GetBuffer("Clusrter Draw Commands" + cmdIndex))
+        .Dependency(builder.GetBuffer("Mesh Draw Commands" + cmdIndex), RESOURCE_STATE_INDIRECT_ARGUMENT)
+        .Dependency(builder.GetBuffer("Clusrter Draw Commands" + cmdIndex), RESOURCE_STATE_INDIRECT_ARGUMENT)
         .Execute([&](RDGPassContext context) {
 
             Extent2D windowExtent = EngineContext::Render()->GetWindowsExtent();

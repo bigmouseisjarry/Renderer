@@ -143,6 +143,11 @@ void ReSTIRDIPass::Build(RDGBuilder& builder)
             .ReadWrite(2, 4, 0, outColor)
             .ReadWrite(2, 5, 0, restirDiffuseColor)
             .ReadWrite(2, 6, 0, restirSpecularColor)
+            // 隐形依赖边（图外通道消费）：lighting采样方向光阴影图（经per-frame set）
+            .Dependency(builder.GetTexture("Directional Depth [0]"), RESOURCE_STATE_SHADER_RESOURCE)
+            .Dependency(builder.GetTexture("Directional Depth [1]"), RESOURCE_STATE_SHADER_RESOURCE)
+            .Dependency(builder.GetTexture("Directional Depth [2]"), RESOURCE_STATE_SHADER_RESOURCE)
+            .Dependency(builder.GetTexture("Directional Depth [3]"), RESOURCE_STATE_SHADER_RESOURCE)
             .Execute([&](RDGPassContext context) {       
 
                 RHICommandListRef command = context.command; 

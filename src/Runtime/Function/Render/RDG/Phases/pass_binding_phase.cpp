@@ -316,6 +316,8 @@ void PassBindingPhase::prepare_descriptor_sets(RDGDependencyGraphRef graph)
                 return;
             }
 
+            if (edge->set == NO_DESCRIPTOR_SET) return;    // 虚拟依赖边：只表达排序/屏障，不绑定描述符
+
             RHIDescriptorSetRef descriptor = ensure_descriptor_set(edge->set);
 
             if((edge->asShaderRead || edge->asShaderReadWrite) && descriptor != nullptr)

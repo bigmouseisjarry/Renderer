@@ -55,6 +55,10 @@ struct NRDIntegrationCreationDesc {
     // Not so long name
     char name[64] = "";
 
+    // 第3刀：实例的RDG资源名前缀（"NRD Pass [i]"等→"<name> Pass [i]"，多实例共存防黑板撞名），
+    // 且置true时该实例全部dispatch pass钉graphics队列（spec实例跟SSSR链走q0空窗）
+    bool forceGraphicsQueue = false;
+
     // Resource dimensions
     uint16_t resourceWidth = 0;
     uint16_t resourceHeight = 0;

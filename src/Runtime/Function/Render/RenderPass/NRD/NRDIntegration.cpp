@@ -353,15 +353,16 @@ void NRDIntegration::Denoise(RDGBuilder& builder, const nrd::Identifier* denoise
 
     // ReBlur里有个REBLUR_FORMAT_PREV_NORMAL_ROUGHNESS宏是靠cmake定义的，需要跟着改！！！
 
-    // 注册RDG资源
-    RDGBufferHandle bufferHandle = builder.CreateBuffer("NRD Constant Buffer")
+    // 注册RDG资源（名字带实例前缀——多实例共存时黑板名字不撞车）
+    const std::string prefix = (m_Desc.name[0] != '\0') ? std::string(m_Desc.name) : std::string("NRD");
+    RDGBufferHandle bufferHandle = builder.CreateBuffer(prefix + " Constant Buffer")
         .Import(m_ConstantBuffer, RESOURCE_STATE_UNDEFINED)
         .Finish();
     for(int i = 0; i < m_TexturePool.size(); i++)
     {
         NRDResource& resource = m_TexturePool[i];
-        resource.handle = builder.CreateTexture("NRD Texture [" + std::to_string(i) + "]")
-            .Import(resource.texture, resource.state) 
+        resource.handle = builder.CreateTexture(prefix + " Texture [" + std::to_string(i) + "]")
+            .Import(resource.texture, resource.state)
             .Finish();
     }
 
@@ -381,8 +382,11 @@ void NRDIntegration::_Dispatch(RDGBuilder& builder, const nrd::DispatchDesc& dis
     const nrd::InstanceDesc& instanceDesc = *GetInstanceDesc(*m_Instance);
     const nrd::PipelineDesc& pipelineDesc = instanceDesc.pipelines[dispatchDesc.pipelineIndex];
 
-    auto passBuilder = builder.CreateComputePass("NRD Pass [" + std::to_string(dispatchIndex) + "]");
-    RDGBufferHandle bufferHandle = builder.GetBuffer("NRD Constant Buffer");
+    const std::string prefix = (m_Desc.name[0] != '\0') ? std::string(m_Desc.name) : std::string("NRD");
+    auto passBuilder = builder.CreateComputePass(prefix + " Pass [" + std::to_string(dispatchIndex) + "]");
+    if (m_Desc.forceGraphicsQueue)
+        passBuilder.AddFlag(RDGPassFlags::ForceGraphicsQueue);   // spec实例跟SSSR链走graphics队列空窗
+    RDGBufferHandle bufferHandle = builder.GetBuffer(prefix + " Constant Buffer");
 
     // Update constants
     uint32_t dynamicConstantBufferOffset = m_ConstantBufferOffsetPrev;

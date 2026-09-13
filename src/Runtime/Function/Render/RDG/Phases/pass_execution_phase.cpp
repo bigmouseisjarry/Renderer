@@ -1,5 +1,6 @@
 #include "pass_execution_phase.h"
 
+#include "Function/Global/Definations.h"
 #include "Function/Global/EngineContext.h"
 #include "Function/Global/EngineThreadPool.h"
 #include "Function/Render/RDG/RDGPool.h"
@@ -7,14 +8,11 @@
 #include <algorithm>
 #include <map>
 
-// 跨帧队列链注册表：记录【上一帧】（无论哪个帧槽）各队列的queueDone值——
-// imported持久资源（TLAS storage、阴影图、DDGI探针等）跨帧复用同一VkImage，
+// 跨帧队列链：imported持久资源（TLAS storage、阴影图、DDGI探针等）跨帧复用同一VkImage，
 // 旧单队列按提交序串行天然安全；多队列下两帧GPU并发，帧N+1的写入会追上帧N的读取（WAR竞态，
 // 如阴影闪烁）。本帧各队列首批次wait上一帧其他队列的queueDone，重建帧间串行语义。
-// 帧内跨队列重叠不受影响。主线程逐帧串行访问，无需加锁
-static std::vector<RHISemaphoreRef> s_lastFrameTimelines;
-static std::vector<uint64_t> s_lastFrameDoneValues;
-static bool s_hasLastFrame = false;
+// 帧内跨队列重叠不受影响。数据源=注入的跨帧注册表（RenderSystem拥有、两帧槽编译器共享，
+// 语义与原文件级static一致——见cross_frame_registry.h的代际协议注释）
 
 // 诊断日志：全局帧序号（仅enable_debug_output时递增——跨两个帧槽编译器实例关联日志用，
 // 主线程逐帧串行访问；worker录制期的[Rec]日志只读它，写入发生在派发之前）
@@ -26,6 +24,7 @@ PassExecutionPhase::PassExecutionPhase(
     const CrossQueueSyncAnalysis& sync_analysis,
     const BarrierGenerationPhase& barrier_generation_phase,
     const PassBindingPhase& binding_phase,
+    RDGCrossFrameRegistry& cross_frame_registry,
     const CommandRecordingConfig& config)
     : config_(config)
     , queue_schedule_(queue_schedule)
@@ -33,6 +32,7 @@ PassExecutionPhase::PassExecutionPhase(
     , sync_analysis_(sync_analysis)
     , barrier_generation_phase_(barrier_generation_phase)
     , binding_phase_(binding_phase)
+    , cross_frame_registry_(cross_frame_registry)
 {
 }
 
@@ -53,6 +53,11 @@ void PassExecutionPhase::reset_for_frame()
     producerPoints_.clear();
     consumerPoints_.clear();
     pointValues_.clear();
+    firstTouchKeys_.clear();
+    lastUseBatch_.clear();
+    homingBatch_.clear();
+    lastUseBatches_.clear();
+    batchLastUseValue_.clear();
 }
 
 void PassExecutionPhase::on_execute(RDGDependencyGraphRef graph, PerFrameCommonResourceRef executor)
@@ -117,13 +122,18 @@ void PassExecutionPhase::on_execute(RDGDependencyGraphRef graph, PerFrameCommonR
 void PassExecutionPhase::build_queue_streams(RDGDependencyGraphRef graph, PerFrameCommonResourceRef executor)
 {
     // 规范全局序（剔除culled）——批次排序键与串行边界投影的基准。
-    // 必须按【依赖级别序】枚举（与Phase 3构建queue_schedules的遍历一致）：Kahn拓扑序与级别序
-    // 在同层互相独立的pass上可能不一致，若排序键与流构造序不同，stable_sort会打乱同队列批次、
-    // 破坏时间线signal值的单调性。级别序同样依赖保序（依赖边⇒级别严格递增）
-    const auto& topology = sync_analysis_.get_dependency_analysis().get_logical_topology_result();
-    for (const auto& level : topology.logical_levels)
+    // 两条路径，排序键与流构造序必须一致（否则stable_sort打乱同队列批次、破坏timeline signal
+    // 单调性→GPU死锁）：
+    //   HEFT：Phase 3的全局调度序（流构造序=调度序的队列投影）——schedule_order非空即用
+    //   旧classify：依赖级别序扁平化（与Phase 3构建queue_schedules的遍历一致——Kahn拓扑序
+    //     与级别序在同层独立pass上可能不一致；级别序依赖保序：依赖边⇒级别严格递增）
+
+    // 将全局序压入orderedPasses_，并记录其在全局序中的下标（topoIndex_）
+    // 用于Step C 的所有队列的提交批次排序 和 串行边界投影
+    const TimelineScheduleResult& scheduleForOrder = queue_schedule_.get_schedule_result();
+    if (!scheduleForOrder.schedule_order.empty())
     {
-        for (RDGPassNodeRef pass : level.passes)
+        for (RDGPassNodeRef pass : scheduleForOrder.schedule_order)
         {
             if (pass && !pass->isCulled)
             {
@@ -132,8 +142,23 @@ void PassExecutionPhase::build_queue_streams(RDGDependencyGraphRef graph, PerFra
             }
         }
     }
+    else
+    {
+        const LogicalTopologyResult& topology = sync_analysis_.get_dependency_analysis().get_logical_topology_result();
+        for (const auto& level : topology.logical_levels)
+        {
+            for (RDGPassNodeRef pass : level.passes)
+            {
+                if (pass && !pass->isCulled)
+                {
+                    topoIndex_[pass] = static_cast<uint32_t>(orderedPasses_.size());
+                    orderedPasses_.push_back(pass);
+                }
+            }
+        }
+    }
 
-    // 串行边界（全局拓扑序）：首个命中 serial_pass_names 的位置，其后全部pass归主线程录制
+    // 找到在全局拓扑序中的串行边界：首个命中 serial_pass_names 的位置，其后全部pass归主线程录制
     uint32_t serialTopo = static_cast<uint32_t>(orderedPasses_.size());
     if (!config_.serial_pass_names.empty())
     {
@@ -155,23 +180,26 @@ void PassExecutionPhase::build_queue_streams(RDGDependencyGraphRef graph, PerFra
     for (uint32_t q = 0; q < schedule.all_queues.size(); q++)
         assert(executor->queueSlots[q].queue == schedule.all_queues[q].handle);
 
+    // 一个队列一个流
     streams_.assign(schedule.all_queues.size(), QueueStream{});
     for (uint32_t q = 0; q < schedule.all_queues.size(); q++)
     {
         if (q < schedule.queue_schedules.size())
         {
+            // 按照Phase 3 的规划将每一个pass分配到对应的队列流中，剔除被cull的pass
             for (RDGPassNodeRef pass : schedule.queue_schedules[q])
                 if (pass && !pass->isCulled) streams_[q].passes.push_back(pass);
         }
     }
 
-    // 各队列流内的串行区起点：流内首个 topoIndex >= serialTopo 的下标
+    // 各队列流内的串行区起点
     for (uint32_t q = 0; q < streams_.size(); q++)
     {
-        auto& stream = streams_[q];
+        QueueStream& stream = streams_[q];
         stream.serialPos = static_cast<uint32_t>(stream.passes.size());
         for (uint32_t i = 0; i < stream.passes.size(); i++)
         {
+            // 流内首个 topoIndex >= serialTopo 的下标
             auto found = topoIndex_.find(stream.passes[i]);
             if (found != topoIndex_.end() && found->second >= serialTopo) { stream.serialPos = i; break; }
         }
@@ -181,12 +209,13 @@ void PassExecutionPhase::build_queue_streams(RDGDependencyGraphRef graph, PerFra
     for (uint32_t q = 0; q < streams_.size(); q++)
         if (!streams_[q].passes.empty()) activeQueues_.push_back(q);
 
-    // 有效同步点：悬空过滤（生产者/消费者被cull则该依赖已随pass消失）
+    // 有效同步点
     activePoints_.clear();
     producerPoints_.clear();
     consumerPoints_.clear();
     for (const auto& point : sync_analysis_.get_optimized_sync_points())
     {
+        // 悬空过滤（生产者/消费者被cull则该依赖已随pass消失）
         if (point.producer_pass == nullptr || point.consumer_pass == nullptr) continue;
         if (point.producer_pass->isCulled || point.consumer_pass->isCulled) continue;
 
@@ -225,42 +254,141 @@ void PassExecutionPhase::split_submit_batches()
         const QueueStream& stream = streams_[q];
         std::vector<StreamBatch>& queueBatches = batches_[q];
 
+        // 支配覆盖表：源队列 → 本队列更早批次已等待生产者的最大canonical位置
+        //（仅批首pass的consumer点会真正发wait——批创建时折入；见Step C的值级去重与覆盖审计）
+        std::unordered_map<uint32_t, uint32_t> coveredMaxPos;
+
         StreamBatch current;
         current.begin = 0;
         bool currentOpen = false;
+        uint32_t headTopo = 0;                          // 当前批首pass的canonical位置
+        const char* pendingOpenReason = "stream-start"; // 下一批的开批原因（日志用）
 
+        // 遍历流中的每一个pass
         for (uint32_t i = 0; i < stream.passes.size(); i++)
         {
             RDGPassNodeRef pass = stream.passes[i];
 
-            // wait规则（必须）：consumer的wait只能挂批次首pass——pass是consumer则开启新批次；
-            // acquire规则（必须）：跨族acquire的配对release须在其之前提交——acquire者必须批次首，
-            // 与生产者的"release后收批"配合保证生产者批次在提交序中严格在前；
-            // 串行边界同样强制切批（串行区批次归主线程join后录制，批内不能混跨边界）
-            if (currentOpen && (consumerPoints_.count(pass) > 0 || pass_has_cross_family_acquire(pass) || i == stream.serialPos))
+            // 统一守卫模型（见头文件Step B文档）。两类守卫、两种覆盖判据——【正交，不可互换】：
+            //   consumer点守卫（数据就绪）：只能由支配覆盖——本队列更早批已等过sq上≥pos的生产者
+            //     （coveredMaxPos[sq]≥pos ⇒ sq提交序串行 ⇒ pos所在批已完成）。跨队列的提交序
+            //     不蕴含执行序，不可作为数据就绪的依据。
+            //   帧内acquire守卫（QFO配对序）：只能由提交序覆盖——headTopo>pos ⇒ 本批提交键
+            //     恒大于pos所在批键≤canonical(pos)。其执行序由同pass的consumer点守卫蕴含
+            //     （下方蕴含断言：acquire者必为consumer，且SSIS取最大使点位置≥release位置）。
+            // 守卫 = consumer点（pos=点生产者canonical，sq=生产者队列）∪ 帧内跨族acquire
+            //（pos=配对release所在pass的canonical，sq=release队列）；帧首acquire的配对release
+            // 在prologue批（恒为计划首）——提交序天然覆盖，不构成守卫。
+            // 由此：旧acquire开批规则被蕴含（未覆盖时开批使批头=本pass，配对序+执行序同时成立）；
+            // release收批删除——配对序由acquire侧检查独立保证（见下方QFO配对序断言）。
+            // producer收批保留：signal挂批尾是粒度语义（粗化属第二层，见schedule_reorder.cpp备忘）
+            if (currentOpen)
             {
-                current.end = i;
-                queueBatches.push_back(current);
-                currentOpen = false;
+                // 必须再次开批
+                bool mustOpen = false;
+                const char* reason = nullptr;
+
+                if (i == stream.serialPos)
+                {
+                    // 串行边界强制切批（串行区批次归主线程join后录制，批内不能混跨边界）
+                    mustOpen = true;
+                    reason = "serial-boundary";
+                }
+                else
+                {
+                    // consumer点守卫：数据就绪【只能】由支配覆盖——跨队列的提交序不蕴含执行序，
+                    // 未被支配覆盖的consumer必须开批发wait（否则读到未写完的数据）
+
+                    // 如果这个pass是有效同步点中的消费pass
+                    if (auto consumerFound = consumerPoints_.find(pass); consumerFound != consumerPoints_.end())
+                    {
+                        // 取到与他相关的所有有效同步点
+                        for (uint32_t pointIndex : consumerFound->second)
+                        {
+                            // 该同步点的生产者pass在全局拓扑序中的位置
+                            auto posIt = topoIndex_.find(activePoints_[pointIndex].producer_pass);
+                            if (posIt == topoIndex_.end()) continue;
+                            // 在需要同步的生产者队列上，已经同步过的生产者位置 < 该同步点的生产者位置，说明需要新的同步。
+                            // 覆盖表无条目=该源队列从未等待过（必须开批）——不能用operator[]默认0
+                            // 判断：canonical位置0的生产者（帧首pass）会因0<0恒假被漏掉（HEFT把帧首
+                            // pass跨队列化时暴露为culling竞态闪烁，2026-09-11审计②抓获）
+                            auto coveredIt = coveredMaxPos.find(activePoints_[pointIndex].producer_queue_index);
+                            if (coveredIt == coveredMaxPos.end() || coveredIt->second < posIt->second)
+                            {
+                                mustOpen = true;
+                                reason = "guard-consumer";
+                                break;
+                            }
+                        }
+                    }
+
+                    if (!mustOpen)
+                    {
+                        // 帧内acquire守卫：QFO配对序【只能】由提交序覆盖——批头canonical≤release位置
+                        // 则必须开批（开批使批头=本pass，其consumer点的wait同时承接执行序；数据就绪
+                        // 侧由上方consumer守卫独立保证，两类守卫判据正交不可互换——见函数头注释）
+                        std::vector<std::pair<RDGPassNodeRef, uint32_t>> acquireGuards;
+                        collect_in_frame_acquire_guards(pass, acquireGuards);
+                        for (const auto& guard : acquireGuards)
+                        {
+                            auto posIt = topoIndex_.find(guard.first);
+                            if (posIt == topoIndex_.end()) continue;
+                            if (headTopo <= posIt->second)
+                            {
+                                mustOpen = true;
+                                reason = "guard-acquire";
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (mustOpen)
+                {
+                    current.end = i;
+                    queueBatches.push_back(current);
+                    currentOpen = false;
+                    pendingOpenReason = reason;
+                }
             }
 
             if (!currentOpen)
             {
                 current = StreamBatch{};
                 current.begin = i;
+                current.openReason = pendingOpenReason;
                 currentOpen = true;
+                pendingOpenReason = "after-producer-close";
+
+                auto headIt = topoIndex_.find(pass);
+                assert(headIt != topoIndex_.end());
+                headTopo = headIt->second;
+
+                // 批首pass的consumer点将真正发wait（Step C值级去重后）——折入支配覆盖表。
+                // acquire守卫不发wait：其执行覆盖蕴含自同pass的consumer点（见函数头蕴含论证）
+                auto foldFound = consumerPoints_.find(pass);
+                if (foldFound != consumerPoints_.end())
+                {
+                    for (uint32_t pointIndex : foldFound->second)
+                    {
+                        auto posIt = topoIndex_.find(activePoints_[pointIndex].producer_pass);
+                        if (posIt == topoIndex_.end()) continue;
+                        uint32_t& covered = coveredMaxPos[activePoints_[pointIndex].producer_queue_index];
+                        covered = std::max(covered, posIt->second);
+                    }
+                }
             }
 
             current.hasPresent = current.hasPresent || pass->NodeType() == RDG_PASS_NODE_TYPE_PRESENT;
 
-            // signal规则（收紧）：producer所在的批在其后收口（signal挂批次末尾，等待者不会过早放行）；
-            // release规则（必须）：跨族release挂pass之后——release者必须批次尾，使其批次的排序键
-            // 恰为该pass的规范序（见build_submit_plan的提交序说明）
-            if (producerPoints_.count(pass) > 0 || pass_has_cross_family_release(pass))
+            // signal规则：producer所在的批在其后收口（signal挂批次末尾，等待者不会过早放行）。
+            // release收批规则已删除——统一守卫模型下配对序由acquire侧开批检查独立保证
+            if (producerPoints_.count(pass) > 0)
             {
                 current.end = i + 1;
                 queueBatches.push_back(current);
                 currentOpen = false;
+                pendingOpenReason = "after-producer-close";
             }
         }
 
@@ -270,10 +398,58 @@ void PassExecutionPhase::split_submit_batches()
             queueBatches.push_back(current);
         }
 
-        // 串行区标记（整批要么全在串行区要么全不在——上面已在边界处强制切批）
+        // 串行区标记
         for (auto& batch : queueBatches)
+            // 整个流都没有串行区或者批首pass在串行区起点之后
             batch.serial = (stream.serialPos < stream.passes.size() && batch.begin >= stream.serialPos);
     }
+
+    // 蕴含断言（统一守卫模型的执行覆盖支柱）：帧内跨族acquire者必为某同步点的consumer
+    // （跨族⇒跨队列⇒边⇒SSIS点，且SSIS只合并producer端、consumer保留）——由此acquire守卫
+    // （release位置）被同pass的consumer点（位置≥release位置，SSIS取最大）蕴含：批首点发wait
+    // 覆盖release执行；被合并pass的覆盖由支配表传递（见split主循环注释）。
+    // 帧首acquire（source_pass==nullptr）无帧内生产者，由prologue机制承接，不在此列。
+    // 若此断言被击穿说明acquire守卫失去wait锚点。审计①，统一开关ENABLE_RDG_AUDIT（Definations.h）
+#if ENABLE_RDG_AUDIT
+    for (uint32_t q : activeQueues_)
+        for (RDGPassNodeRef pass : streams_[q].passes)
+        {
+            const std::vector<BarrierBatch>* batches = barrier_generation_phase_.get_pass_barrier_batches(pass);
+            if (batches == nullptr) continue;
+            bool hasInFrameAcquire = false;
+            for (const auto& batch : *batches)
+                for (const RDGBarrier& barrier : batch.barriers)
+                    if (!barrier.after_pass && barrier.source_pass != nullptr &&
+                        barrier.src_family != RHI_QUEUE_FAMILY_IGNORED && barrier.dst_family != RHI_QUEUE_FAMILY_IGNORED)
+                        hasInFrameAcquire = true;
+            if (hasInFrameAcquire)
+                assert(consumerPoints_.count(pass) > 0);
+        }
+#endif
+
+    // QFO配对序契约（统一守卫模型的运行时证明）：每个帧内acquire所在批的批头canonical >
+    // 配对release所在pass的canonical ⇒ release批键（=其批头canonical≤release pass canonical）
+    // < acquire批键（=批头canonical）——验证层"release先于acquire提交"成立。
+    // 审计②，统一开关ENABLE_RDG_AUDIT（Definations.h）
+#if ENABLE_RDG_AUDIT
+    for (uint32_t q : activeQueues_)
+        for (const StreamBatch& batch : batches_[q])
+        {
+            const uint32_t headTopo = topoIndex_[streams_[q].passes[batch.begin]];
+            for (uint32_t i = batch.begin; i < batch.end; i++)
+            {
+                std::vector<std::pair<RDGPassNodeRef, uint32_t>> guards;
+                collect_in_frame_acquire_guards(streams_[q].passes[i], guards);
+                for (const auto& guard : guards)
+                {
+                    auto posIt = topoIndex_.find(guard.first);
+                    assert(posIt != topoIndex_.end());
+                    assert(headTopo > posIt->second);
+                }
+            }
+        }
+#endif
+
 
     if (config_.enable_debug_output)
     {
@@ -284,29 +460,19 @@ void PassExecutionPhase::split_submit_batches()
             for (uint32_t b = 0; b < batches_[q].size(); b++)
             {
                 const StreamBatch& batch = batches_[q][b];
-                // 切批原因复算（与split规则同一组谓词）：开批原因看批首pass，收批原因看批尾pass
-                std::string openReason = "stream-start";
-                if (batch.begin > 0)
-                {
-                    RDGPassNodeRef first = stream.passes[batch.begin];
-                    if (consumerPoints_.count(first) > 0) openReason = "consumer-wait";
-                    else if (pass_has_cross_family_acquire(first)) openReason = "cross-family-acquire";
-                    else if (batch.begin == stream.serialPos) openReason = "serial-boundary";
-                    else openReason = "prev-producer/release-close";
-                }
+                // 开批原因=split主循环记录值；收批原因复算（producer收批或被下一开批蕴含）
                 std::string closeReason = "stream-end";
                 if (batch.end < stream.passes.size())
                 {
                     RDGPassNodeRef last = stream.passes[batch.end - 1];
                     if (producerPoints_.count(last) > 0) closeReason = "producer-signal";
-                    else if (pass_has_cross_family_release(last)) closeReason = "cross-family-release";
-                    else closeReason = "next-consumer/acquire/serial";
+                    else closeReason = "next-open/serial";
                 }
                 ENGINE_LOG_INFO("[StepB] q{} batch[{}] passes[{}..{}] '{}'..'{}' open={} close={}{}{}",
                     q, b, batch.begin, batch.end - 1,
                     stream.passes[batch.begin]->Name().c_str(),
                     stream.passes[batch.end - 1]->Name().c_str(),
-                    openReason, closeReason,
+                    batch.openReason, closeReason,
                     batch.serial ? " [serial]" : "", batch.hasPresent ? " [present]" : "");
             }
         }
@@ -314,6 +480,75 @@ void PassExecutionPhase::split_submit_batches()
 }
 
 // Step C ////////////////////////////////////////////////////////////////////////
+
+void PassExecutionPhase::compute_imported_touch_sets()
+{
+    firstTouchKeys_.clear();
+    lastUseBatch_.clear();
+    homingBatch_.clear();
+    lastUseBatches_.clear();
+
+    for (uint32_t q : activeQueues_)
+    {
+        for (uint32_t b = 0; b < batches_[q].size(); b++)
+        {
+            const StreamBatch& batch = batches_[q][b];
+            for (uint32_t i = batch.begin; i < batch.end; i++)
+            {
+                RDGPassNodeRef pass = streams_[q].passes[i];
+
+                // 单个imported键触碰登记：本队列首触批（每键一次，wait挂点）+ 本队列末触更新（b单调递增）
+                auto touch = [&](const void* key)
+                {
+                    if (key == nullptr) return;
+                    auto& perQueue = lastUseBatch_[key];
+                    auto found = perQueue.find(q);
+                    if (found == perQueue.end())
+                    {
+                        perQueue.emplace(q, std::make_pair(q, b));
+                        firstTouchKeys_[{q, b}].push_back(key);
+                    }
+                    else
+                        found->second = std::make_pair(q, b);
+                };
+
+                // 键=底层RHI对象指针（imported节点Build期已挂对象；跨帧身份与节点/名字无关）
+                pass->foreach_textures([&](RDGTextureNodeRef node, RDGTextureEdgeRef)
+                    {
+                        if (node->IsImported()) touch(binding_phase_.get_texture(node).get());
+                    });
+                pass->foreach_buffers([&](RDGBufferNodeRef node, RDGBufferEdgeRef)
+                    {
+                        if (node->IsImported()) touch(binding_phase_.get_buffer(node).get());
+                    });
+
+                // 归巢载体批登记（imported与池化纹理皆有归巢——prologue承接wait须全覆盖）：
+                // target_pass==nullptr的跨族release即Phase 7归巢循环产物，锚定其真实挂载批
+                const std::vector<BarrierBatch>* batches = barrier_generation_phase_.get_pass_barrier_batches(pass);
+                if (batches != nullptr)
+                {
+                    for (const auto& barrierBatch : *batches)
+                        for (const RDGBarrier& barrier : barrierBatch.barriers)
+                            if (barrier.after_pass && barrier.target_pass == nullptr &&
+                                barrier.src_family != RHI_QUEUE_FAMILY_IGNORED && barrier.dst_family != RHI_QUEUE_FAMILY_IGNORED)
+                            {
+                                const void* key = binding_phase_.get_texture(
+                                    static_cast<RDGTextureNodeRef>(barrier.resource)).get();
+                                if (key != nullptr)
+                                {
+                                    homingBatch_[key] = {q, b};
+                                    lastUseBatches_.insert({q, b});   // 归巢批也需signal（prologue wait点）
+                                }
+                            }
+                }
+            }
+        }
+    }
+
+    for (const auto& [key, perQueue] : lastUseBatch_)
+        for (const auto& [q, qb] : perQueue)
+            lastUseBatches_.insert(qb);     // 各队列末触批也要signal（细链wait点全集）
+}
 
 void PassExecutionPhase::build_submit_plan(PerFrameCommonResourceRef executor)
 {
@@ -333,6 +568,9 @@ void PassExecutionPhase::build_submit_plan(PerFrameCommonResourceRef executor)
     // 含帧首acquire的批次wait它，保证release先于acquire执行
     const bool needPrologue = !barrier_generation_phase_.get_frame_start_releases().empty();
     uint64_t prologueValue = 0;
+
+    // 细链触碰集（首触批/末触批/全局末触——两模式恒算：细链wait数据源不能因模式切换断代）
+    compute_imported_touch_sets();
 
     // ---- 第一遍：逐队列按批次序分配timeline值（每队列独立时间线，值在该队列的时间线上
     //      随批次序严格递增；同步点的值分配在其生产者队列的时间线上）----
@@ -358,10 +596,50 @@ void PassExecutionPhase::build_submit_plan(PerFrameCommonResourceRef executor)
                 for (uint32_t pointIndex : found->second)
                     pointValues_[pointIndex] = ++nextValue[q];   // 值在生产者队列的时间线上
             }
+            // 细链末触signal值：本批是imported键在某队列的末触批（同批多键共享一值，signal数=批数级）
+            if (lastUseBatches_.count({q, b}) > 0)
+                batchLastUseValue_[{q, b}] = ++nextValue[q];
             if (b == batches_[q].size() - 1)
                 queueDoneValue[q] = ++nextValue[q];    // 队列末批：queueDone（join批/单队列fence用）
         }
     }
+
+#if ENABLE_RDG_AUDIT
+    // 覆盖审计辅助表（审计③，统一开关ENABLE_RDG_AUDIT）：pass → 其所在批（或其后首个有信号批）的最小信号值。
+    // 等待值≥此值即蕴含该批完成：时间线值按批序单调，等待v⇒v所在批完成⇒更早批全完成
+    // （队列串行）；同批多信号同时完成，故判据取【批内最小值】而非点自身值——
+    // 生产者批内还有更早pass的信号/prologueDone时，等过那些更小值同样覆盖本生产者
+    std::unordered_map<RDGPassNodeRef, uint64_t> passCoverValue;
+    {
+        for (int32_t s = static_cast<int32_t>(activeQueues_.size()) - 1; s >= 0; s--)
+        {
+            const uint32_t q = activeQueues_[s];
+            std::vector<uint64_t> mins(batches_[q].size(), UINT64_MAX);
+            for (uint32_t b = 0; b < batches_[q].size(); b++)
+            {
+                if (q == graphicsQueue && b == 0 && needPrologue)
+                    mins[b] = std::min(mins[b], prologueValue);
+                for (uint32_t i = batches_[q][b].begin; i < batches_[q][b].end; i++)
+                {
+                    auto prodFound = producerPoints_.find(streams_[q].passes[i]);
+                    if (prodFound == producerPoints_.end()) continue;
+                    for (uint32_t pi : prodFound->second)
+                        mins[b] = std::min(mins[b], pointValues_[pi]);
+                }
+                auto luFound = batchLastUseValue_.find({q, b});
+                if (luFound != batchLastUseValue_.end())
+                    mins[b] = std::min(mins[b], luFound->second);
+                if (b == batches_[q].size() - 1)
+                    mins[b] = std::min(mins[b], queueDoneValue[q]);
+            }
+            for (int32_t b = static_cast<int32_t>(batches_[q].size()) - 2; b >= 0; b--)
+                mins[b] = std::min(mins[b], mins[b + 1]);
+            for (uint32_t b = 0; b < batches_[q].size(); b++)
+                for (uint32_t i = batches_[q][b].begin; i < batches_[q][b].end; i++)
+                    passCoverValue[streams_[q].passes[i]] = mins[b];
+        }
+    }
+#endif
 
     // ---- 第二遍：组装waits/signals ----
     // 批次按【首个pass的拓扑序】排序提交（稳定排序保持各队列内部批次序）：
@@ -379,6 +657,11 @@ void PassExecutionPhase::build_submit_plan(PerFrameCommonResourceRef executor)
 
     for (uint32_t q : activeQueues_)
     {
+        // 值级支配去重表：本队列已等待的各时间线最大值（时间线指针→值）。≤已等值的wait被
+        // 本队列提交序串行蕴含（时间线值单调，等过大值蕴含小值已满足）——不发。
+        // 与Step B的位置级支配判定构成双保险：两处判定不一致时由批内覆盖审计断言捕获
+        std::unordered_map<const void*, uint64_t> waitedMax;
+
         for (uint32_t b = 0; b < batches_[q].size(); b++)
         {
             const StreamBatch& batch = batches_[q][b];
@@ -386,15 +669,20 @@ void PassExecutionPhase::build_submit_plan(PerFrameCommonResourceRef executor)
             RHIQueueSubmitBatch submitBatch;
             submitBatch.queue = executor->queueSlots[q].queue;
 
-            // waits：批次首pass的consumer点（wait规则保证批内其余pass不是consumer）。
-            // 引用【生产者队列】的时间线；waitState=to_state → 提交时映射stage并按等待队列族能力裁剪
+            // waits：批次首pass的consumer点。引用【生产者队列】的时间线；waitState=to_state →
+            // 提交时映射stage并按等待队列族能力裁剪。值级支配去重（见上方waitedMax注释）
             auto consumerFound = consumerPoints_.find(streams_[q].passes[batch.begin]);
             if (consumerFound != consumerPoints_.end())
             {
                 for (uint32_t pointIndex : consumerFound->second)
                 {
+                    const RHISemaphoreRef& producerTimeline =
+                        executor->queueSlots[activePoints_[pointIndex].producer_queue_index].timeline;
+                    uint64_t& maxWaited = waitedMax[producerTimeline.get()];
+                    if (pointValues_[pointIndex] <= maxWaited) continue;
+                    maxWaited = pointValues_[pointIndex];
                     RHISemaphoreWaitInfo wait{};
-                    wait.semaphore = executor->queueSlots[activePoints_[pointIndex].producer_queue_index].timeline;
+                    wait.semaphore = producerTimeline;
                     wait.value = pointValues_[pointIndex];
                     wait.isTimeline = true;
                     wait.waitState = activePoints_[pointIndex].to_state;
@@ -412,17 +700,65 @@ void PassExecutionPhase::build_submit_plan(PerFrameCommonResourceRef executor)
                 submitBatch.waits.push_back(wait);
             }
 
-            // 跨帧队列链：本队列首批次wait【上一帧】其他队列的queueDone（帧间串行，
-            // 消除imported持久资源的跨帧WAR竞态；同队列无需——VkQueue提交序天然串行）
-            if (b == 0 && s_hasLastFrame)
+            // 跨帧同步（消除imported持久资源的跨帧WAR竞态；同队列无需——VkQueue提交序天然串行）：
+            // 细链——本批首触的imported键，wait其上帧【各队列】末触点（按timeline聚合取max）；
+            //   graphics首批含prologue时追加wait上帧全部归巢点（prologue acquire(F→GFX)的
+            //   配对release=上帧归巢，执行序承接精确到归巢批而非整队列queueDone）。
+            //   未命中=上帧未触碰（FRAMES_IN_FLIGHT=2的fence链归纳：更早帧已完成，安全跳过）。
+            // 粗链——本队列首批次wait上帧其他队列的queueDone（帧间全序串行，A/B回退用）
+            if (cross_frame_registry_.has_last_frame() && !config_.coarse_cross_frame_sync)
             {
-                for (uint32_t s = 0; s < s_lastFrameDoneValues.size(); s++)
+                // timeline指针→(信号量引用, max值)——同时间线多wait点聚合为最大值
+                std::unordered_map<const void*, std::pair<RHISemaphoreRef, uint64_t>> crossFrameWaits;
+                auto addCrossFrameWait = [&](const RHISemaphoreRef& timeline, uint64_t value)
                 {
-                    if (s == q || s_lastFrameTimelines[s] == nullptr || s_lastFrameDoneValues[s] == 0) continue;
+                    if (timeline == nullptr || value == 0) return;
+                    auto& slot = crossFrameWaits[timeline.get()];
+                    slot.first = timeline;
+                    slot.second = std::max(slot.second, value);
+                };
+
+                auto firstFound = firstTouchKeys_.find({q, b});
+                if (firstFound != firstTouchKeys_.end())
+                {
+                    for (const void* key : firstFound->second)
+                    {
+                        const RDGCrossFrameRegistry::ResourceRecord* record = cross_frame_registry_.find_resource(key);
+                        if (record == nullptr) continue;
+                        for (const auto& [sourceQueue, point] : record->lastUsePerQueue)
+                            if (sourceQueue != q)
+                                addCrossFrameWait(point.timeline, point.value);
+                    }
+                }
+
+                if (needPrologue && q == graphicsQueue && b == 0)
+                {
+                    cross_frame_registry_.foreach_resource([&](const void*, const RDGCrossFrameRegistry::ResourceRecord& record)
+                        {
+                            addCrossFrameWait(record.homingPoint.timeline, record.homingPoint.value);
+                        });
+                }
+
+                for (const auto& [timeline, waitPair] : crossFrameWaits)
+                {
+                    RHISemaphoreWaitInfo wait{};
+                    wait.semaphore = waitPair.first;
+                    wait.value = waitPair.second;
+                    wait.isTimeline = true;
+                    wait.waitState = RESOURCE_STATE_UNDEFINED;    // 宽掩码：跨帧一切用途都须等待
+                    submitBatch.waits.push_back(wait);
+                }
+            }
+            else if (b == 0 && cross_frame_registry_.has_last_frame())
+            {
+                for (uint32_t s = 0; s < streams_.size(); s++)
+                {
+                    const RDGCrossFrameRegistry::QueueRecord* lastFrame = cross_frame_registry_.find_queue(s);
+                    if (s == q || lastFrame == nullptr || lastFrame->timeline == nullptr || lastFrame->doneValue == 0) continue;
 
                     RHISemaphoreWaitInfo wait{};
-                    wait.semaphore = s_lastFrameTimelines[s];
-                    wait.value = s_lastFrameDoneValues[s];
+                    wait.semaphore = lastFrame->timeline;
+                    wait.value = lastFrame->doneValue;
                     wait.isTimeline = true;
                     wait.waitState = RESOURCE_STATE_UNDEFINED;    // 宽掩码：帧首一切用途都须等待
                     submitBatch.waits.push_back(wait);
@@ -430,23 +766,61 @@ void PassExecutionPhase::build_submit_plan(PerFrameCommonResourceRef executor)
             }
 
             // 含帧首跨族acquire的批次：wait graphics prologueDone（保证prologue release先执行；
-            // 对整批wait是过同步但安全——acquire可能位于批内任意pass之前）
+            // 对整批wait是过同步但安全——acquire可能位于批内任意pass之前）。
+            // 支配去重：prologueDone是graphics时间线本帧最小值，本队列首个含帧首acquire的批
+            // 发出即覆盖全队列（提交序串行蕴含后续批次）
             if (needPrologue && q != graphicsQueue)
             {
                 for (uint32_t i = batch.begin; i < batch.end; i++)
                 {
                     if (pass_has_frame_start_acquire(streams_[q].passes[i]))
                     {
-                        RHISemaphoreWaitInfo wait{};
-                        wait.semaphore = executor->queueSlots[graphicsQueue].timeline;
-                        wait.value = prologueValue;
-                        wait.isTimeline = true;
-                        wait.waitState = RESOURCE_STATE_SHADER_RESOURCE;
-                        submitBatch.waits.push_back(wait);
-                        break;      // 每批至多一个prologueDone wait（去重）
+                        uint64_t& maxWaited = waitedMax[executor->queueSlots[graphicsQueue].timeline.get()];
+                        if (prologueValue > maxWaited)
+                        {
+                            RHISemaphoreWaitInfo wait{};
+                            wait.semaphore = executor->queueSlots[graphicsQueue].timeline;
+                            wait.value = prologueValue;
+                            wait.isTimeline = true;
+                            wait.waitState = RESOURCE_STATE_SHADER_RESOURCE;
+                            submitBatch.waits.push_back(wait);
+                            maxWaited = std::max(maxWaited, prologueValue);
+                        }
+                        break;      // 每批至多一个prologueDone wait
                     }
                 }
             }
+
+            // 批内覆盖审计（审计④，统一开关ENABLE_RDG_AUDIT；Step B位置级支配判定的值级复核）：
+            // 被合并pass的consumer点与帧首acquire守卫，其所需等待必须已被本批头wait（刚折入
+            // waitedMax）或更早批wait覆盖。两级判定不一致即断言——Step B误合并会使内点wait
+            // 凭空消失，此处兜底捕获
+#if ENABLE_RDG_AUDIT
+            for (uint32_t i = batch.begin + 1; i < batch.end; i++)
+            {
+                RDGPassNodeRef interior = streams_[q].passes[i];
+                auto interiorFound = consumerPoints_.find(interior);
+                if (interiorFound != consumerPoints_.end())
+                {
+                    for (uint32_t pointIndex : interiorFound->second)
+                    {
+                        const RHISemaphoreRef& producerTimeline =
+                            executor->queueSlots[activePoints_[pointIndex].producer_queue_index].timeline;
+                        const uint64_t coverValue = passCoverValue[activePoints_[pointIndex].producer_pass];
+                        if (waitedMax[producerTimeline.get()] < coverValue)
+                            ENGINE_LOG_WARN("[GuardAudit] uncovered interior point: q{} batch[{}] interior'{}' point#{} producer'{}'(q{}) value={} coverValue={} maxWaited={}",
+                                q, b, interior->Name().c_str(), pointIndex,
+                                activePoints_[pointIndex].producer_pass->Name().c_str(),
+                                activePoints_[pointIndex].producer_queue_index,
+                                pointValues_[pointIndex], coverValue,
+                                waitedMax[producerTimeline.get()]);
+                        assert(waitedMax[producerTimeline.get()] >= coverValue);
+                    }
+                }
+                if (needPrologue && pass_has_frame_start_acquire(interior))
+                    assert(prologueValue <= waitedMax[executor->queueSlots[graphicsQueue].timeline.get()]);
+            }
+#endif
 
             // graphics首批次：prologueDone（最先列出——它的值在pass 1中最先分配，为该批最小值，
             // 保持同时间线signal数组按值递增）
@@ -475,6 +849,18 @@ void PassExecutionPhase::build_submit_plan(PerFrameCommonResourceRef executor)
                 }
             }
 
+            // 细链末触signal：本批为imported键末触批——下一帧（另一槽）首触批wait它。
+            // 粗链模式下同样发射（注册表回写在两模式恒做，无人wait的冗余信号无害）
+            auto lastUseFound = batchLastUseValue_.find({q, b});
+            if (lastUseFound != batchLastUseValue_.end())
+            {
+                RHISemaphoreSubmitInfo signal{};
+                signal.semaphore = executor->queueSlots[q].timeline;
+                signal.value = lastUseFound->second;
+                signal.isTimeline = true;
+                submitBatch.signals.push_back(signal);
+            }
+
             // 队列末批：queueDone；Present批：finishSemaphore（present等待它）
             if (b == batches_[q].size() - 1 && queueDoneValue[q] > 0)
             {
@@ -493,8 +879,8 @@ void PassExecutionPhase::build_submit_plan(PerFrameCommonResourceRef executor)
             }
 
             PlanEntry entry;
-            // 排序键=批次首pass的规范序（acquire规则保证跨族acquire者批次首、release规则保证
-            // release者批次尾⇒键=自身规范序，配对序严格成立）。
+            // 排序键=批次首pass的规范序。QFO配对序由守卫开批规则保证：跨族acquire所在批的批头
+            // canonical>配对release位置⇒release批键<acquire批键（split_submit_batches末有断言）。
             // prologue批（graphics首批次，含帧首release集）强制最小键——帧首acquire者即使规范序
             // 极早（无依赖的拷贝pass）也必须在其后提交
             if (q == graphicsQueue && b == 0 && needPrologue)
@@ -549,20 +935,46 @@ void PassExecutionPhase::build_submit_plan(PerFrameCommonResourceRef executor)
         executor->queueSlots[q].timelineValueBase = nextValue[q] + 1;
     recording_result_.total_submit_batches = static_cast<uint32_t>(plan.batches.size());
 
-    // 更新跨帧链注册表：本帧各队列的timeline+queueDone值，供下一帧（另一槽）首批次wait。
-    // 未激活队列记空值（跨帧wait按非零过滤）
-    s_lastFrameTimelines.assign(streams_.size(), nullptr);
-    s_lastFrameDoneValues.assign(streams_.size(), 0);
+    // 更新跨帧注册表：本帧各队列的timeline+queueDone值，供下一帧（另一槽）首批次wait。
+    // 未激活队列记空值（跨帧wait按非零过滤）。begin→record→commit即代际换代
+    // （失败语义=编译中途失败即fatal，见注册表类注释）
+    cross_frame_registry_.begin_frame(static_cast<uint32_t>(streams_.size()));
     for (uint32_t q : activeQueues_)
     {
-        s_lastFrameTimelines[q] = executor->queueSlots[q].timeline;
-        s_lastFrameDoneValues[q] = queueDoneValue[q];
+        RDGCrossFrameRegistry::QueueRecord record;
+        record.timeline = executor->queueSlots[q].timeline;
+        record.doneValue = queueDoneValue[q];
+        cross_frame_registry_.record_queue(q, std::move(record));
     }
-    s_hasLastFrame = true;
+    // 资源级回写：imported键每队列末触点 + 归巢载体批signal（下一帧首触wait/prologue承接wait的数据源）
+    for (const auto& [key, perQueue] : lastUseBatch_)
+    {
+        for (const auto& [q, qb] : perQueue)
+        {
+            RDGCrossFrameRegistry::QueuePoint point;
+            point.timeline = executor->queueSlots[q].timeline;
+            point.value = batchLastUseValue_[{q, qb.second}];
+            cross_frame_registry_.record_resource_last_use(key, q, std::move(point));
+        }
+    }
+    for (const auto& [key, qb] : homingBatch_)
+    {
+        auto value = batchLastUseValue_.find(qb);
+        if (value != batchLastUseValue_.end())
+        {
+            RDGCrossFrameRegistry::QueuePoint point;
+            point.timeline = executor->queueSlots[qb.first].timeline;
+            point.value = value->second;
+            cross_frame_registry_.record_homing_point(key, std::move(point));
+        }
+    }
+    cross_frame_registry_.commit_frame();
 
-    // 计划自检（断言）——构造性不变量：startSemaphore恰一wait（graphics首批次）、
-    // finishSemaphore恰一signal（Present批）、同一时间线的signal值按提交序严格递增且无重复、
-    // 同一批次内同时间线的signal值大于wait值（Vulkan单提交内约束）、每个同步点与每个queueDone各signal一次
+    // 计划自检（审计⑤，统一开关ENABLE_RDG_AUDIT）——构造性不变量：startSemaphore恰一wait
+    // （graphics首批次）、finishSemaphore恰一signal（Present批）、同一时间线的signal值按提交序
+    // 严格递增且无重复、同一批次内同时间线的signal值大于wait值（Vulkan单提交内约束）、
+    // 每个同步点与每个queueDone各signal一次
+#if ENABLE_RDG_AUDIT
     {
         uint32_t startWaits = 0, finishSignals = 0;
         std::unordered_map<const void*, uint64_t> lastSignalValuePerTimeline;          // timeline→最近signal值（提交序）
@@ -597,9 +1009,11 @@ void PassExecutionPhase::build_submit_plan(PerFrameCommonResourceRef executor)
         assert(startWaits == 1);       // Present恒存在→graphics首批次恒存在
         assert(finishSignals == 1);
         for (const auto& [key, count] : timelineSignalCounts) assert(count == 1);
-        // 同步点 + queueDone + （如启用）prologueDone
-        assert(timelineSignalCounts.size() == pointValues_.size() + activeQueues_.size() + (needPrologue ? 1 : 0));
+        // 同步点 + 细链末触 + queueDone + （如启用）prologueDone（粗链回退模式末触signal仍发射，
+        // 见wait组装处的两模式恒做说明，故断言公式无需分支）
+        assert(timelineSignalCounts.size() == pointValues_.size() + batchLastUseValue_.size() + activeQueues_.size() + (needPrologue ? 1 : 0));
     }
+#endif
 
     if (config_.enable_debug_output)
     {
@@ -632,13 +1046,18 @@ void PassExecutionPhase::build_submit_plan(PerFrameCommonResourceRef executor)
                 }
                 if (wait.isTimeline)
                 {
+                    // 跨帧wait引用上帧槽的时间线，本帧反查不到——xf标注防误导（值属上帧的timeline）
                     uint32_t srcQ = 0; bool found = false;
                     for (uint32_t s = 0; s < streams_.size(); s++)
                         if (executor->queueSlots[s].timeline == wait.semaphore) { srcQ = s; found = true; break; }
-                    waits += (found ? "q" + std::to_string(srcQ) : "prevFrame")
+                    waits += (found ? "q" + std::to_string(srcQ) : "xf")
                         + "(v" + std::to_string(wait.value) + ",st" + stateTag(wait.waitState) + ") ";
                 }
             }
+            // 末触signal值集合（打印标注用）
+            std::set<uint64_t> lastUseValues;
+            for (const auto& [qb, v] : batchLastUseValue_)
+                if (qb.first == q) lastUseValues.insert(v);
             std::string signals;
             for (const auto& signal : batch.signals)
             {
@@ -653,6 +1072,7 @@ void PassExecutionPhase::build_submit_plan(PerFrameCommonResourceRef executor)
                     std::string kind = "syncPt";
                     if (signal.value == queueDoneValue[q]) kind = "queueDone";
                     else if (needPrologue && q == graphicsQueue && signal.value == prologueValue) kind = "prologueDone";
+                    else if (lastUseValues.count(signal.value) > 0) kind = "lastUse";
                     signals += kind + "(v" + std::to_string(signal.value) + ") ";
                 }
             }
@@ -843,15 +1263,23 @@ void PassExecutionPhase::record_stream_range(RDGDependencyGraphRef graph, PerFra
 {
     for (uint32_t i = beginIndex; i < endIndex; i++)
     {
-        execute_pass(graph, executor, queueIndex, stream.passes[i], command);
-
         // GPU时间戳打点：CommandRecordingConfig::enable_gpu_timing（编译侧开关）与每帧传入的
         // RHIRenderQuery非空（资源侧载体，RenderSystem按info的enable位决定是否传入）共同判定。
-        // 查询索引=(帧槽,队列)子区间内流内下标——多队列各流索引都从0起，二维分区互不冲突；
-        // worker并行录制时下标天然确定（无分配竞态）；worker的ThreadFrameIndex已被帧号stamp
+        // 每pass两个打点（索引2i/2i+1，预算=每队列256须≥2×pass数）：
+        //   pre（名+" wait"）= 前一pass结束→本pass首命令执行的间隔——含批首信号量等待与队内空转
+        //     （vkQueueSubmit2的timeline wait阻塞整批命令，wait落在批首pass的pre差值里）；
+        //   post（pass名）  = 本pass真实执行时长。
+        // 多队列各流索引都从0起，(帧槽,队列)二维分区互不冲突；worker并行录制时下标天然确定；
+        // worker的ThreadFrameIndex已被帧号stamp
         if (config_.enable_gpu_timing && executor->renderQuery != nullptr)
             executor->renderQuery->WriteTimestamp(command,
-                EngineContext::ThreadPool()->ThreadFrameIndex(), queueIndex, i, stream.passes[i]->Name());
+                EngineContext::ThreadPool()->ThreadFrameIndex(), queueIndex, 2 * i,
+                stream.passes[i]->Name() + " wait");
+        execute_pass(graph, executor, queueIndex, stream.passes[i], command);
+        if (config_.enable_gpu_timing && executor->renderQuery != nullptr)
+            executor->renderQuery->WriteTimestamp(command,
+                EngineContext::ThreadPool()->ThreadFrameIndex(), queueIndex, 2 * i + 1,
+                stream.passes[i]->Name());
     }
 }
 
@@ -870,8 +1298,7 @@ void PassExecutionPhase::execute_pass(RDGDependencyGraphRef graph, PerFrameCommo
             for (const auto& batch : *barrierBatches)
                 for (const auto& barrier : batch.barriers)
                     (barrier.after_pass ? after : before)++;
-        ENGINE_LOG_INFO("[Rec] q{} '{}' barriers: before={} after={}",
-            queueIndex, pass->Name().c_str(), before, after);
+        ENGINE_LOG_INFO("[Rec] q{} '{}' barriers: before={} after={}", queueIndex, pass->Name().c_str(), before, after);
     }
 
     // GPU调试标记（颜色与旧路径一致）
@@ -920,11 +1347,8 @@ void PassExecutionPhase::execute_render_pass(RDGDependencyGraphRef graph, PerFra
     assert(bind_info != nullptr);
     command->BeginRendering(bind_info->rendering_info);
 
-    const auto& all_queues = queue_schedule_.get_schedule_result().all_queues;
     RDGPassContext context = {
         .command = command,
-        .queueIndex = queueIndex,
-        .queueType = queueIndex < all_queues.size() ? all_queues[queueIndex].type : ERenderGraphQueueType::Graphics,
         .descriptors = build_descriptor_array(pass)
     };
     context.passIndex[0] = pass->passIndex[0];
@@ -938,11 +1362,8 @@ void PassExecutionPhase::execute_render_pass(RDGDependencyGraphRef graph, PerFra
 
 void PassExecutionPhase::execute_compute_pass(RDGDependencyGraphRef graph, PerFrameCommonResourceRef executor, uint32_t queueIndex, RDGComputePassNodeRef pass, RHICommandListRef command)
 {
-    const auto& all_queues = queue_schedule_.get_schedule_result().all_queues;
     RDGPassContext context = {
         .command = command,
-        .queueIndex = queueIndex,
-        .queueType = queueIndex < all_queues.size() ? all_queues[queueIndex].type : ERenderGraphQueueType::Graphics,
         .descriptors = build_descriptor_array(pass)
     };
     context.passIndex[0] = pass->passIndex[0];
@@ -953,11 +1374,8 @@ void PassExecutionPhase::execute_compute_pass(RDGDependencyGraphRef graph, PerFr
 
 void PassExecutionPhase::execute_ray_tracing_pass(RDGDependencyGraphRef graph, PerFrameCommonResourceRef executor, uint32_t queueIndex, RDGRayTracingPassNodeRef pass, RHICommandListRef command)
 {
-    const auto& all_queues = queue_schedule_.get_schedule_result().all_queues;
     RDGPassContext context = {
         .command = command,
-        .queueIndex = queueIndex,
-        .queueType = queueIndex < all_queues.size() ? all_queues[queueIndex].type : ERenderGraphQueueType::Graphics,
         .descriptors = build_descriptor_array(pass)
     };
     context.passIndex[0] = pass->passIndex[0];
@@ -1130,32 +1548,22 @@ bool PassExecutionPhase::pass_has_frame_start_acquire(RDGPassNodeRef pass) const
     return false;
 }
 
-bool PassExecutionPhase::pass_has_cross_family_acquire(RDGPassNodeRef pass) const
+void PassExecutionPhase::collect_in_frame_acquire_guards(RDGPassNodeRef pass,std::vector<std::pair<RDGPassNodeRef, uint32_t>>& guards) const
 {
+    guards.clear();
     const std::vector<BarrierBatch>* batches = barrier_generation_phase_.get_pass_barrier_batches(pass);
-    if (batches == nullptr) return false;
+    if (batches == nullptr) return;
 
+    // 帧内acquire（after_pass=false且source_pass有效）：source_pass即配对release的挂载pass
+    //（发射侧：release挂tracker.last_pass之后、acquire挂消费者之前，二者source_pass同源），
+    // source_queue即release所在队列。帧首acquire（source_pass==nullptr）跳过——其配对release
+    // 在graphics prologue批，恒为计划首，提交序天然覆盖
     for (const auto& batch : *batches)
-        for (const auto& barrier : batch.barriers)
-            if (!barrier.after_pass &&
+        for (const RDGBarrier& barrier : batch.barriers)
+            if (!barrier.after_pass && barrier.source_pass != nullptr &&
                 barrier.src_family != RHI_QUEUE_FAMILY_IGNORED &&
                 barrier.dst_family != RHI_QUEUE_FAMILY_IGNORED)
-                return true;
-    return false;
-}
-
-bool PassExecutionPhase::pass_has_cross_family_release(RDGPassNodeRef pass) const
-{
-    const std::vector<BarrierBatch>* batches = barrier_generation_phase_.get_pass_barrier_batches(pass);
-    if (batches == nullptr) return false;
-
-    for (const auto& batch : *batches)
-        for (const auto& barrier : batch.barriers)
-            if (barrier.after_pass &&
-                barrier.src_family != RHI_QUEUE_FAMILY_IGNORED &&
-                barrier.dst_family != RHI_QUEUE_FAMILY_IGNORED)
-                return true;
-    return false;
+                guards.emplace_back(barrier.source_pass, barrier.source_queue);
 }
 
 // 释放 /////////////////////////////////////////////////////////////////////////

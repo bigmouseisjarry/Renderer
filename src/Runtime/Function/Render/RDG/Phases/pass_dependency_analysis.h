@@ -4,7 +4,7 @@
 struct CrossQueueSyncPoint;
 class QueueSchedule;
 
-// Single resource dependency info
+// 单一资源依赖信息
 struct ResourceDependency {
     RDGPassNodeRef dependent_pass;                // The depended pass
     RDGResourceNodeRef resource;                  // The involved resource
@@ -52,6 +52,17 @@ struct PassDependencies {
     bool has_dependency_on(RDGPassNodeRef pass) const;
 };
 
+// HEFT所有权链序边（QueueSchedule调度后回写：资源所有权链的相邻跨族访问者对——R-R/R-W/W-R。
+// 承载QFO所有权链的执行序与SSIS同步点；由RDGCompiler在Phase 3后协调写入并重算拓扑）
+struct SchedulingOrderEdge
+{
+    RDGPassNodeRef from = nullptr;          // 链上前一访问者
+    RDGPassNodeRef to = nullptr;            // 链上后一访问者（依赖from）
+    RDGResourceNodeRef resource = nullptr;
+    EResourceAccessType fromAccess = EResourceAccessType::Read;
+    EResourceAccessType toAccess = EResourceAccessType::Read;
+};
+
 // Forward declaration
 class PassInfoAnalysis;
 
@@ -89,6 +100,14 @@ public:
     // 跨队列同步点生成 (NEW)
     void generate_cross_queue_sync_points(const QueueSchedule& queue_schedule, std::vector<CrossQueueSyncPoint>& sync_points) const;
 
+    // ---- HEFT回写接口（RDGCompiler在Phase 3后协调调用）----
+    // 追加所有权链序边（幂等：pass对+资源去重；边的state对从pass_info_analysis的实际访问取）
+    void add_scheduling_order_edges(const std::vector<SchedulingOrderEdge>& edges);
+    // 按HEFT全局调度序重建拓扑（序本身合法——就绪集保证前驱在前）。下游生命期/tracker/SSIS
+    // 均假设"拓扑序=执行序"：Kahn重算的同层哈希序与调度序不一致会造成生命期区间错位
+    //（间歇竞态），故以调度序为唯一权威序
+    void apply_schedule_order(const std::vector<RDGPassNodeRef>& order);
+
     // Debug output
     void dump_dependencies() const;
     void dump_logical_topology() const;
@@ -103,6 +122,9 @@ private:
         RDGPassNodeRef last_pass = nullptr;
         EResourceAccessType last_access_type = EResourceAccessType::Read;
         RHIResourceState last_state = RESOURCE_STATE_UNDEFINED;
+        // [实验v3] 自最近写者以来的读者登记（{pass, 读者访问时状态}）——WAR保护：
+        // 后续写者须等全体读者读完（读者间无序，不能只等最近一个）。写者推进锚时清空
+        std::vector<std::pair<RDGPassNodeRef, RHIResourceState>> readers_since_write;
     };
 
     // Logical topology cache
@@ -123,7 +145,4 @@ private:
     void perform_logical_topological_sort_optimized(); // 优化版本：合并拓扑排序和级别计算
     void identify_logical_critical_path();
 
-    //// 旧版本方法（保留以备需要）
-    //void perform_logical_topological_sort();
-    //void calculate_logical_dependency_levels();
 };
