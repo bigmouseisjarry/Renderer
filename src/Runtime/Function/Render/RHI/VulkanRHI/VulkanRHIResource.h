@@ -206,6 +206,8 @@ public:
 	uint32_t GetHitGroupSize()		{ return hitGroupSize; }
 	uint32_t GetRayMissGroupSize()	{ return rayMissGroupSize; }
 
+	const std::string& GetDebugName() const { return debugName; }    //诊断命名（首个raygen shader的名）
+
 	virtual void Destroy() override final;
 
 private:
@@ -214,6 +216,7 @@ private:
 	uint32_t rayGenGroupSize = 0;
 	uint32_t hitGroupSize = 0;
 	uint32_t rayMissGroupSize = 0;
+	std::string debugName;
 };
 
 class VulkanRHITopLevelAccelerationStructure : public RHITopLevelAccelerationStructure

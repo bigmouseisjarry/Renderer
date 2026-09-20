@@ -7,7 +7,6 @@
 #include <cstdint>
 
 #define NUM_NEIGHBORS 1
-// GI降采样率定义在ReSTIRGIPass.h（单一事实源；shader侧restir_gi/include/common.glsl须一致）
 
 void ReSTIRGIPass::Init()
 {
@@ -120,7 +119,6 @@ void ReSTIRGIPass::Build(RDGBuilder& builder)
             .ReadWrite(1, 1, 0, resBuffer0)
             .ReadWrite(1, 2, 0, resBuffer1)
             .ReadWrite(1, 3, 0, resBuffer2)
-            // 隐形依赖边（图外通道消费）：ray query读TLAS + FetchSurfaceCacheLighting采样表面缓存
             .Dependency(builder.GetBuffer("TLAS Storage"), RESOURCE_STATE_ACCELERATION_STRUCTURE)
             .Dependency(builder.GetTexture("Surface Cache Lighting"), RESOURCE_STATE_SHADER_RESOURCE)
             .Execute([&](RDGPassContext context) {
@@ -146,7 +144,6 @@ void ReSTIRGIPass::Build(RDGBuilder& builder)
             .ReadWrite(1, 1, 0, resBuffer0)
             .ReadWrite(1, 2, 0, resBuffer1)
             .ReadWrite(1, 3, 0, resBuffer2)
-            // 隐形依赖边（图外通道消费）：RayQueryVisibility可见性判定读TLAS
             .Dependency(builder.GetBuffer("TLAS Storage"), RESOURCE_STATE_ACCELERATION_STRUCTURE)
             .Execute([&](RDGPassContext context) {
 
@@ -174,7 +171,6 @@ void ReSTIRGIPass::Build(RDGBuilder& builder)
             .ReadWrite(1, 1, 0, resBuffer0)
             .ReadWrite(1, 2, 0, resBuffer1)
             .ReadWrite(1, 3, 0, resBuffer2)
-            // 隐形依赖边（图外通道消费）：FetchSurfaceCacheLighting采样表面缓存（经per-frame set）
             .Dependency(builder.GetTexture("Surface Cache Lighting"), RESOURCE_STATE_SHADER_RESOURCE)
             .Execute([&](RDGPassContext context) {       
 

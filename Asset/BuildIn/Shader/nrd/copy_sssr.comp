@@ -15,18 +15,17 @@ layout(set = 1, binding = 2) 	            uniform texture2D SSSR_RESOLVE;
 #define THREAD_SIZE_X 16
 #define THREAD_SIZE_Y 16
 #define THREAD_SIZE_Z 1
-layout (local_size_x = THREAD_SIZE_X, 
-		local_size_y = THREAD_SIZE_Y, 
+layout (local_size_x = THREAD_SIZE_X,
+		local_size_y = THREAD_SIZE_Y,
 		local_size_z = THREAD_SIZE_Z) in;
-void main() 
+void main()
 {
     ivec2 pixel     = ivec2(gl_GlobalInvocationID.xy);
-    vec2 uv         = ScreenPixToUV(pixel);
 
     vec4 specularHitDist = vec4(0.0f);
     if(SETTING.restirEnabled != 0)
         specularHitDist = imageLoad(RESTIR_SPECULAR_COLOR, pixel);
-        
+
     specularHitDist += texelFetch(SSSR_RESOLVE, pixel, 0);
 
     imageStore(RESTIR_SPECULAR_COLOR, pixel, specularHitDist);

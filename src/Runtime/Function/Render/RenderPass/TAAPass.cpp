@@ -33,10 +33,6 @@ void TAAPass::Build(RDGBuilder& builder)
 
     RDGTextureHandle inColor = builder.GetTexture("FXAA Out Color");
 
-    // 第1刀：TAA history融合进kernel。taa.comp对HISTORY_COLOR做重投影双线性采样（跨像素读），
-    // 同dispatch直写同纹理会污染历史——必须ping-pong：读本帧parity侧，写另一侧。
-    // parity=CurrentFrameIndex()（FRAMES_IN_FLIGHT=2严格交替）；SSSR pyramid（第2刀）GetOrCreate同名读侧，
-    // SSSR先Build时由此处创建、后Build时Import断言幂等（同纹理同state）。
     uint32_t historyIndex = EngineContext::CurrentFrameIndex();
     RDGTextureHandle historyColor = builder.GetOrCreateTexture("Final Color History")
         .Import(EngineContext::RenderResource()->GetFinalColorHistoryTexture(historyIndex), RESOURCE_STATE_UNDEFINED)
@@ -58,7 +54,6 @@ void TAAPass::Build(RDGBuilder& builder)
         .AllowRenderTarget()
         .Finish();  
 
-    // 第3刀·尾部加强：post链钉graphics队列（与Forward/Bloom同流，帧尾零跨队列跳）
     RDGComputePassHandle pass = builder.CreateComputePass(GetName())
         .AddFlag(RDGPassFlags::ForceGraphicsQueue)
         .RootSignature(rootSignature)

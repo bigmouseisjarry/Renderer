@@ -12,7 +12,7 @@ struct PassBindingConfig {
     bool enable_debug_output = false;
 };
 
-// 每个Pass的绑定结果（对应 SakuraEngine BindTablePhase 的 PassBindTableInfo）
+// 每个Pass的绑定结果
 struct PassBindInfo {
     // 描述符集（已分配+已更新，含显式传入的），set索引 → descriptor
     std::unordered_map<uint32_t, RHIDescriptorSetRef> descriptor_sets;
@@ -26,7 +26,7 @@ struct PassBindInfo {
     RHIRenderingInfo rendering_info = {};
 };
 
-// 资源生命期信息（对应 SakuraEngine ResourceLifetimeAnalysis 中释放所需的最小子集）
+// 资源生命期信息
 struct ResourceLifecycleInfo {
     struct LastUse {
         RDGPassNodeRef pass = nullptr;          // 最后一次使用的pass（按拓扑序）
@@ -37,13 +37,6 @@ struct ResourceLifecycleInfo {
 };
 
 // 阶段 6: Pass绑定阶段
-//
-// 合并了 SakuraEngine phases_v2 的三个阶段：
-//   resource_allocation_phase —— Step1 集中式物理资源预分配（原 RDGBuilder::Resolve 的惰性分配改为帧首集中分配）
-//   memory_aliasing_phase     —— 不单独移植。Tier0（纯池化）语义下就是"每资源独占分配"，
-//                                本引擎 RDGPool 天然如此：状态随池条目跨帧传递，其 alias_transition
-//                                的"池initState → 首用state"屏障语义由 node->initState + BarrierGenerationPhase 覆盖
-//   bind_table_phase          —— Step3 集中式描述符集准备（原 RDGBuilder::PrepareDescriptorSet）
 //
 // Step2 的生命期分析为执行期释放（原 RDGBuilder::ReleaseResource/IsLastUsedPass）提供数据。
 // 注意：描述符写入的是本阶段的 PassBindInfo map，不动 RDGPassNode 字段——
@@ -61,12 +54,12 @@ public:
     void on_execute(RDGDependencyGraphRef graph, PerFrameCommonResourceRef executor) override;
 
     // ===== 下游查询接口 =====
-    // 物理解析（对应 SakuraEngine ResourceAllocationPhase::get_resource）：
+    // 物理解析
     // 阶段6保证非imported节点已分配；imported节点透传其引用
     RHITextureRef get_texture(RDGTextureNodeRef texture) const;
     RHIBufferRef  get_buffer(RDGBufferNodeRef buffer) const;
 
-    // 绑定查询（对应 SakuraEngine BindTablePhase::get_pass_bind_table）
+    // 绑定查询
     const PassBindInfo* get_pass_bind_info(RDGPassNodeRef pass) const;
 
     // 生命期查询（供执行期释放）；output 为当前释放边的 IsOutput()，保留旧 IsLastUsedPass 的同pass先读后写规则
@@ -76,13 +69,13 @@ public:
     const void debug_info()const;
 
 private:
-    // Step 1: 资源预分配（原 Resolve 的集中化版本）
+    // Step 1: 资源预分配
     void allocate_resources(RDGDependencyGraphRef graph);
 
-    // Step 2: 生命期分析（为 ReleaseResource 提供数据）
+    // Step 2: 生命期分析
     void analyze_resource_lifetime(RDGDependencyGraphRef graph);
 
-    // Step 3: 描述符集准备（原 PrepareDescriptorSet）
+    // Step 3: 描述符集准备
     void prepare_descriptor_sets(RDGDependencyGraphRef graph);
 
 private:

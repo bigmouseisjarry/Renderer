@@ -149,7 +149,8 @@ bool NRDIntegration::RecreatePipelines() {
         RHIShaderInfo shaderInfo = {
             .entry = instanceDesc.shaderEntryPoint,
             .frequency = SHADER_FREQUENCY_COMPUTE,
-            .code = code
+            .code = code,
+            .debugName = nrdPipelineDesc.shaderIdentifier    // "fileName|macro=value..."，[PipelineStats]归因用
         };
         RHIShaderRef shader = EngineContext::RHI()->CreateShader(shaderInfo);
 
@@ -197,6 +198,7 @@ bool NRDIntegration::_CreateResources() {
                         format = FORMAT_R16G16B16A16_SFLOAT;
                 }
 
+                // NRD所需的分辨率
                 uint16_t w = DivideUp(m_Desc.resourceWidth, nrdTextureDesc.downsampleFactor);
                 uint16_t h = DivideUp(m_Desc.resourceHeight, nrdTextureDesc.downsampleFactor);
 
@@ -397,6 +399,7 @@ void NRDIntegration::_Dispatch(RDGBuilder& builder, const nrd::DispatchDesc& dis
             if (m_ConstantBufferOffset + m_ConstantBufferViewSize > m_ConstantBufferSize)
                 m_ConstantBufferOffset = 0;
 
+            // 本 dispatch 占用当前写指针指向的槽，指针推进一个槽宽
             dynamicConstantBufferOffset = m_ConstantBufferOffset;
             m_ConstantBufferOffset += m_ConstantBufferViewSize;
 
@@ -410,6 +413,9 @@ void NRDIntegration::_Dispatch(RDGBuilder& builder, const nrd::DispatchDesc& dis
             passBuilder.Read(1, 2, 0, bufferHandle, dynamicConstantBufferOffset, dispatchDesc.constantBufferDataSize);
     }
 
+    // 为纹理创造添加一个标志，允许跨族访问
+
+
     // Fill descriptors
     {
         uint32_t n = 0;
@@ -417,10 +423,11 @@ void NRDIntegration::_Dispatch(RDGBuilder& builder, const nrd::DispatchDesc& dis
             const nrd::ResourceRangeDesc& resourceRange = pipelineDesc.resourceRanges[i];
             const bool isStorage = resourceRange.descriptorType == nrd::DescriptorType::STORAGE_TEXTURE;
 
+            // RW从（0，3）开始
             uint32_t baseBinding = isStorage ? 3 : 20;
             uint32_t bindingOffset = 0;          
             for (uint32_t j = 0; j < resourceRange.descriptorsNum; j++) {
-                const nrd::ResourceDesc& resourceDesc = dispatchDesc.resources[n++];    // TODO ?? n++
+                const nrd::ResourceDesc& resourceDesc = dispatchDesc.resources[n + bindingOffset];    
 
                 // Get resource
                 // 绑定资源，有内部和外部区别
@@ -432,7 +439,7 @@ void NRDIntegration::_Dispatch(RDGBuilder& builder, const nrd::DispatchDesc& dis
                 else {
                     resource = &resourceSnapshot.slots[(uint32_t)resourceDesc.type];
                 }
-                if(resource->handle.ID() == UINT32_MAX) 
+                if(resource->handle.ID() == UINT64_MAX) 
                     assert(false);   
                 
                 if(isStorage)
@@ -447,6 +454,7 @@ void NRDIntegration::_Dispatch(RDGBuilder& builder, const nrd::DispatchDesc& dis
                 }    
                 bindingOffset++; 
             }
+            n += bindingOffset;
         }
     }
 

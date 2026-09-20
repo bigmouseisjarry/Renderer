@@ -129,7 +129,7 @@ private:
     nrd::Instance* m_Instance = nullptr;
     uint64_t m_ConstantBufferSize = 0;
     uint32_t m_ConstantBufferViewSize = 0;
-uint32_t m_ConstantBufferOffset = 0;
+    uint32_t m_ConstantBufferOffset = 0;
     uint32_t m_ConstantBufferOffsetPrev = 0;
     uint32_t m_DescriptorPoolIndex = 0;
     uint32_t m_FrameIndex = uint32_t(-1); // 0 needed after 1st "NewFrame"

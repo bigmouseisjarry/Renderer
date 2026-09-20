@@ -84,8 +84,8 @@ RDGTextureBuilder RDGBuilder::GetOrCreateTexture(std::string name)
         blackBoard.AddTexture(textureNode);
         validationMode = false;
     }
-    
-    return RDGTextureBuilder(this, textureNode);
+
+    return RDGTextureBuilder(this, textureNode, validationMode);    // 漏传validationMode=复用节点时setter会覆写声明（GetOrCreateBuffer:103的对照修复）
 }
 
 RDGBufferBuilder RDGBuilder::GetOrCreateBuffer(std::string name)
@@ -238,6 +238,29 @@ RDGTextureBuilder& RDGTextureBuilder::AllowReadWrite()
     }
 
     return  *this;
+}
+
+RDGTextureBuilder& RDGTextureBuilder::AllowConcurrent(std::initializer_list<QueueType> families)
+{
+    assert(families.size() > 0 && families.size() <= QUEUE_TYPE_MAX_ENUM && "AllowConcurrent: 空族集或超QUEUE_TYPE_MAX_ENUM");
+    if (validationMode)
+    {
+        assert(texture->info.sharingMode == RESOURCE_SHARING_TYPE_CONCURRENT);
+        assert(texture->info.concurrentFamilyCount == families.size());
+        uint32_t i = 0;
+        for (QueueType t : families)
+            assert(texture->info.concurrentFamilies[i++] == static_cast<uint32_t>(t) && "AllowConcurrent: 复用节点族集不一致");
+    }
+    else
+    {
+        texture->info.sharingMode = RESOURCE_SHARING_TYPE_CONCURRENT;
+        texture->info.concurrentFamilies = {};
+        texture->info.concurrentFamilyCount = 0;
+        for (QueueType t : families)
+            texture->info.concurrentFamilies[texture->info.concurrentFamilyCount++] = static_cast<uint32_t>(t);
+    }
+
+    return *this;
 }
 
 RDGTextureBuilder& RDGTextureBuilder::AllowRenderTarget()
@@ -575,16 +598,9 @@ RDGRenderPassBuilder& RDGRenderPassBuilder::OutputRead(RDGTextureHandle texture,
 
 RDGRenderPassBuilder& RDGRenderPassBuilder::Dependency(RDGBufferHandle buffer, RHIResourceState state)
 {
-    // 无描述符的读向依赖边（DrawIndirect等不走描述符的访问）：不参与描述符绑定
-    // （绑定阶段按NO_DESCRIPTOR_SET跳过），但进入依赖分析与屏障跟踪——
-    // 拓扑排序据此保证生产者pass（如GPU Culling）先于本pass
     if (buffer.ID() == UINT64_MAX) return *this;    // 生产者pass未构建（被禁用等），GetBuffer已警告
 
     RDGBufferEdgeRef edge = new RDGBufferEdge();
-    // buffer的state无布局概念，是"访问类别"令牌：屏障生成用它查access/stage并与状态跟踪器
-    // 差分决定是否发屏障。调用方须如实声明（无默认值强制显式）：间接绘制命令buffer=
-    // INDIRECT_ARGUMENT，与生产者OutputIndirectDraw边的收敛状态对齐——UAV→INDIRECT的
-    // 写→读屏障挂生产者pass后，本边声明同状态则不再发多余屏障
     edge->state = state;
     edge->set = NO_DESCRIPTOR_SET;
 
@@ -695,8 +711,6 @@ RDGComputePassBuilder& RDGComputePassBuilder::Read(uint32_t set, uint32_t bindin
     return *this;
 }
 
-// 无描述符的读向依赖边（compute版，与Render版同语义）：经图外通道（per-frame set）消费的资源
-// 用此补边——进入依赖分析与屏障跟踪，不参与描述符绑定（绑定阶段按NO_DESCRIPTOR_SET跳过）
 RDGComputePassBuilder& RDGComputePassBuilder::Dependency(RDGBufferHandle buffer, RHIResourceState state)
 {
     if (buffer.ID() == UINT64_MAX) return *this;    // 生产者pass未构建（被禁用等），GetBuffer已警告
@@ -989,14 +1003,9 @@ RDGRayTracingPassBuilder& RDGRayTracingPassBuilder::OutputReadWrite(RDGTextureHa
 
 RDGRayTracingPassBuilder& RDGRayTracingPassBuilder::Dependency(RDGBufferHandle buffer, RHIResourceState state)
 {
-    // 无描述符的读向依赖边：不参与描述符绑定（绑定阶段按NO_DESCRIPTOR_SET跳过），
-    // 但进入依赖分析与屏障跟踪——拓扑排序据此保证生产者pass（如TLAS Update）先于本pass
     if (buffer.ID() == UINT64_MAX) return *this;    // 生产者pass未构建（被禁用等），GetBuffer已警告
 
     RDGBufferEdgeRef edge = new RDGBufferEdge();
-    // 语义同render版Dependency：state为访问类别令牌，调用方须如实声明（无默认值强制显式）。
-    // TLAS Storage=ACCELERATION_STRUCTURE（RT/ray query读AS的真实类别），与TLASUpdatePass
-    // 产出边(UAV)衔接成构建写→RT读屏障；AS_READ的stage覆盖见AccessFlagsToPipelineStageFlags
     edge->state = state;
     edge->set = NO_DESCRIPTOR_SET;
 
@@ -1007,7 +1016,6 @@ RDGRayTracingPassBuilder& RDGRayTracingPassBuilder::Dependency(RDGBufferHandle b
 
 RDGRayTracingPassBuilder& RDGRayTracingPassBuilder::Dependency(RDGTextureHandle texture, RHIResourceState state)
 {
-    // 纹理版虚拟依赖边（语义同buffer版）：图外通道（per-frame set）消费的纹理补边用
     if (texture.ID() == UINT64_MAX) return *this;    // 生产者pass未构建（被禁用等），GetTexture已警告
 
     RDGTextureEdgeRef edge = new RDGTextureEdge();

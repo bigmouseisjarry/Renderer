@@ -103,7 +103,13 @@ public:
     inline VkDescriptorPool GetDescriptorPool() const   { return descriptorPool; }
     inline const std::vector<VkQueueFamilyProperties>& GetQueueFamilyProperties() const { return queueFamilyProperties; }
 
+    // 每类型队列的族索引（-1=未分配）——CONCURRENT资源共享族集的默认来源
+    inline int32_t GetQueueFamilyIndexOf(QueueType type) const { return queueIndices[type]; }
+
     VkPhysicalDeviceRayTracingPipelinePropertiesKHR GetRayTracingPipelineProperties() { return rayTracingPipelineProperties; }
+
+    // 管线可执行信息已启用（VK_KHR_pipeline_executable_properties；[PipelineStats]诊断的前提）
+    bool GetPipelineExecutableInfo() const { return pipelineExecutableInfo; }
 
 private:
 
@@ -145,6 +151,9 @@ private:
 
     // 是否已初始化ImGui，用于析构时释放资源
     bool initImGui = false;
+
+    // 管线可执行信息（诊断开关开启且设备支持扩展时为true）
+    bool pipelineExecutableInfo = false;
 
     void CreateInstance();
     void CreatePhysicalDevice();

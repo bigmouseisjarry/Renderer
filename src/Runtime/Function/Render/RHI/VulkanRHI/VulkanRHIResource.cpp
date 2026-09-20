@@ -485,9 +485,22 @@ VulkanRHIBuffer::VulkanRHIBuffer(const RHIBufferInfo& info, VulkanRHIBackend& ba
     bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     bufferInfo.size = info.size;
     bufferInfo.usage = usage;
-    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    bufferInfo.sharingMode = VulkanUtil::ResourceSharingModeToSharingMode(info.sharingMode);
     bufferInfo.queueFamilyIndexCount = 0,
     bufferInfo.pQueueFamilyIndices = NULL;
+
+    // CONCURRENT 资源的族集（与image侧同规则；EXCLUSIVE保持0/NULL）
+    uint32_t bufferConcurrentFamilies[QUEUE_TYPE_MAX_ENUM];
+    if (bufferInfo.sharingMode == VK_SHARING_MODE_CONCURRENT)
+    {
+        assert(info.concurrentFamilyCount > 0);
+
+        for (int i = 0; i < info.concurrentFamilyCount; i++)
+            bufferConcurrentFamilies[i] = backend.GetQueueFamilyIndexOf((QueueType)info.concurrentFamilies[i]);
+
+        bufferInfo.queueFamilyIndexCount = info.concurrentFamilyCount;
+        bufferInfo.pQueueFamilyIndices = bufferConcurrentFamilies;
+    }
 
     VmaAllocationCreateInfo allocationCreateInfo = {};
     allocationCreateInfo.usage = VulkanUtil::MemoryUsageToVma(info.memoryUsage);
@@ -619,9 +632,22 @@ VulkanRHITexture::VulkanRHITexture(const RHITextureInfo& info, VulkanRHIBackend&
     imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
     imageInfo.usage = usage;
     imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    imageInfo.sharingMode = VulkanUtil::ResourceSharingModeToSharingMode(info.sharingMode);
     imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
     imageInfo.flags = flag; // Optional
+
+    uint32_t concurrentFamilies[QUEUE_TYPE_MAX_ENUM];
+    if (imageInfo.sharingMode == VK_SHARING_MODE_CONCURRENT)
+    {
+        assert(info.concurrentFamilyCount > 0);
+
+        for (int i = 0; i < info.concurrentFamilyCount; i++)
+        {
+            concurrentFamilies[i] = backend.GetQueueFamilyIndexOf((QueueType)info.concurrentFamilies[i]);
+        }
+        imageInfo.queueFamilyIndexCount = info.concurrentFamilyCount;
+        imageInfo.pQueueFamilyIndices = concurrentFamilies;
+    }
 
     VmaAllocationCreateInfo allocationCreateInfo = {};
     allocationCreateInfo.usage = VulkanUtil::MemoryUsageToVma(info.memoryUsage);
@@ -903,6 +929,9 @@ void VulkanRHIShader::Destroy()
 VulkanRHIShaderBindingTable::VulkanRHIShaderBindingTable(const RHIShaderBindingTableInfo& info, VulkanRHIBackend& backend)
 : RHIShaderBindingTable(info)
 {
+    if (!info.rayGenGroups.empty())
+        debugName = ResourceCast(info.rayGenGroups.front())->GetInfo().debugName;    // 诊断命名沿用首个raygen shader的名
+
     struct HitGroupInfo
     {
         VkPipelineShaderStageCreateInfo* closestHitStage = nullptr;
@@ -1433,151 +1462,6 @@ void VulkanRHIDescriptorSet::Destroy()
 
 //管线状态 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-//VulkanRHIRenderPass::VulkanRHIRenderPass(const RHIRenderPassInfo& info, VulkanRHIBackend& backend)
-//: RHIRenderPass(info)
-//{
-//    // 无论是vkpipeline需要预创建兼容的pass，还是RDG每帧创建renderpass，都导致了需要在RHI层做池化？
-//
-//    // 创建renderpass
-//    std::vector<VkImageView> imageViews;
-//    VulkanRenderPassAttachments renderPassAttachments = {};
-//    renderPassAttachments.viewMask = 0; 
-//    if(info.multiviewCount != 0)
-//    {
-//        for(int i = 0; i < info.multiviewCount; i++)
-//            renderPassAttachments.viewMask |= 1 << i;
-//    }
-//
-//    for(uint32_t i = 0; i < info.colorAttachments.size(); i++)
-//    {
-//        if(info.colorAttachments[i].textureView == nullptr) break;  // attachment不允许中间有间隔的空元素，检查到有空就停止
-//        
-//        renderPassAttachments.colorAttachments.push_back({
-//            .format = VulkanUtil::RHIFormatToVkFormat(info.colorAttachments[i].textureView->GetInfo().format),
-//            .samples = VK_SAMPLE_COUNT_1_BIT,
-//            .loadOp = VulkanUtil::AttachmentLoadOpToVk(info.colorAttachments[i].loadOp),
-//            .storeOp = VulkanUtil::AttachmentStoreOpToVk(info.colorAttachments[i].storeOp),
-//        });
-//        imageViews.push_back(ResourceCast(info.colorAttachments[i].textureView)->GetHandle());
-//    }
-//    if(info.depthStencilAttachment.textureView != nullptr)
-//    {
-//        renderPassAttachments.depthStencilAttachment = {
-//            .format = VulkanUtil::RHIFormatToVkFormat(info.depthStencilAttachment.textureView->GetInfo().format),
-//            .samples = VK_SAMPLE_COUNT_1_BIT,
-//            .loadOp = VulkanUtil::AttachmentLoadOpToVk(info.depthStencilAttachment.loadOp),
-//            .storeOp = VulkanUtil::AttachmentStoreOpToVk(info.depthStencilAttachment.storeOp),
-//        };
-//        imageViews.push_back(ResourceCast(info.depthStencilAttachment.textureView)->GetHandle());
-//    }
-//    handle = Backend()->FindOrCreateVkRenderPass(renderPassAttachments);
-//
-//    // 创建framebuffer
-//    VkFramebufferCreateInfo framebufferInfo = {};
-//    framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-//    framebufferInfo.renderPass = handle;
-//    framebufferInfo.attachmentCount = (uint32_t)imageViews.size();
-//    framebufferInfo.pAttachments = imageViews.data();
-//    framebufferInfo.width = info.extent.width;
-//    framebufferInfo.height = info.extent.height;
-//    framebufferInfo.layers = info.layers;
-//
-//    frameBuffer = Backend()->FindOrCreateVkFramebuffer(framebufferInfo);
-//}
-//
-//void VulkanRHIRenderPass::Destroy()
-//{
-//    // 池化统一删除
-//    // vkDestroyFramebuffer(Backend()->GetLogicalDevice(), frameBuffer, nullptr);
-//}
-
-//VulkanRHIGraphicsPipeline::VulkanRHIGraphicsPipeline(const RHIGraphicsPipelineInfo& info, VulkanRHIBackend& backend)
-//: RHIGraphicsPipeline(info)
-//{
-//    // 描述符 push constant
-//    std::vector<VkPushConstantRange> pushConstants;
-//    std::vector<VkDescriptorSetLayout> descriptorSetLayouts;
-//    for(const auto& pushConstant : info.rootSignature->GetInfo().GetPushConstants())
-//    {
-//        pushConstants.push_back(VulkanUtil::GetPushConstantInfo(pushConstant));
-//    }
-//    for(const auto& setInfo : ResourceCast(info.rootSignature)->GetSetInfos())
-//    {
-//        descriptorSetLayouts.push_back(setInfo.layout);
-//    }
-//    pipelineLayout = VulkanUtil::CreatePipelineLayout(backend.GetLogicalDevice(), descriptorSetLayouts, pushConstants);
-//
-//    // 着色器
-//    std::vector<VkPipelineShaderStageCreateInfo> shaderStages;
-//    if(info.vertexShader)   shaderStages.push_back(ResourceCast(info.vertexShader)->GetShaderStageCreateInfo());
-//    if(info.geometryShader) shaderStages.push_back(ResourceCast(info.geometryShader)->GetShaderStageCreateInfo());
-//    if(info.fragmentShader) shaderStages.push_back(ResourceCast(info.fragmentShader)->GetShaderStageCreateInfo());
-//
-//    // renderPass
-//    // 创建管线时需要指定一个renderPass，但是又没有一个严格的一一对应关系，使用时只需要renderPass彼此兼容
-//    // 又一处设计失败？
-//    uint32_t attachmentSize = 0;
-//    VulkanRenderPassAttachments renderPassAttachments = {};
-//    renderPassAttachments.viewMask = info.viewMask; 
-//    for(uint32_t i = 0; i < info.colorAttachmentFormats.size(); i++)
-//    {
-//        if(info.colorAttachmentFormats[i] == FORMAT_UKNOWN) break;
-//        attachmentSize++;
-//        
-//        renderPassAttachments.colorAttachments.push_back({
-//            .format = VulkanUtil::RHIFormatToVkFormat(info.colorAttachmentFormats[i]),
-//            .samples = VK_SAMPLE_COUNT_1_BIT,
-//            .loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-//            .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
-//        });
-//    }
-//    renderPassAttachments.depthStencilAttachment = {
-//        .format = VulkanUtil::RHIFormatToVkFormat(info.depthStencilAttachmentFormat),
-//        .samples = VK_SAMPLE_COUNT_1_BIT,
-//        .loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-//        .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
-//    };
-//    VkRenderPass renderPass = Backend()->FindOrCreateVkRenderPass(renderPassAttachments);
-//
-//
-//    // 光栅固定管线状态
-//    VkPipelineVertexInputStateCreateInfo vertexInputInfo    = GetInputStateCreateInfo(info.vertexInputState);
-//    VkPipelineInputAssemblyStateCreateInfo inputAssembly    = GetPipelineInputAssemblyStateCreateInfo(info.primitiveType);
-//    VkPipelineViewportStateCreateInfo viewportState         = GetPipelineViewportStateCreateInfo();
-//    VkPipelineRasterizationStateCreateInfo rasterizer       = GetPipelineRasterizationStateCreateInfo(info.rasterizerState);
-//    VkPipelineMultisampleStateCreateInfo multisampling      = GetPipelineMultisampleStateCreateInfo();
-//    VkPipelineColorBlendStateCreateInfo colorBlending       = GetPipelineColorBlendStateCreateInfo(info.blendState, attachmentSize);
-//    VkPipelineDepthStencilStateCreateInfo depthStencil      = GetPipelineDepthStencilStateCreateInfo(info.depthStencilState);
-//    VkPipelineDynamicStateCreateInfo dynamicState           = GetPipelineDynamicStateCreateInfo();
-//
-//    GetDynamicInputStateCreateInfo(info.vertexInputState);
-//
-//
-//    VkGraphicsPipelineCreateInfo pipelineInfo = {};
-//    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-//    pipelineInfo.pVertexInputState = &vertexInputInfo;
-//    pipelineInfo.pInputAssemblyState = &inputAssembly;
-//    pipelineInfo.pViewportState = &viewportState;
-//    pipelineInfo.pRasterizationState = &rasterizer;
-//    pipelineInfo.pMultisampleState = &multisampling;
-//    pipelineInfo.pDepthStencilState = &depthStencil;
-//    pipelineInfo.pColorBlendState = &colorBlending;
-//    pipelineInfo.pDynamicState = &dynamicState; 
-//    pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;  
-//    pipelineInfo.basePipelineIndex = -1;
-//    pipelineInfo.stageCount = (uint32_t)shaderStages.size();
-//	pipelineInfo.pStages = shaderStages.data();
-//    pipelineInfo.layout = pipelineLayout;
-//    pipelineInfo.renderPass = renderPass;  
-//	pipelineInfo.subpass = 0;
-//
-//    if (vkCreateGraphicsPipelines(backend.GetLogicalDevice(), VK_NULL_HANDLE, 1, &pipelineInfo, VK_NULL_HANDLE, &handle) != VK_SUCCESS) 
-//    {
-//        LOG_FATAL("Failed to create graphics pipeline!");
-//    }
-//
-//}
-
 VulkanRHIGraphicsPipeline::VulkanRHIGraphicsPipeline(const RHIGraphicsPipelineInfo& info, VulkanRHIBackend& backend)
 	: RHIGraphicsPipeline(info)
 {
@@ -1646,6 +1530,14 @@ VulkanRHIGraphicsPipeline::VulkanRHIGraphicsPipeline(const RHIGraphicsPipelineIn
     {
         LOG_FATAL("Failed to create graphics pipeline!");
     }
+
+    // 诊断：对象命名+可执行统计（见文件头DumpPipelineExecutableInfo）
+    std::string debugName = info.vertexShader ? ResourceCast(info.vertexShader)->GetInfo().debugName : "";
+    if (info.fragmentShader)
+        debugName += (debugName.empty() ? "" : "+") + ResourceCast(info.fragmentShader)->GetInfo().debugName;
+    VulkanUtil::SetPipelineDebugName(backend.GetLogicalDevice(), handle, debugName);
+    if (backend.GetPipelineExecutableInfo())
+        VulkanUtil::DumpPipelineExecutableInfo(backend.GetLogicalDevice(), handle, "graphics", debugName);
 }
 
 void VulkanRHIGraphicsPipeline::Destroy()
@@ -1934,10 +1826,18 @@ VulkanRHIComputePipeline::VulkanRHIComputePipeline(const RHIComputePipelineInfo&
     pipelineInfo.stage = shaderStage;
     pipelineInfo.layout = pipelineLayout;
     
-    if (vkCreateComputePipelines(backend.GetLogicalDevice(), VK_NULL_HANDLE, 1, &pipelineInfo, VK_NULL_HANDLE, &handle) != VK_SUCCESS) 
+    if (vkCreateComputePipelines(backend.GetLogicalDevice(), VK_NULL_HANDLE, 1, &pipelineInfo, VK_NULL_HANDLE, &handle) != VK_SUCCESS)
     {
         LOG_FATAL("Failed to create compute pipeline!");
     }
+
+    // 诊断：对象命名+可执行统计；localSize来自spv反射（占用率=寄存器数×线程组的联合约束）
+    const std::string debugName = ResourceCast(info.computeShader)->GetInfo().debugName;
+    const ShaderReflectInfo& reflect = info.computeShader->GetReflectInfo();
+    VulkanUtil::SetPipelineDebugName(backend.GetLogicalDevice(), handle, debugName);
+    if (backend.GetPipelineExecutableInfo())
+        VulkanUtil::DumpPipelineExecutableInfo(backend.GetLogicalDevice(), handle, "compute", debugName,
+            "wg=" + std::to_string(reflect.localSizeX) + "x" + std::to_string(reflect.localSizeY) + "x" + std::to_string(reflect.localSizeZ));
 }
 
 void VulkanRHIComputePipeline::Bind(VkCommandBuffer commandBuffer)
@@ -1980,10 +1880,16 @@ VulkanRHIRayTracingPipeline::VulkanRHIRayTracingPipeline(const RHIRayTracingPipe
     pipelineInfo.groupCount	                    = (uint32_t)ResourceCast(info.shaderBindingTable)->GetGroups().size();
     pipelineInfo.pGroups                        = ResourceCast(info.shaderBindingTable)->GetGroups().data();
     
-    if (vkCreateRayTracingPipelinesKHR(backend.GetLogicalDevice(), VK_NULL_HANDLE, VK_NULL_HANDLE, 1, &pipelineInfo, VK_NULL_HANDLE, &handle) != VK_SUCCESS) 
+    if (vkCreateRayTracingPipelinesKHR(backend.GetLogicalDevice(), VK_NULL_HANDLE, VK_NULL_HANDLE, 1, &pipelineInfo, VK_NULL_HANDLE, &handle) != VK_SUCCESS)
     {
         LOG_FATAL("Failed to create compute pipeline!");
     }
+
+    // 诊断：对象命名+可执行统计（名沿用绑定表首个raygen shader）
+    const std::string debugName = ResourceCast(info.shaderBindingTable)->GetDebugName();
+    VulkanUtil::SetPipelineDebugName(backend.GetLogicalDevice(), handle, debugName);
+    if (backend.GetPipelineExecutableInfo())
+        VulkanUtil::DumpPipelineExecutableInfo(backend.GetLogicalDevice(), handle, "ray_tracing", debugName);
 
     // 处理SBT句柄
     BuildShaderGroupHandle();

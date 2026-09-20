@@ -71,6 +71,10 @@ static const char* RAY_TRACING_DEVICE_EXTENTIONS[] = {
     VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME,
 };
 
+static const char* PIPELINE_EXECUTABLE_DEVICE_EXTENTIONS[] = {
+    VK_KHR_PIPELINE_EXECUTABLE_PROPERTIES_EXTENSION_NAME,
+};
+
 static const char* DEVICE_LAYERS[] = {
     "VK_LAYER_KHRONOS_validation",
 };
@@ -179,9 +183,7 @@ public:
         return vkGetBufferDeviceAddress(device, &bufferDeviceAddressInfo);
     } 
 
-    static VkPipelineLayout CreatePipelineLayout(VkDevice device, 
-                                                    const std::vector<VkDescriptorSetLayout>& descriptorSetLayouts, 
-                                                    const std::vector<VkPushConstantRange>& pushConstantRanges)
+    static VkPipelineLayout CreatePipelineLayout(VkDevice device, const std::vector<VkDescriptorSetLayout>& descriptorSetLayouts, const std::vector<VkPushConstantRange>& pushConstantRanges)
     {
         VkPipelineLayout layout;
 
@@ -190,10 +192,10 @@ public:
         pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
         pipelineLayoutInfo.setLayoutCount = (uint32_t)descriptorSetLayouts.size();
         pipelineLayoutInfo.pSetLayouts = descriptorSetLayouts.data();
-        pipelineLayoutInfo.pushConstantRangeCount = (uint32_t)pushConstantRanges.size(); 
-        pipelineLayoutInfo.pPushConstantRanges = pushConstantRanges.data(); 
+        pipelineLayoutInfo.pushConstantRangeCount = (uint32_t)pushConstantRanges.size();
+        pipelineLayoutInfo.pPushConstantRanges = pushConstantRanges.data();
 
-        if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &layout) != VK_SUCCESS) 
+        if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &layout) != VK_SUCCESS)
         {
             LOG_FATAL("Failed to create pipeline layout!");
         }
@@ -456,6 +458,18 @@ public:
         if (type & RESOURCE_TYPE_RAY_TRACING)           usage |= VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
 
         return usage;
+    }
+
+    static VkSharingMode ResourceSharingModeToSharingMode(ResourceSharingMode sharingMode)
+    {
+        VkSharingMode mode;
+        switch (sharingMode)
+        {
+        case RESOURCE_SHARING_TYPE_EXCLUSIVE:       mode = VK_SHARING_MODE_EXCLUSIVE;   break;
+        case RESOURCE_SHARING_TYPE_CONCURRENT:      mode = VK_SHARING_MODE_CONCURRENT;  break;
+        default:                                    mode = VK_SHARING_MODE_EXCLUSIVE;   break;
+        }
+        return mode;
     }
 
     static VkBufferUsageFlags ResourceTypeToImageUsage(ResourceType type)
@@ -765,6 +779,80 @@ public:
                            : VK_PIPELINE_STAGE_TRANSFER_BIT;
         }
         return flags;
+    }
+
+    static void SetPipelineDebugName(VkDevice device, VkPipeline pipeline, const std::string& name)
+    {
+        if (name.empty()) return;
+        VkDebugUtilsObjectNameInfoEXT nameInfo = {};
+        nameInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT;
+        nameInfo.objectType = VK_OBJECT_TYPE_PIPELINE;
+        nameInfo.objectHandle = (uint64_t)pipeline;
+        nameInfo.pObjectName = name.c_str();
+        vkSetDebugUtilsObjectNameEXT(device, &nameInfo);
+    }
+
+    static void DumpPipelineExecutableInfo(VkDevice device, VkPipeline pipeline, const char* kind, const std::string& name, const std::string& extra = "")
+    {
+        VkPipelineInfoKHR pipelineInfo = {};
+        pipelineInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_INFO_KHR;
+        pipelineInfo.pipeline = pipeline;
+
+        uint32_t count = 0;
+        if (vkGetPipelineExecutablePropertiesKHR(device, &pipelineInfo, &count, nullptr) != VK_SUCCESS || count == 0) return;
+        std::vector<VkPipelineExecutablePropertiesKHR> props(count);
+        for (auto& prop : props) prop.sType = VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_PROPERTIES_KHR;
+        if (vkGetPipelineExecutablePropertiesKHR(device, &pipelineInfo, &count, props.data()) != VK_SUCCESS) return;
+
+        for (uint32_t i = 0; i < count; i++)
+        {
+            VkPipelineExecutableInfoKHR executableInfo = {};
+            executableInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_INFO_KHR;
+            executableInfo.pipeline = pipeline;
+            executableInfo.executableIndex = i;
+
+            uint32_t statCount = 0;
+            if (vkGetPipelineExecutableStatisticsKHR(device, &executableInfo, &statCount, nullptr) != VK_SUCCESS || statCount == 0) continue;
+            std::vector<VkPipelineExecutableStatisticKHR> stats(statCount);
+            for (auto& stat : stats) stat.sType = VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_STATISTIC_KHR;
+            if (vkGetPipelineExecutableStatisticsKHR(device, &executableInfo, &statCount, stats.data()) != VK_SUCCESS) continue;
+
+            std::string line = std::string("[PipelineStats] ") + kind + " '" + name + "'" + (extra.empty() ? "" : " " + extra)
+                + " exe" + std::to_string(i) + " '" + props[i].name + "':";
+            char val[64];
+            for (auto& stat : stats)
+            {
+                switch (stat.format)
+                {
+                case VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_BOOL32_KHR:  snprintf(val, sizeof(val), "%s", stat.value.b32 ? "true" : "false"); break;
+                case VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_INT64_KHR:   snprintf(val, sizeof(val), "%lld", (long long)stat.value.i64); break;
+                case VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_UINT64_KHR:  snprintf(val, sizeof(val), "%llu", (unsigned long long)stat.value.u64); break;
+                case VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_FLOAT64_KHR: snprintf(val, sizeof(val), "%.3f", stat.value.f64); break;
+                default:                                                  snprintf(val, sizeof(val), "%llx", (unsigned long long)stat.value.u64); break;
+                }
+                line += std::string(" ") + stat.name + "=" + val;
+            }
+            printf("%s\n", line.c_str());
+        }
+    }
+
+
+    static int32_t pickFamily(const std::vector<VkQueueFamilyProperties>& queueFamilyProperties, std::vector<int32_t>& freeCounts,
+        VkQueueFlags require, VkQueueFlags avoidMask = 0, int32_t avoidFamily = int32_t(-1))
+    {
+        int32_t best = -1;
+        for (int32_t i = 0; i < static_cast<int32_t>(queueFamilyProperties.size()); i++)
+        {
+            const VkQueueFamilyProperties& family = queueFamilyProperties[i];
+            if (!(family.queueFlags & require)) continue;
+            if (freeCounts[i] <= 0) continue;
+            if (avoidFamily == i) continue;
+            if (avoidMask && (family.queueFlags & avoidMask)) continue;
+            if (best < 0 || freeCounts[i] > freeCounts[best]) best = i;
+        }
+        if (best >= 0)
+            freeCounts[best] = std::max(0, freeCounts[best] - MAX_QUEUE_CNT);
+        return best;
     }
 
     static VkShaderStageFlags ShaderFrequencyToVkStageFlags(ShaderFrequency frequency)

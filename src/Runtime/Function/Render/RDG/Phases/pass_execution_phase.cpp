@@ -1272,14 +1272,12 @@ void PassExecutionPhase::record_stream_range(RDGDependencyGraphRef graph, PerFra
         // 多队列各流索引都从0起，(帧槽,队列)二维分区互不冲突；worker并行录制时下标天然确定；
         // worker的ThreadFrameIndex已被帧号stamp
         if (config_.enable_gpu_timing && executor->renderQuery != nullptr)
-            executor->renderQuery->WriteTimestamp(command,
-                EngineContext::ThreadPool()->ThreadFrameIndex(), queueIndex, 2 * i,
-                stream.passes[i]->Name() + " wait");
+            executor->renderQuery->WriteTimestamp(command, EngineContext::ThreadPool()->ThreadFrameIndex(), queueIndex, 2 * i, stream.passes[i]->Name() + " wait");
+
         execute_pass(graph, executor, queueIndex, stream.passes[i], command);
+
         if (config_.enable_gpu_timing && executor->renderQuery != nullptr)
-            executor->renderQuery->WriteTimestamp(command,
-                EngineContext::ThreadPool()->ThreadFrameIndex(), queueIndex, 2 * i + 1,
-                stream.passes[i]->Name());
+            executor->renderQuery->WriteTimestamp(command, EngineContext::ThreadPool()->ThreadFrameIndex(), queueIndex, 2 * i + 1, stream.passes[i]->Name());
     }
 }
 
@@ -1301,7 +1299,7 @@ void PassExecutionPhase::execute_pass(RDGDependencyGraphRef graph, PerFrameCommo
         ENGINE_LOG_INFO("[Rec] q{} '{}' barriers: before={} after={}", queueIndex, pass->Name().c_str(), before, after);
     }
 
-    // GPU调试标记（颜色与旧路径一致）
+    // GPU调试标记
     if (config_.enable_debug_markers)
     {
         switch (pass->NodeType())
@@ -1587,7 +1585,13 @@ void PassExecutionPhase::release_at_last_use(RDGDependencyGraphRef graph, RDGPas
         // 记录tracker终态（GPU实际布局）而非边声明状态——池化跨帧状态必须与实际一致，
         // 否则下一帧initState错位会漏屏障（layout错误）
         if (binding_phase_.is_last_use(texture, pass, edge->IsOutput()))
-            release_texture(texture, barrier_generation_phase_.get_final_texture_state(texture), restFamily);
+        {
+            // CONCURRENT纹理无族归属：池条目记IGNORED（Phase 7初始化对CONCURRENT无视initFamily，
+            // 此处仅为池/节点数据一致性，防未来消费方误读）
+            const uint32_t fam = texture->info.sharingMode == RESOURCE_SHARING_TYPE_CONCURRENT
+                ? RHI_QUEUE_FAMILY_IGNORED : restFamily;
+            release_texture(texture, barrier_generation_phase_.get_final_texture_state(texture), fam);
+        }
         });
 
     graph->ForEachBuffer(pass, [&](RDGBufferEdgeRef edge, RDGBufferNodeRef buffer) {

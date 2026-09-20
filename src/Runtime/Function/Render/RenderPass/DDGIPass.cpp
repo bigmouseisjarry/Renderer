@@ -107,7 +107,6 @@ void DDGIPass::Build(RDGBuilder& builder)
                     .PassIndex(i)
                     .RootSignature(rootSignature)
                     .Dependency(builder.GetBuffer("TLAS Storage"), RESOURCE_STATE_ACCELERATION_STRUCTURE)      // 依赖TLAS Update的产出（虚拟边，不绑定描述符；ray query读AS）
-                    // 隐形依赖边（图外通道消费）：radiance采样方向光阴影图（经per-frame set）
                     .Dependency(builder.GetTexture("Directional Depth [0]"), RESOURCE_STATE_SHADER_RESOURCE)
                     .Dependency(builder.GetTexture("Directional Depth [1]"), RESOURCE_STATE_SHADER_RESOURCE)
                     .Dependency(builder.GetTexture("Directional Depth [2]"), RESOURCE_STATE_SHADER_RESOURCE)

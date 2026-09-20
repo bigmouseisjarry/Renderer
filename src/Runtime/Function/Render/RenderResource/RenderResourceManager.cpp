@@ -181,10 +181,20 @@ RHIShaderRef RenderResourceManager::GetOrCreateRHIShader(const std::string& path
     std::vector<uint8_t> code;
     EngineContext::File()->LoadBinary(path, code);
 
+    // 去掉.spv扩展、保留一级父目录（如"restir_gi/lighting"）
+    std::string debugName = path.substr(0, path.rfind('.'));
+    size_t slash = debugName.rfind('/');
+    if (slash != std::string::npos)
+    {
+        size_t slash2 = debugName.rfind('/', slash - 1);
+        debugName = debugName.substr(slash2 + 1);    
+    }
+
     RHIShaderInfo shaderInfo = {
         .entry = entry,
         .frequency = frequency,
-        .code = code
+        .code = code,
+        .debugName = debugName
     };
     RHIShaderRef shader = EngineContext::RHI()->CreateShader(shaderInfo);
 
@@ -364,11 +374,11 @@ void RenderResourceManager::InitGlobalResources()
             Extent3D(windowExtent.width, windowExtent.height, 1),
             1, 0);  // mip为0自动生成全mip
 
-        multiFrameResource.velocityTexture = std::make_shared<Texture>( 
-            TEXTURE_TYPE_2D, 
+        multiFrameResource.velocityTexture = std::make_shared<Texture>(
+            TEXTURE_TYPE_2D,
             FORMAT_R32G32_SFLOAT,
             Extent3D(windowExtent.width, windowExtent.height, 1),
-            1, 1);
+            1, 1, std::initializer_list<QueueType>{ QUEUE_TYPE_GRAPHICS, QUEUE_TYPE_COMPUTE });
 
         multiFrameResource.objectIDTexture[0] = std::make_shared<Texture>( 
             TEXTURE_TYPE_2D, 
@@ -382,7 +392,7 @@ void RenderResourceManager::InitGlobalResources()
             Extent3D(windowExtent.width, windowExtent.height, 1),
             1, 1);
 
-        multiFrameResource.finalColorHistoryTexture[0] = std::make_shared<Texture>(      // rgba16f是RW格式，Texture封装自动带STORAGE位（TAA kernel直写需要）
+        multiFrameResource.finalColorHistoryTexture[0] = std::make_shared<Texture>(      
             TEXTURE_TYPE_2D,
             EngineContext::Render()->GetHdrColorFormat(),
             Extent3D(windowExtent.width, windowExtent.height, 1),

@@ -53,12 +53,9 @@ private:
 	RHIRootSignatureRef copySssrRootSignature;
 	RHIRootSignatureRef viewZRootSignature;
 	RHIRootSignatureRef combineRootSignature;
-    // RHIRootSignatureRef rootSignature;
     RHIComputePipelineRef computePipeline[3];
 	RHITextureRef confidenceTexture;
 
-	// 第3刀：NRD拆双实例——spec(跟SSSR链走q0空窗,ForceGraphics)与diffuse(跟ReSTIR留q1)。
-	// 各自独立nrd::Instance/常量缓冲/纹理池，RDG名字带前缀不撞黑板
 	NRDIntegration integrationSpec;
 	NRDIntegration integrationDiff;
 	uint32_t frameIndex = 0;

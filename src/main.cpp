@@ -872,31 +872,11 @@ void InitScene()
     }
 
 
-    // EngineContext::Render()->SetPassEnabled(FORWARD_PASS, false);
-    // EngineContext::Render()->SetPassEnabled(EDITOR_UI_PASS, false);
-    // EngineContext::Render()->SetPassEnabled(IBL_PASS, false);
-    // EngineContext::Render()->SetPassEnabled(SVGF_PASS, false);
-    // EngineContext::Render()->SetPassEnabled(G_BUFFER_PASS, false);
-    // EngineContext::Render()->SetPassEnabled(FORWARD_PASS, false);
-    // EngineContext::Render()->SetPassEnabled(TRANSPARENT_PASS, false);
-    // EngineContext::Render()->SetPassEnabled(DDGI_VISUALIZE_PASS, false);
-    // EngineContext::Render()->SetPassEnabled(PATH_TRACING_PASS, false);
-    // EngineContext::Render()->SetPassEnabled(BLOOM_PASS, false);
-    // EngineContext::Render()->SetPassEnabled(FXAA_PASS, false);
-    // EngineContext::Render()->SetPassEnabled(TAA_PASS, false);
-    // EngineContext::Render()->SetPassEnabled(SSSR_PASS, false);
-    // EngineContext::Render()->SetPassEnabled(VOLUMETIRC_FOG_PASS, false);
-    // EngineContext::Render()->SetPassEnabled(RESTIR_DI_PASS, false);
     EngineContext::World()->SetActiveScene("defaultScene");
 }
 
 int main()
 {
-#ifdef _DEBUG
-    // [二分仪器]断言重定向到stderr（不弹窗——assert的文件:行:表达式直接落日志，弹窗时序竞态取证用）
-    _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE | _CRTDBG_MODE_DEBUG);
-    _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
-#endif
 
     EngineContext::Init();
 

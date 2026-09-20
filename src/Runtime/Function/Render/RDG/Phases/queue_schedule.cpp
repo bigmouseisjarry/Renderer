@@ -300,6 +300,11 @@ void QueueSchedule::schedule_with_heft(RDGDependencyGraphRef graph)
             for (const auto& acc : info->resource_accesses)
             {
                 if (!acc.resource) continue;
+                // CONCURRENT纹理不进所有权表：无QFO往返即无跨族互斥/所有权链——
+                // 跳过后下方互斥等待(:335)、所有权迁移(:388)、链回写边(:401)对本资源全部失效
+                if (acc.resource->NodeType() == RDG_RESOURCE_NODE_TYPE_TEXTURE &&
+                    static_cast<RDGTextureNodeRef>(acc.resource)->GetInfo().sharingMode == RESOURCE_SHARING_TYPE_CONCURRENT)
+                    continue;
                 EResourceAccessType& slot = merged[acc.resource];
                 const bool anyWrite = slot == EResourceAccessType::ReadWrite ||
                                       acc.access_type != EResourceAccessType::Read;

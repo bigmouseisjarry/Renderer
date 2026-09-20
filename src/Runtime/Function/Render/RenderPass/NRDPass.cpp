@@ -16,8 +16,6 @@ void NRDPass::Init()
     Extent2D windowExtent = EngineContext::Render()->GetWindowsExtent();
     auto backend = EngineContext::RHI();
 
-    // 第3刀：NRD拆双实例——spec实例只注册RELAX_SPECULAR（SSSR用，跟SSSR链钉q0空窗），
-    // diffuse实例只注册REBLUR_DIFFUSE（ReSTIR GI用，留q1）。原单实例注册全6个denoiser的模式废弃
     const nrd::DenoiserDesc specDenoiserDescs[] =
     {
         { 0, nrd::Denoiser::RELAX_SPECULAR },
@@ -65,7 +63,7 @@ void NRDPass::Init()
             .AddEntry({ 1, 4, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE })   // RESTIR_SPECULAR_COLOR
             .AddEntry({ 1, 5, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE })   // NRD_VIEW_Z
             .AddEntry({ 1, 6, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE })  // NRD_NORMAL
-            .AddPushConstant({128, SHADER_FREQUENCY_COMPUTE});   
+            .AddPushConstant({128, SHADER_FREQUENCY_COMPUTE});
                                                                  
 
         viewZRootSignature = backend->CreateRootSignature(viewZRootSignatureInfo);
@@ -100,7 +98,7 @@ void NRDPass::Init()
         copySssrRootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetPerFrameRootSignature()->GetInfo())
             .AddEntry({ 1, 1, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE })
             .AddEntry({ 1, 2, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })
-            .AddPushConstant({128, SHADER_FREQUENCY_COMPUTE});  
+            .AddPushConstant({128, SHADER_FREQUENCY_COMPUTE});
 
         copySssrRootSignature = backend->CreateRootSignature(copySssrRootSignatureInfo);
 
@@ -136,10 +134,10 @@ void NRDPass::Build(RDGBuilder& builder)
         !EngineContext::Render()->IsPassEnabled(RAY_TRACING_BASE_PASS))
     {
         Extent2D windowExtent = EngineContext::Render()->GetWindowsExtent();
-        auto camera = EngineContext::World()->GetActiveScene()->GetActiveCamera();  
+        auto camera = EngineContext::World()->GetActiveScene()->GetActiveCamera();
 
-        setting.denoisedOnly = (EngineContext::Render()->IsPassEnabled(RESTIR_DI_PASS) || denoisedOnly) ? 1 : 0;   
-        setting.specularOnly = !diffuseEnabled ? 1 : 0;   
+        setting.denoisedOnly = (EngineContext::Render()->IsPassEnabled(RESTIR_DI_PASS) || denoisedOnly) ? 1 : 0;
+        setting.specularOnly = !diffuseEnabled ? 1 : 0;
         setting.restirEnabled = restirEnabled ? 1 : 0;
 
         RDGTextureHandle diffuse                = builder.GetTexture("G-Buffer Diffuse/Metallic");
@@ -173,7 +171,7 @@ void NRDPass::Build(RDGBuilder& builder)
         //     .Finish();
 
         RDGTextureHandle nrdNormal = builder.CreateTexture("NRD Normal/Roughness")
-            .Exetent({windowExtent.width, windowExtent.height, 1})
+            .Exetent({ windowExtent.width, windowExtent.height, 1 })     // [第1刀]NRD侧=半分
             //.Format(FORMAT_R8G8B8A8_UNORM)
             .Format(FORMAT_R8G8B8A8_SNORM)
             //.Format(FORMAT_A2R10G10B10_UNORM)
@@ -184,6 +182,7 @@ void NRDPass::Build(RDGBuilder& builder)
             .MipLevels(1)
             .MemoryUsage(MEMORY_USAGE_GPU_ONLY)
             .AllowReadWrite()
+            .AllowConcurrent({ QUEUE_TYPE_GRAPHICS,QUEUE_TYPE_COMPUTE })
             .Finish();
 
         RDGTextureHandle nrdViewZ = builder.CreateTexture("NRD View Z")
@@ -193,58 +192,30 @@ void NRDPass::Build(RDGBuilder& builder)
             .MipLevels(1)
             .MemoryUsage(MEMORY_USAGE_GPU_ONLY)
             .AllowReadWrite()
-            .Finish();  
+            .AllowConcurrent({ QUEUE_TYPE_GRAPHICS,QUEUE_TYPE_COMPUTE })
+            .Finish();
 
-        RDGTextureHandle nrdOutDiffuse = builder.CreateTexture("NRD Out Diffuse") 
+        RDGTextureHandle nrdOutDiffuse = builder.CreateTexture("NRD Out Diffuse")
             .Exetent({windowExtent.width, windowExtent.height, 1})
             .Format(EngineContext::Render()->GetHdrColorFormat())
             .ArrayLayers(1)
             .MipLevels(1)
             .MemoryUsage(MEMORY_USAGE_GPU_ONLY)
             .AllowReadWrite()
-            .Finish(); 
-            
-        RDGTextureHandle nrdOutSpecular = builder.CreateTexture("NRD Out Specular") 
+            .Finish();
+
+        RDGTextureHandle nrdOutSpecular = builder.CreateTexture("NRD Out Specular")
             .Exetent({windowExtent.width, windowExtent.height, 1})
             .Format(EngineContext::Render()->GetHdrColorFormat())
             .ArrayLayers(1)
             .MipLevels(1)
             .MemoryUsage(MEMORY_USAGE_GPU_ONLY)
             .AllowReadWrite()
-            .Finish(); 
+            .Finish();
 
         RDGTextureHandle nrdOutDebug = builder.CreateTexture("NRD Out Debug")   // TODO
             .Exetent({windowExtent.width, windowExtent.height, 1})
             .Format(EngineContext::Render()->GetHdrColorFormat())
-            .ArrayLayers(1)
-            .MipLevels(1)
-            .MemoryUsage(MEMORY_USAGE_GPU_ONLY)
-            .AllowReadWrite()
-            .Finish();
-
-        // spec侧专用viewZ/normal/MV副本（与diff侧物理隔离——共享纹理的双族读者会让后取者
-        // 等到先取者的最后一次读，拆开各用各的才真正并行）
-        RDGTextureHandle nrdViewZSpec = builder.CreateTexture("NRD View Z Spec")
-            .Exetent({windowExtent.width, windowExtent.height, 1})
-            .Format(FORMAT_R32_SFLOAT)
-            .ArrayLayers(1)
-            .MipLevels(1)
-            .MemoryUsage(MEMORY_USAGE_GPU_ONLY)
-            .AllowReadWrite()
-            .Finish();
-
-        RDGTextureHandle nrdNormalSpec = builder.CreateTexture("NRD Normal/Roughness Spec")
-            .Exetent({windowExtent.width, windowExtent.height, 1})
-            .Format(FORMAT_R8G8B8A8_SNORM)
-            .ArrayLayers(1)
-            .MipLevels(1)
-            .MemoryUsage(MEMORY_USAGE_GPU_ONLY)
-            .AllowReadWrite()
-            .Finish();
-
-        RDGTextureHandle velocitySpec = builder.CreateTexture("NRD Velocity Spec")
-            .Exetent({windowExtent.width, windowExtent.height, 1})
-            .Format(FORMAT_R32G32_SFLOAT)
             .ArrayLayers(1)
             .MipLevels(1)
             .MemoryUsage(MEMORY_USAGE_GPU_ONLY)
@@ -258,49 +229,21 @@ void NRDPass::Build(RDGBuilder& builder)
         {
             RDGTextureHandle sssrResolve = builder.GetTexture("SSSR Resolve");
 
-            // spec侧MV副本（copy pass落q0，紧跟G-Buffer后）：原velocity保持q1侧DiffLight段即释放
-            RDGCopyPassHandle velocityCopyPass = builder.CreateCopyPass(GetName() + " Velocity Copy")
-                .From(velocity)
-                .To(velocitySpec)
-                .Finish();
-
-            // —— spec链全族q0（ForceGraphics）：Copy SSSR → GenViewZ(spec) → NRD-spec实例 ——
+            // —— spec链全族q0（ForceGraphics）：Copy SSSR(降采样) → GenViewZ(spec) → NRD-spec实例 ——
             RDGComputePassHandle pass2 = builder.CreateComputePass(GetName() + " Copy SSSR")
                 .AddFlag(RDGPassFlags::ForceGraphicsQueue)
                 .RootSignature(copySssrRootSignature)
-                .ReadWrite(1, 1, 0, restirSpecularColor)
+                .ReadWrite(1, 1, 0, restirSpecularColor)      
                 .Read(1, 2, 0, sssrResolve)
-                .Execute([&](RDGPassContext context) {
+                .Execute([this, specSetting, windowExtent](RDGPassContext context) mutable {
 
                     RHICommandListRef command = context.command;
                     command->SetComputePipeline(computePipeline[2]);
                     command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);
                     command->BindDescriptorSet(context.descriptors[1], 1);
                     command->PushConstants(&specSetting, sizeof(specSetting), SHADER_FREQUENCY_COMPUTE);
-                    command->Dispatch(  Math::CeilDivide(EngineContext::Render()->GetWindowsExtent().width, 16),
-                                        Math::CeilDivide(EngineContext::Render()->GetWindowsExtent().height, 16),
-                                        1);
-                })
-                .Finish();
-
-            RDGComputePassHandle viewZSpecPass = builder.CreateComputePass(GetName() + " Generate View Z Spec")
-                .AddFlag(RDGPassFlags::ForceGraphicsQueue)
-                .RootSignature(viewZRootSignature)
-                .Read(1, 0, 0, depth, VIEW_TYPE_2D, {TEXTURE_ASPECT_DEPTH, 0, 1, 0, 1})
-                .Read(1, 1, 0, diffuse)
-                .Read(1, 2, 0, normal)
-                .ReadWrite(1, 4, 0, restirSpecularColor)
-                .ReadWrite(1, 5, 0, nrdViewZSpec)
-                .ReadWrite(1, 6, 0, nrdNormalSpec)
-                .Execute([&](RDGPassContext context) {
-
-                    RHICommandListRef command = context.command;
-                    command->SetComputePipeline(computePipeline[0]);
-                    command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);
-                    command->BindDescriptorSet(context.descriptors[1], 1);
-                    command->PushConstants(&specSetting, sizeof(specSetting), SHADER_FREQUENCY_COMPUTE);
-                    command->Dispatch(  Math::CeilDivide(EngineContext::Render()->GetWindowsExtent().width, 16),
-                                        Math::CeilDivide(EngineContext::Render()->GetWindowsExtent().height, 16),
+                    command->Dispatch(  Math::CeilDivide(windowExtent.width, 16),
+                                        Math::CeilDivide(windowExtent.height, 16),
                                         1);
                 })
                 .Finish();
@@ -308,7 +251,7 @@ void NRDPass::Build(RDGBuilder& builder)
 
         if(diffuseEnabled)
         {
-            // —— diffuse侧留q1（ReSTIR之后）：GenViewZ(diff) → NRD-diff实例 ——
+            // —— diffuse侧留q1（ReSTIR之后）：GenViewZ(diff,降采样打包) → NRD-diff实例 ——
             RDGComputePassHandle pass = builder.CreateComputePass(GetName() + " Generate View Z")
                 .RootSignature(viewZRootSignature)
                 .Read(1, 0, 0, depth, VIEW_TYPE_2D, {TEXTURE_ASPECT_DEPTH, 0, 1, 0, 1})
@@ -317,15 +260,15 @@ void NRDPass::Build(RDGBuilder& builder)
                 .ReadWrite(1, 3, 0, restirDiffuseColor)
                 .ReadWrite(1, 5, 0, nrdViewZ)
                 .ReadWrite(1, 6, 0, nrdNormal)
-                .Execute([&](RDGPassContext context) {
+                .Execute([this, diffSetting, windowExtent](RDGPassContext context) mutable {   // [修bug]按值捕获，见Copy SSSR处注释
 
                     RHICommandListRef command = context.command;
                     command->SetComputePipeline(computePipeline[0]);
                     command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);
                     command->BindDescriptorSet(context.descriptors[1], 1);
                     command->PushConstants(&diffSetting, sizeof(diffSetting), SHADER_FREQUENCY_COMPUTE);
-                    command->Dispatch(  Math::CeilDivide(EngineContext::Render()->GetWindowsExtent().width, 16),
-                                        Math::CeilDivide(EngineContext::Render()->GetWindowsExtent().height, 16),
+                    command->Dispatch(  Math::CeilDivide(windowExtent.width, 16),
+                                        Math::CeilDivide(windowExtent.height, 16),
                                         1);
                 })
                 .Finish();
@@ -369,6 +312,7 @@ void NRDPass::Build(RDGBuilder& builder)
     
             relaxSettings.enableAntiFirefly = setting.enableAntiFirefly > 0;
             relaxSettings.checkerboardMode = nrd::CheckerboardMode::OFF;
+            // relaxSettings.atrousIterationNum = 3;
             integrationSpec.SetDenoiserSettings(0, &relaxSettings);        // RELAX_SPECULAR（实例内唯一denoiser，id=0）
 
             reblurSettings.hitDistanceParameters = {};
@@ -377,13 +321,12 @@ void NRDPass::Build(RDGBuilder& builder)
 
             if(specularEnabled)
             {
-                // spec实例快照：viewZ/normal/MV全部用spec侧副本，与diff实例零共享纹理
                 NRDResourceSnapshot specSnapshot = {};
-                specSnapshot.SetResource(nrd::ResourceType::IN_NORMAL_ROUGHNESS, nrdNormalSpec);
-                specSnapshot.SetResource(nrd::ResourceType::IN_MV, velocitySpec);
-                specSnapshot.SetResource(nrd::ResourceType::IN_VIEWZ, nrdViewZSpec);
-                specSnapshot.SetResource(nrd::ResourceType::IN_BASECOLOR_METALNESS, diffuse);
+                specSnapshot.SetResource(nrd::ResourceType::IN_NORMAL_ROUGHNESS, nrdNormal);
+                specSnapshot.SetResource(nrd::ResourceType::IN_MV, velocity);
                 specSnapshot.SetResource(nrd::ResourceType::IN_SPEC_RADIANCE_HITDIST, restirSpecularColor);
+                specSnapshot.SetResource(nrd::ResourceType::IN_VIEWZ, nrdViewZ);
+                specSnapshot.SetResource(nrd::ResourceType::IN_BASECOLOR_METALNESS, diffuse);
                 specSnapshot.SetResource(nrd::ResourceType::OUT_SPEC_RADIANCE_HITDIST, nrdOutSpecular);
                 specSnapshot.SetResource(nrd::ResourceType::OUT_VALIDATION, nrdOutDebug);
 
@@ -396,9 +339,9 @@ void NRDPass::Build(RDGBuilder& builder)
                 NRDResourceSnapshot diffSnapshot = {};
                 diffSnapshot.SetResource(nrd::ResourceType::IN_NORMAL_ROUGHNESS, nrdNormal);
                 diffSnapshot.SetResource(nrd::ResourceType::IN_MV, velocity);
+                diffSnapshot.SetResource(nrd::ResourceType::IN_DIFF_RADIANCE_HITDIST, restirDiffuseColor);
                 diffSnapshot.SetResource(nrd::ResourceType::IN_VIEWZ, nrdViewZ);
                 diffSnapshot.SetResource(nrd::ResourceType::IN_BASECOLOR_METALNESS, diffuse);
-                diffSnapshot.SetResource(nrd::ResourceType::IN_DIFF_RADIANCE_HITDIST, restirDiffuseColor);
                 diffSnapshot.SetResource(nrd::ResourceType::OUT_DIFF_RADIANCE_HITDIST, nrdOutDiffuse);
                 diffSnapshot.SetResource(nrd::ResourceType::OUT_VALIDATION, nrdOutDebug);
 

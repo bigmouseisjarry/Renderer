@@ -69,7 +69,11 @@ void BarrierGenerationPhase::on_execute(RDGDependencyGraphRef graph, PerFrameCom
         tracker.mip_levels = texture->info.mipLevels;
         tracker.array_layers = texture->info.arrayLayers;
         tracker.states.assign(static_cast<size_t>(tracker.mip_levels) * tracker.array_layers, texture->initState);
-        tracker.owner_family = texture->IsImported() ? graphicsFamily : texture->initFamily;
+        // CONCURRENT纹理无队列族所有权概念（双族共享，免QFO往返）：owner恒IGNORED——
+        // cross_family判定恒假→不发release/acquire、不归巢，布局转移走else分支（族IGNORED）
+        tracker.owner_family = texture->info.sharingMode == RESOURCE_SHARING_TYPE_CONCURRENT
+            ? RHI_QUEUE_FAMILY_IGNORED
+            : (texture->IsImported() ? graphicsFamily : texture->initFamily);
         texture_trackers_[texture] = std::move(tracker);
     });
 
@@ -108,6 +112,7 @@ void BarrierGenerationPhase::on_execute(RDGDependencyGraphRef graph, PerFrameCom
         home.after_state = tracker.states[tracker.index(0, 0)];   // 纯所有权转移，无布局变化
         home.after_pass = true;
 
+        
         auto& batches = result_.pass_barrier_batches[tracker.last_pass];
         if (batches.empty()) batches.push_back({{}, EBarrierType::ResourceTransition});
         batches.front().barriers.push_back(home);
@@ -284,9 +289,12 @@ void BarrierGenerationPhase::process_access(RDGPassNodeRef pass, const ResourceA
         // release(graphics→G)由Phase 8录进graphics流起点的prologue（受prologueDone信号量边保护）
         const bool frame_start_cross_family = tracker.last_pass == nullptr && cross_family;
 
-        if ((cross_queue || frame_start_cross_family) && cross_family)
+        if ((cross_queue || frame_start_cross_family) && cross_family &&
+            texture->info.sharingMode != RESOURCE_SHARING_TYPE_CONCURRENT)
         {
             // 跨队列异族：EXCLUSIVE纹理须由生产者队列release + 消费者队列acquire完成所有权转移。
+            //（CONCURRENT纹理在此短路：owner恒IGNORED下cross_family已恒假，此条件为防御性显式门——
+            //  防未来owner泄漏路径对CONCURRENT图像发族对屏障，validation层会判非法）
             // release顺带完成布局转移（before→目标态）；acquire侧布局不变，仅收回所有权+可见性。
             // 跨队列的执行/内存同步由同步点的timeline信号量提供（每个跨队列依赖必有SSIS点覆盖）
             if (tracker.last_pass != nullptr)
@@ -388,10 +396,12 @@ void BarrierGenerationPhase::process_access(RDGPassNodeRef pass, const ResourceA
             for (uint32_t l = array_base; l < array_base + array_count; l++)
                 tracker.states[tracker.index(m, l)] = access.resource_state;
         tracker.last_pass = pass;
-        if (tracker.owner_family == RHI_QUEUE_FAMILY_IGNORED)
+        if (tracker.owner_family == RHI_QUEUE_FAMILY_IGNORED &&
+            texture->info.sharingMode != RESOURCE_SHARING_TYPE_CONCURRENT)
             tracker.owner_family = target_family;   // 初值IGNORED（未指定所有权，如新池条目）：
                                                     // 首触采纳本族为基线——与旧"由last_pass队列推导"
-                                                    // 等价（旧推导在第二次访问即从触碰者队列恢复族属）
+                                                    // 等价（旧推导在第二次访问即从触碰者队列恢复族属）。
+                                                    // CONCURRENT纹理不采纳——owner须恒IGNORED（见帧首初始化注释）
     }
     else
     {

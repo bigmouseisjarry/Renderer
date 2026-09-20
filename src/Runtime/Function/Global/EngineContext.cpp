@@ -39,7 +39,7 @@ std::shared_ptr<EngineContext> EngineContext::Init()
 
 	context->inputSystem = std::make_shared<InputSystem>();
     
-    context->rhiBackend = RHIBackend::Init({.type = BACKEND_VULKAN, .enableDebug = true, .enableRayTracing = ENABLE_RAY_TRACING});
+    context->rhiBackend = RHIBackend::Init({.type = BACKEND_VULKAN, .enableDebug = true, .enableRayTracing = ENABLE_RAY_TRACING, .enablePipelineExecutableDump = false});
 
     context->renderResourceManger = std::make_shared<RenderResourceManager>();
     context->renderResourceManger->Init();
@@ -88,7 +88,6 @@ void EngineContext::MainLoopInternal()
         }
         {
             ENGINE_TIME_SCOPE(EngineContext::RenderTick);
-            // exit = renderSystem->Tick();
             renderSystem->Tick();
         }
 
@@ -115,7 +114,7 @@ void EngineContext::UpdateTimers()
 {
     historyTimers = timers[currentTick % (2 * FRAMES_IN_FLIGHT)];
 
-    // [CpuTiming]节流聚合导出（CPU帧用时分析，风格同RHIRenderQuery的[GpuTiming]）：按scope名跨帧
+    // [CpuTiming]节流聚合导出（CPU帧用时分析）：按scope名跨帧
     // 聚合均值/最大值/每帧命中数，每300帧输出一批（含全部ENGINE_TIME_SCOPE/ENGINE_TIME_SCOPE_STR
     // 函数——per-pass动态名亦在其中）。数据源=historyTimers（上一帧全部线程的scope集，worker任务
     // 在帧内WaitIdle join后闭合）；唯RHI线程的SubmitRHI在Tick返回后仍可能在录——Valid()==false
@@ -149,11 +148,11 @@ void EngineContext::UpdateTimers()
         std::vector<std::pair<std::string, std::array<double, 3>>> sorted(cpuTimingAgg.begin(), cpuTimingAgg.end());
         std::sort(sorted.begin(), sorted.end(),
             [](const auto& a, const auto& b) { return a.second[0] > b.second[0]; });
-        //ENGINE_LOG_INFO("[CpuTiming] ===== dump: frames={} frameAvg={:.2f}ms loopAvg={:.2f}ms names={} =====",
-        //    dumpFrames, frameMsSum / dumpFrames, loopMsSum / dumpFrames, sorted.size());
+        ENGINE_LOG_INFO("[CpuTiming] ===== dump: frames={} frameAvg={:.2f}ms loopAvg={:.2f}ms names={} =====",
+            dumpFrames, frameMsSum / dumpFrames, loopMsSum / dumpFrames, sorted.size());
         for (const auto& [name, agg] : sorted)
-            //ENGINE_LOG_INFO("[CpuTiming] '{}' avg={:.3f}ms max={:.2f}ms hits={:.1f}/frame",
-            //    name.c_str(), agg[0] / dumpFrames, agg[1], agg[2] / dumpFrames);
+            ENGINE_LOG_INFO("[CpuTiming] '{}' avg={:.3f}ms max={:.2f}ms hits={:.1f}/frame",
+                name.c_str(), agg[0] / dumpFrames, agg[1], agg[2] / dumpFrames);
 
         cpuTimingAgg.clear();
         dumpFrames = 0;

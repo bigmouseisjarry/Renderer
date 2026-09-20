@@ -14,7 +14,6 @@ enum class EBarrierType : uint8_t
 {
     ResourceTransition = 0,     // 状态转移屏障（含跨队列转移）
     CrossQueueSync,             // 预留：跨队列同步屏障（多队列提交期由信号量/时间线实现）
-    MemoryAliasing,             // 预留：内存别名屏障（Tier0池化语义下由 initState 转移覆盖）
 };
 
 // RDG屏障——虚拟屏障：持有资源节点指针，发射时由执行期解析物理对象
@@ -74,12 +73,6 @@ struct BarrierGenerationConfig
 
 // 阶段 7: 屏障生成阶段
 //
-// 从 SakuraEngine barrier_generation_phase 移植，两处简化：
-//   1. 不做 split barrier（见config注释）
-//   2. 不生成独立的 cross-queue-sync / memory-aliasing 屏障：
-//      转移屏障的"队列不同"判定已覆盖所有跨队列状态变化（与SSIS同步点同源），
-//      optimized_sync_points 留给执行期做多队列信号量插入；池化 initState 转移已覆盖aliasing语义
-//
 // 替代旧路径的 CreateInputBarriers/CreateOutputBarriers/PreviousState 内联扫描：
 // 每资源一个 subresource 级状态跟踪器（纹理按 mipLevels*arrayLayers 展开），
 // 初始状态 = imported 声明的 initState / created 资源的池化跨帧状态（阶段6分配结果），
@@ -137,12 +130,7 @@ private:
         RDGPassNodeRef last_pass = nullptr;    // 上一次触碰的pass（跨队列判定用）
         uint32_t mip_levels = 1;
         uint32_t array_layers = 1;
-        // 所有权追踪（init_family的扩展）：帧首=池族/imported族（跨帧静止归属，Phase 6分配时
-        // 写入节点initFamily；imported恒graphics族），帧内随每次跨族转移对更新为目标族。
-        // 与旧"由last_pass队列推导"等价：读访问推进last_pass但不改变所有权，两次转移之间
-        // 所有触碰者都在现任族上。显式化的意义：屏障摆放位置与last_pass位置解耦后
-        //（Phase 8批次合并已使release可位于批中部）推导式写法会失真，追踪式不受影响
-        uint32_t owner_family = RHI_QUEUE_FAMILY_IGNORED;
+        uint32_t owner_family = RHI_QUEUE_FAMILY_IGNORED;   // 所有权追踪
 
         inline size_t index(uint32_t mip, uint32_t layer) const { return static_cast<size_t>(mip) * array_layers + layer; }
     };
@@ -167,5 +155,5 @@ private:
     // 工作数据
     std::unordered_map<RDGTextureNodeRef, TextureStateTracker> texture_trackers_;
     std::unordered_map<RDGBufferNodeRef, BufferStateTracker> buffer_trackers_;
-    std::vector<RDGBarrier> frame_start_releases_;    // 帧首跨族release集（见get_frame_start_releases）
+    std::vector<RDGBarrier> frame_start_releases_;    // 帧首跨族release集
 };

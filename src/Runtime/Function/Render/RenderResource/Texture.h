@@ -3,7 +3,9 @@
 #include "Core/Serialize/Serializable.h"
 #include "Function/Render/RHI/RHIStructs.h"
 #include "Resource/Asset/Asset.h"
+#include <array>
 #include <cstdint>
+#include <initializer_list>
 #include <vector>
 
 enum TextureType{
@@ -23,7 +25,8 @@ class Texture : public Asset
 public:
     Texture(const std::string& path);
     Texture(const std::vector<std::string>& paths, TextureType type);
-    Texture(TextureType type, RHIFormat format, Extent3D extent, uint32_t arrayLayer = 1, uint32_t mipLevels = 0);
+    Texture(TextureType type, RHIFormat format, Extent3D extent, uint32_t arrayLayer = 1, uint32_t mipLevels = 0,
+            std::initializer_list<QueueType> concurrentFamilies = {});
     ~Texture();
 
     virtual std::string GetAssetTypeName() override 			{ return "Texture Asset"; }
@@ -53,6 +56,8 @@ protected:
     Extent3D extent;
     uint32_t mipLevels;
     uint32_t arrayLayer;
+    std::array<uint32_t, QUEUE_TYPE_MAX_ENUM> concurrentFamilies = {};
+    uint32_t concurrentFamilyCount = 0;
 
     void InitRHI();
     void LoadFromFile();

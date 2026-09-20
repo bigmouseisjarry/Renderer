@@ -77,9 +77,6 @@ void RenderSystem::InitBaseResource()
     swapchain     = backend->CreateSwapChain({ surface, queue, FRAMES_IN_FLIGHT, surface->GetExetent(), COLOR_FORMAT });
 
     // 队列调度配置：编译器与帧槽预建共用同一份（QueryConfiguredQueues按它枚举，保证slot下标与all_queues对齐）
-    // 第3刀·动作1：两队列（graphics族0 + 专用async compute族）。copy队列弃用——copy pass回q0（帧首小copy与
-    // 帧尾Bloom Copy本就等graphics产物，同队列零跳；10条WRW问题随之过期）
-    // 2026-09-13闪烁定案修复（隐形依赖边家族补边，详见RDGBuilder的Dependency虚拟边）后HEFT验收通过
     QueueScheduleConfig queueCfg{}; queueCfg.use_heft = true;
     queueCfg.enable_graphic_queues = 1;
     queueCfg.enable_async_compute_queues = 1;
@@ -125,7 +122,7 @@ void RenderSystem::InitBaseResource()
         CommandRecordingConfig commandRecordingConfig{};
         commandRecordingConfig.enable_debug_markers = true;
         commandRecordingConfig.enable_debug_output = false;
-        commandRecordingConfig.enable_gpu_timing = true;       // 与renderQuery的info.enable_gpu_timing共同判定打点（见record_stream_range）
+        commandRecordingConfig.enable_gpu_timing = true;        // [临时]nsys体检轮：逐pass打点（与renderQuery的info.enable_gpu_timing共同判定，见record_stream_range）
         commandRecordingConfig.chunk_count = 3;     // ANY池worker(2) + 主线程(1)——亦是每队列预建命令流数
         commandRecordingConfig.coarse_cross_frame_sync = false;    // 细链（V2）：imported资源首触批wait上帧末触点；true=粗链A/B回退
         rdgCompilers[i] = std::make_shared<RDGCompiler>(crossFrameRegistry, renderQuery, queueCfg, reorderConfig, crossQueueSyncConfig, passBindingConfig, barrierGenerationConfig, commandRecordingConfig);
@@ -136,10 +133,6 @@ void RenderSystem::EnsureQueueFrameSlots(PerFrameCommonResource& resource, const
 {
     if (!resource.queueSlots.empty()) return;      // config静态，每槽一次性建齐
 
-    // 预建QueueSchedule将注册的全部队列（同序枚举→slot下标==RDG队列下标，Phase 8对此断言）。
-    // 每队列预建 CommandRecordingConfig::chunk_count 条命令流：worker piece数(2)+串行尾(1)；
-    // 每条独占一个pool——vkBegin/vkEnd/vkResetCommandBuffer要求父VkCommandPool外部同步，
-    // 多worker共享一个池并发BeginCommand是未定义行为（驱动访问冲突）
     static constexpr uint32_t QUEUE_CHUNK_BUDGET = 3;   // 与CommandRecordingConfig::chunk_count保持一致
 
     for (RHIQueueRef slotQueue : QueueSchedule::QueryConfiguredQueues(config))
@@ -241,19 +234,19 @@ void RenderSystem::Tick()
 
     {
         ENGINE_TIME_SCOPE(RenderSystem::TickManagers);
-        // meshManager->Tick();             // 先准备各个meshpass的绘制信息
-        // lightManager->Tick();            // 准备光源信息
-        // surfaceCacheManager->Tick();     // 更新surfaceCache
         // UpdateGlobalSetting();
 
         // 非常简单的并行
         EngineContext::ThreadPool()->AddQueuedWork([this]() {
+            // 更新surfaceCache
             surfaceCacheManager->Tick();
             });
         EngineContext::ThreadPool()->AddQueuedWork([this]() {
+            // 准备各个meshpass的绘制信息
             meshManager->Tick();
             });
         EngineContext::ThreadPool()->AddQueuedWork([this]() {
+            // 准备光源信息
             lightManager->Tick();
             });
         EngineContext::ThreadPool()->AddQueuedWork([this]() {
@@ -292,7 +285,8 @@ void RenderSystem::BuildRDG()
             passes[EDITOR_UI_PASS]->Build(*rdgBuilder.get()); 
             passes[PRESENT_PASS]->Build(*rdgBuilder.get()); 
         }
-        else {
+        else 
+        {
             for(auto& pass : passes) 
             { 
                 if(pass) 

@@ -86,7 +86,6 @@ void ForwardPass::Build(RDGBuilder& builder)
 
         RDGTextureHandle depth = builder.GetTexture("Depth");
 
-        // 间接绘制命令buffer的虚拟依赖边（见GPUCullingPass的Import命名）：保证拓扑排序中culling先于本pass
         std::string cmdIndex = " [" + std::to_string(MESH_FORWARD_PASS) + "][0]";
 
         RDGRenderPassHandle pass = builder.CreateRenderPass(GetName())

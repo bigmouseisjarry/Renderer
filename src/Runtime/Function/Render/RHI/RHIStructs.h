@@ -134,6 +134,14 @@ enum ResourceTypeBits : uint32_t	//资源类型，封装了UsageFlag和Descripto
 };
 using ResourceType = uint32_t;
 
+enum ResourceSharingMode :uint32_t
+{
+	RESOURCE_SHARING_TYPE_EXCLUSIVE,
+	RESOURCE_SHARING_TYPE_CONCURRENT,
+
+	RESOURCE_SHARING_TYPE_MAX_ENUM,
+};
+
 enum BufferCreationFlagBits : uint32_t
 {
 	BUFFER_CREATION_NONE = 0,
@@ -969,11 +977,16 @@ struct RHIBufferInfo
 	MemoryUsage memoryUsage = MEMORY_USAGE_GPU_ONLY;
 	ResourceType type = RESOURCE_TYPE_BUFFER;
 
+	ResourceSharingMode sharingMode = RESOURCE_SHARING_TYPE_EXCLUSIVE;
+
+	std::array<uint32_t, QUEUE_TYPE_MAX_ENUM> concurrentFamilies = {};
+	uint32_t concurrentFamilyCount = 0;
+
 	BufferCreationFlags creationFlag = BUFFER_CREATION_NONE;
 
 };
 
-struct RHITextureInfo 
+struct RHITextureInfo
 {
 	RHIFormat format;
 	Extent3D extent;
@@ -983,9 +996,14 @@ struct RHITextureInfo
 	MemoryUsage memoryUsage = MEMORY_USAGE_GPU_ONLY;
 	ResourceType type = RESOURCE_TYPE_TEXTURE;
 
+	ResourceSharingMode sharingMode = RESOURCE_SHARING_TYPE_EXCLUSIVE;
+
+	std::array<uint32_t, QUEUE_TYPE_MAX_ENUM> concurrentFamilies = {};
+	uint32_t concurrentFamilyCount = 0;
+
 	TextureCreationFlags creationFlag = TEXTURE_CREATION_NONE;
 
-	inline uint64_t get_size() const 
+	inline uint64_t get_size() const
 	{
 		uint64_t bytesPerPixel = RHIFormatBytesPerPixel(format);
 		uint64_t baseSize = static_cast<uint64_t>(extent.width)
@@ -1005,6 +1023,9 @@ struct RHITextureInfo
 				a.mipLevels == b.mipLevels &&
 				a.memoryUsage == b.memoryUsage &&
 				a.type == b.type &&
+				a.sharingMode == b.sharingMode &&
+				a.concurrentFamilyCount == b.concurrentFamilyCount &&
+				a.concurrentFamilies == b.concurrentFamilies &&
 				a.creationFlag == b.creationFlag;
 	}
 
@@ -1050,6 +1071,7 @@ struct RHIShaderInfo
 
 	ShaderFrequency frequency;
 	std::vector<uint8_t> code;
+	std::string debugName;    
 };
 
 // 着色器绑定表

@@ -19,13 +19,26 @@ layout(set = 1, binding = 5, rgba16f)       uniform image2D OUT;
 layout (local_size_x = THREAD_SIZE_X, 
 		local_size_y = THREAD_SIZE_Y, 
 		local_size_z = THREAD_SIZE_Z) in;
-void main() 
+//vec4 bilinearFetch(texture2D tex, ivec2 pixel)
+//{
+//    ivec2 size = textureSize(tex, 0);
+//    // 全分像素中心归一化后映射到半分texel坐标：t = (p+0.5) * half/full - 0.5（初版写成 full/half，4倍放大致画面崩坏，已修）
+//    vec2 pos = (vec2(pixel) + 0.5) * vec2(size) / vec2(imageSize(OUT)) - 0.5;
+//    ivec2 p0 = ivec2(floor(pos));
+//    vec2 f = clamp(pos - vec2(p0), vec2(0.0f), vec2(1.0f));
+//    ivec2 p1 = min(p0 + ivec2(1, 1), size - ivec2(1, 1));
+//    p0 = clamp(p0, ivec2(0), size - ivec2(1, 1));
+//    return mix(mix(texelFetch(tex, p0, 0),                 texelFetch(tex, ivec2(p1.x, p0.y), 0), f.x),
+//               mix(texelFetch(tex, ivec2(p0.x, p1.y), 0),  texelFetch(tex, p1, 0),                f.x), f.y);
+//}
+
+void main()
 {
     ivec2 pixel     = ivec2(gl_GlobalInvocationID.xy);
-    vec2 uv         = ScreenPixToUV(pixel); 
+    vec2 uv         = ScreenPixToUV(pixel);
 
-    vec4 baseColor = imageLoad(OUT, pixel); 
-    
+    vec4 baseColor = imageLoad(OUT, pixel);
+
     vec4 radiance = vec4(0.0f);
     vec4 specularRadiance = vec4(0.0f);
 
@@ -35,10 +48,10 @@ void main()
         {
             radiance = REBLUR_BackEnd_UnpackRadianceAndNormHitDist(texelFetch(NRD_OUT_DIFFUSE, pixel,0));
             //radiance = RELAX_BackEnd_UnpackRadiance(imageLoad(NRD_OUT_DIFFUSE, pixel));
-        }    
-        
+        }
+
         //specularRadiance = REBLUR_BackEnd_UnpackRadianceAndNormHitDist(imageLoad(NRD_OUT_SPECULAR, pixel));
-        specularRadiance = RELAX_BackEnd_UnpackRadiance(texelFetch(NRD_OUT_SPECULAR, pixel,0));
+          specularRadiance = RELAX_BackEnd_UnpackRadiance(texelFetch(NRD_OUT_SPECULAR, pixel,0));
     }
 
     vec4 color = vec4(radiance.xyz + specularRadiance.xyz, 1.0f);

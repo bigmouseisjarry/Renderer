@@ -1,6 +1,7 @@
 #pragma once
 #include "Core/DependencyGraph/DependencyGraph.h"
 #include "Core/Log/Log.h"
+#include <initializer_list>
 #include "Function/Render/RDG/RDGHandle.h"
 #include "Function/Render/RDG/RDGNode.h"
 #include "Function/Render/RHI/RHICommandList.h"
@@ -41,7 +42,7 @@ struct IRenderGraphPhase;
 // 状态设置等信息由一个parameters结构体描述，这个结构体的生命周期也应该与RDG一致（单帧），builder会给一个allocateParameters函数来返回
 
 // 目前的RDG只实现了最基本的功能，相当多特性还未完成，例如：
-// pass排序，pass剔除，资源池GC，细粒度的资源处理（内存对齐，subresource屏障等），……
+// 资源池GC，细粒度的资源处理（内存对齐，subresource屏障等）
 class RDGBuilder
 {
 public:
@@ -104,6 +105,7 @@ public:
     RDGTextureBuilder& Format(RHIFormat format);
     RDGTextureBuilder& MemoryUsage(MemoryUsage memoryUsage);
     RDGTextureBuilder& AllowReadWrite();
+    RDGTextureBuilder& AllowConcurrent(std::initializer_list<QueueType> families);
     RDGTextureBuilder& AllowRenderTarget();
     RDGTextureBuilder& AllowDepthStencil();
     RDGTextureBuilder& MipLevels(uint32_t mipLevels);

@@ -40,7 +40,6 @@ void FXAAPass::Build(RDGBuilder& builder)
         .AllowRenderTarget()
         .Finish();  
 
-    // 第3刀·尾部加强：post链钉graphics队列——它们等的就是Forward输出，同队列零跳（帧尾五跳→零跳）
     RDGComputePassHandle pass = builder.CreateComputePass(GetName())
         .AddFlag(RDGPassFlags::ForceGraphicsQueue)
         .RootSignature(rootSignature)

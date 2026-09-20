@@ -21,6 +21,7 @@ struct RHIBackendInfo
 
     bool enableDebug;
     bool enableRayTracing;
+    bool enablePipelineExecutableDump = false;  //诊断：开VK_KHR_pipeline_executable_properties，管线创建后dump每着色器阶段统计（寄存器占用归因）
 
 };
 
@@ -137,11 +138,6 @@ public:
 
 	virtual void EndCommand() = 0;  // 结束录制
 
-    // 设备级提交原语：将批次（contexts的命令缓冲 + waits/signals + 可选fence）提交到batch.queue，
-    // 一次后端调用（VkSubmitInfo2）。contexts与batch.commandLists一一对应（已回放完毕），
-    // 可为空=空提交（信号量中继/join收口批，合法）。
-    // 经由哪个context实例调用不影响结果——实例仅提供后端执行环境（载体语义），
-    // 目标队列由batch显式携带，不再从context/pool归属隐式推导
     virtual void Submit(const RHIQueueSubmitBatch& batch, const std::vector<RHICommandContextRef>& contexts) = 0;
 
     // UE RHI彻底做了资源状态（如VkImageLayout）等的屏蔽封装

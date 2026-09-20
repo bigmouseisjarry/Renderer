@@ -1,5 +1,7 @@
 .xmake/
 build/
+.docx/
+src/Runtime/Test/
 
 vsxmake2022/
 vsxmake2026/

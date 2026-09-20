@@ -488,46 +488,20 @@ void VulkanRHIBackend::CreateLogicalDevice()
         std::cout << "Queue flags: " << VulkanUtil::QueueFlagsToString(queueFamily.queueFlags) << std::endl;
     }
 
-    // 队列族选择：两遍策略
-    //   phase1 优先专用的族——compute/transfer 尽量避开 graphics 族/全能族，让各类型拿到 族内独立的 VkQueue
-    // 
-    //   phase2 回落——带对应能力位且还有空位的任意族（含 graphics 族/全能族）
-    //   同族多类型各自保留 MAX_QUEUE_CNT 个请求（requestedCounts 累计后 clamp 到族队列数，
-    //   不足时 CreateQueues 按已请求数取模别名——合法，仅串行化，且同族判定会抑制release/acquire）
     std::vector<uint32_t> requestedCounts(queueFamilyProperties.size(), 0);
     std::vector<int32_t> freeCounts(queueFamilyProperties.size());
     for (size_t i = 0; i < queueFamilyProperties.size(); i++)
         freeCounts[i] = static_cast<int32_t>(queueFamilyProperties[i].queueCount);
 
-    // require: 必备能力位；
-    // avoidMask: 专用的判定——族不带这些能力位才算专用的，为0则不限制
-    // avoidGraphicsFamily: 额外避开 graphics 族（须先选定 graphics）
-    auto pickFamily = [&](VkQueueFlags require, VkQueueFlags avoidMask, bool avoidGraphicsFamily) -> int32_t
-    {
-        int32_t best = -1;
-        for (int32_t i = 0; i < static_cast<int32_t>(queueFamilyProperties.size()); i++)
-        {
-            const VkQueueFamilyProperties& family = queueFamilyProperties[i];
-            if (!(family.queueFlags & require)) continue;
-            if (freeCounts[i] <= 0) continue;
-            if (avoidGraphicsFamily && queueIndices[QUEUE_TYPE_GRAPHICS] == i) continue;
-            if (avoidMask && (family.queueFlags & avoidMask)) continue;
-            if (best < 0 || freeCounts[i] > freeCounts[best]) best = i;
-        }
-        if (best >= 0)
-            freeCounts[best] = std::max(0, freeCounts[best] - MAX_QUEUE_CNT);
-        return best;
-    };
-
     // pass1：专用的 优先
-    queueIndices[QUEUE_TYPE_GRAPHICS] = pickFamily(VK_QUEUE_GRAPHICS_BIT, 0, false);
-    queueIndices[QUEUE_TYPE_COMPUTE]  = pickFamily(VK_QUEUE_COMPUTE_BIT, VK_QUEUE_GRAPHICS_BIT, true);
-    queueIndices[QUEUE_TYPE_TRANSFER] = pickFamily(VK_QUEUE_TRANSFER_BIT,
-                                        static_cast<VkQueueFlagBits>(VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT), true);
+    queueIndices[QUEUE_TYPE_GRAPHICS] = VulkanUtil::pickFamily(queueFamilyProperties, freeCounts, VK_QUEUE_GRAPHICS_BIT);
+    queueIndices[QUEUE_TYPE_COMPUTE] = VulkanUtil::pickFamily(queueFamilyProperties, freeCounts, VK_QUEUE_COMPUTE_BIT, VK_QUEUE_GRAPHICS_BIT, queueIndices[QUEUE_TYPE_GRAPHICS]);
+    queueIndices[QUEUE_TYPE_TRANSFER] = VulkanUtil::pickFamily(queueFamilyProperties, freeCounts, VK_QUEUE_TRANSFER_BIT,
+        static_cast<VkQueueFlagBits>(VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT), queueIndices[QUEUE_TYPE_GRAPHICS]);
 
     // pass2：回落
-    if (queueIndices[QUEUE_TYPE_COMPUTE]  < 0) queueIndices[QUEUE_TYPE_COMPUTE]  = pickFamily(VK_QUEUE_COMPUTE_BIT, 0, false);
-    if (queueIndices[QUEUE_TYPE_TRANSFER] < 0) queueIndices[QUEUE_TYPE_TRANSFER] = pickFamily(VK_QUEUE_TRANSFER_BIT, 0, false);
+    if (queueIndices[QUEUE_TYPE_COMPUTE]  < 0) queueIndices[QUEUE_TYPE_COMPUTE]  = VulkanUtil::pickFamily(queueFamilyProperties, freeCounts, VK_QUEUE_COMPUTE_BIT);
+    if (queueIndices[QUEUE_TYPE_TRANSFER] < 0) queueIndices[QUEUE_TYPE_TRANSFER] = VulkanUtil::pickFamily(queueFamilyProperties, freeCounts, VK_QUEUE_TRANSFER_BIT);
 
     if (queueIndices[QUEUE_TYPE_GRAPHICS] < 0) LOG_FATAL("Fail to allocate graphics queue!");
     // 带GRAPHICS位的族必然带COMPUTE/TRANSFER位，走到这里说明没有可用队列，复用graphics族
@@ -545,14 +519,6 @@ void VulkanRHIBackend::CreateLogicalDevice()
         allocatedCounts[i] = std::min(requestedCounts[i], queueFamilyProperties[i].queueCount);
         allocatedQueueCounts[i] = allocatedCounts[i];    // CreateQueues 的取模上限（见下）
     }
-
-    // 好像graphics queue就支持了？不需要单独处理？
-    // // 窗口支持
-    // VkBool32 presentSupport = false;
-    // vkGetPhysicalDeviceSurfaceSupportKHR(physicalDevice, i, surface, &presentSupport);
-    // if (queueFamily.queueCount > 0 && presentSupport && presentFamily < 0 && graphicsFamily != i) { //强行使用不同的queue
-    //     presentFamily = i;
-    // }
 
     // 创建设备请求信息
     VkDeviceCreateInfo createInfo = {};
@@ -582,6 +548,13 @@ void VulkanRHIBackend::CreateLogicalDevice()
     for (auto extention : MESH_SHADER_DEVICE_EXTENTIONS)
         for (auto& supported : supportedExtensions)
             if (supported == extention) { deviceExtentions.push_back(extention); break; }
+
+    // 管线可执行信息扩展
+    if (backendInfo.enablePipelineExecutableDump)
+        for(auto extention:PIPELINE_EXECUTABLE_DEVICE_EXTENTIONS)
+            for (auto& supported : supportedExtensions)
+                if (supported == extention){deviceExtentions.push_back(extention); pipelineExecutableInfo = true; break;}
+
     createInfo.enabledExtensionCount = (uint32_t)deviceExtentions.size(); 
     createInfo.ppEnabledExtensionNames = deviceExtentions.data();
 
@@ -676,10 +649,20 @@ void VulkanRHIBackend::CreateLogicalDevice()
 
     if(backendInfo.enableRayTracing)
     {
-        mulitiViewFeatures.pNext = &deviceAddressfeture;    
+        mulitiViewFeatures.pNext = &deviceAddressfeture;
         deviceAddressfeture.pNext = &accelerationStructureFeatures;
         accelerationStructureFeatures.pNext = &rayTracingPipelineFeatures;
         rayTracingPipelineFeatures.pNext = &rayQueryFeatures;
+    }
+
+    // 管线可执行信息特性
+    VkPhysicalDevicePipelineExecutablePropertiesFeaturesKHR pipelineExecutableFeatures = {};
+    pipelineExecutableFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_EXECUTABLE_PROPERTIES_FEATURES_KHR;
+    if (pipelineExecutableInfo)
+    {
+        if (backendInfo.enableRayTracing) rayQueryFeatures.pNext = &pipelineExecutableFeatures;
+        else                              mulitiViewFeatures.pNext = &pipelineExecutableFeatures;
+        pipelineExecutableFeatures.pipelineExecutableInfo = VK_TRUE;
     }
 
     VkResult result = vkCreateDevice(physicalDevice, &createInfo, nullptr, &logicalDevice);

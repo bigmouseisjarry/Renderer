@@ -58,16 +58,20 @@ Texture::Texture(const std::vector<std::string>& paths, TextureType type)
     LoadFromFile();
 }
 
-Texture::Texture(TextureType type, RHIFormat format, Extent3D extent, uint32_t arrayLayer, uint32_t mipLevels)
+Texture::Texture(TextureType type, RHIFormat format, Extent3D extent, uint32_t arrayLayer, uint32_t mipLevels,
+                 std::initializer_list<QueueType> concurrentFamilies)
 : textureType(type)
 , format(format)
 , extent(extent)
 , arrayLayer(arrayLayer)
 {
-    this->mipLevels = mipLevels == 0 ? 
-                        extent.MipSize() : 
+    for (QueueType t : concurrentFamilies)
+        if (this->concurrentFamilyCount < QUEUE_TYPE_MAX_ENUM)
+            this->concurrentFamilies[this->concurrentFamilyCount++] = static_cast<uint32_t>(t);
+    this->mipLevels = mipLevels == 0 ?
+                        extent.MipSize() :
                         mipLevels;
-    InitRHI();
+    InitRHI(); 
 }
 
 Texture::~Texture()
@@ -98,8 +102,11 @@ void Texture::InitRHI()
         .extent = extent,
         .arrayLayers = arrayLayer,
         .mipLevels = mipLevels,
-        .memoryUsage = MEMORY_USAGE_GPU_ONLY,           
+        .memoryUsage = MEMORY_USAGE_GPU_ONLY,
         .type = resourceType,
+        .sharingMode = concurrentFamilyCount > 0 ? RESOURCE_SHARING_TYPE_CONCURRENT : RESOURCE_SHARING_TYPE_EXCLUSIVE,
+        .concurrentFamilies = concurrentFamilies,
+        .concurrentFamilyCount = concurrentFamilyCount,
         .creationFlag = force2D ? TEXTURE_CREATION_FORCE_2D : TEXTURE_CREATION_NONE};
     texture = EngineContext::RHI()->CreateTexture(textureInfo);
 
