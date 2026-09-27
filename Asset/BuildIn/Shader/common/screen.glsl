@@ -11,6 +11,11 @@ vec2 ScreenPixToUV(vec2 pixel, ivec2 totalPixels)  // 左上角[0, 0]，右下�
     return (pixel + vec2(0.5f)) / vec2(totalPixels);
 }
 
+// p        p
+//     uv
+// p        p 
+
+
 ivec2 UVToNearestScreenPix(vec2 uv, ivec2 totalPixels)  // 取离对应UV最近的整像素坐标
 {
     vec2 pixel = uv * totalPixels - vec2(0.5f);

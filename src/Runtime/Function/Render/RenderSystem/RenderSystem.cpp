@@ -122,7 +122,7 @@ void RenderSystem::InitBaseResource()
         CommandRecordingConfig commandRecordingConfig{};
         commandRecordingConfig.enable_debug_markers = true;
         commandRecordingConfig.enable_debug_output = false;
-        commandRecordingConfig.enable_gpu_timing = true;        // [临时]nsys体检轮：逐pass打点（与renderQuery的info.enable_gpu_timing共同判定，见record_stream_range）
+        commandRecordingConfig.enable_gpu_timing = false;        // [临时]nsys体检轮：逐pass打点（与renderQuery的info.enable_gpu_timing共同判定，见record_stream_range）
         commandRecordingConfig.chunk_count = 3;     // ANY池worker(2) + 主线程(1)——亦是每队列预建命令流数
         commandRecordingConfig.coarse_cross_frame_sync = false;    // 细链（V2）：imported资源首触批wait上帧末触点；true=粗链A/B回退
         rdgCompilers[i] = std::make_shared<RDGCompiler>(crossFrameRegistry, renderQuery, queueCfg, reorderConfig, crossQueueSyncConfig, passBindingConfig, barrierGenerationConfig, commandRecordingConfig);

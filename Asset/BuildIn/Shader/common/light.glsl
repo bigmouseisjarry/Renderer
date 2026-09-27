@@ -12,6 +12,7 @@ ivec3 FetchLightClusterGrid(vec3 ndc)
     float depth         = ndc.z;   
     float linearDepth   = LinearEyeDepth(depth, CAMERA.near, CAMERA.far);
 
+    // 值 = min * pow(max/min，k/all)
     uint clusterZ       = uint(LIGHT_CLUSTER_DEPTH * log(linearDepth / CAMERA.near) / log(CAMERA.far / CAMERA.near));  //对数划分
     //uint clusterZ     = uint( (linearDepth - CAMERA.near) / ((CAMERA.far - CAMERA.near) / LIGHT_CLUSTER_DEPTH));   //均匀划分
     ivec3 clusterGrid   = ivec3(uint(screenPixPos.x / LIGHT_CLUSTER_GRID_SIZE), uint(screenPixPos.y / LIGHT_CLUSTER_GRID_SIZE), clusterZ);
@@ -33,11 +34,42 @@ uvec2 FetchLightClusterIndex(ivec3 clusterGrid)
 }
 
 // 阴影和衰减计算辅助函数/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+vec2 FilterPSCC(vec4 ndcPos, texture2D tex, float sunTan, float ndcZToUV, float minRadius)
+{
+    // blocker 搜索半径 = 接收者深度的太阳角投影
+    float searchRadius = max(ndcPos.z * ndcZToUV * sunTan, minRadius);
+
+    float blockerSum = 0.0;
+    float blockerCount = 0.0;
+	for (int x = -1; x <= 1; x++)
+	{
+		for (int y = -1; y <= 1; y++)
+		{
+			float dist = texture(sampler2D(tex, SAMPLER[5]), (ndcPos.xy + vec2(1.0)) * 0.5 + vec2(x, y) * searchRadius).r;
+            // 搜索的结果有效
+            if (dist + 0.0002 < ndcPos.z){ blockerSum += dist; blockerCount += 1.0; }
+		}
+	}
+
+    // 未被遮挡
+    if (blockerCount < 0.5) return vec2(0.0, 0.0);
+
+    // 平均被挡深度
+    float avgBlocker = blockerSum / blockerCount;
+    float penumbra   = (ndcPos.z - avgBlocker) * ndcZToUV * sunTan;
+    
+    penumbra         = clamp(penumbra, minRadius, maxRadius * 16.0);
+
+    return vec2(penumbra, 1.0);
+}
+
 float TextureProj(vec4 ndcPos, vec2 offset, texture2D tex)
 {
 	float shadow = 1.0;
 	if ( ndcPos.z > -1.0 && ndcPos.z < 1.0 && ndcPos.x > -0.99 && ndcPos.x < 0.99 && ndcPos.y > -0.99 && ndcPos.y < 0.99) 
 	{
+        // float dist = texture(sampler2D(tex, SAMPLER[0]), NDCToScreen(ndcPos.xy) + offset).r;
 		float dist = texture(sampler2D(tex, SAMPLER[0]), (ndcPos.xy + vec2(1.0)) * 0.5 + offset).r;
 		if ( ndcPos.z > 0.0 && dist + 0.0002 < ndcPos.z ) 	//比较的时候还得加个小bias质量更好
 		{
@@ -47,28 +79,44 @@ float TextureProj(vec4 ndcPos, vec2 offset, texture2D tex)
 	return shadow;
 }
 
-// PCF过滤 NDC空间坐标，纹理尺寸，纹理，层级
-float FilterPCF(vec4 ndcPos, ivec2 texSize, texture2D tex)
+float FilterPCF(vec4 ndcPos, texture2D tex, float maxRadius, uint count, ivec2 pixPos, int mode)
 {
-	float scale = 1.0;
-	float dx = scale * 1.0 / float(texSize.x);
-	float dy = scale * 1.0 / float(texSize.y);
 
 	float shadowFactor = 0.0;
-	int count = 0;
-	int range = 1;	//非常影响性能，就滤波9个点吧
-	
-	for (int x = -range; x <= range; x++)
-	{
-		for (int y = -range; y <= range; y++)
-		{
-			shadowFactor += TextureProj(ndcPos, vec2(dx*x, dy*y), tex);
-			count++;
-		}
-	}
-	// return shadowFactor / count;
-	return smoothstep(0, 1, shadowFactor / count);
+    if (mode == 1)  // 3x3核
+    {
+        count = 0;
+        for (int x = -1; x <= 1; x++)
+	    {
+		    for (int y = -1; y <= 1; y++)
+		    {
+			    shadowFactor += TextureProj(ndcPos, vec2(x, y) * maxRadius, tex);
+			    count++;
+		    }
+	    }
+    }
+    else
+    {
+        float sqrtCount = sqrt(float(count));
+        float rot = 0.0f;
+        if (mode == 2)      // IGN算旋转角
+        {
+            rot = IGNRotation(pixPos);
+        }
+        else                // STBN
+        {
+            rot = StbnRotation(pixPos);
+        }
+
+        for (int i = 0; i < count; i++)
+        {
+            vec2 offset = VogeLDisk(i, rot, sqrtCount);
+		    shadowFactor += TextureProj(ndcPos, offset * maxRadius, tex);
+        }
+    }
+	return shadowFactor / count;
 }
+
 
 float EVSM(vec4 moments, float depth, float c1, float c2)
 {
@@ -87,12 +135,19 @@ float EVSM(vec4 moments, float depth, float c1, float c2)
 	return min(p_x, p_y);
 }
 
+// VSM 是 x = depth 
+// 现在的是EVSM的半边
 float VSM(vec2 moments, float depth, float c1)
 {
+    // exp放大了靠近光源的遮挡物的权重
+    // E[exp(c·(z_r − d))] = exp(c·z_r) · E[exp(−c·d)]
 	float x = exp(c1 * depth);
+    // .y 平方均值  .x 均值 
+    // 样本: 滤波范围内遮挡物的深度
 	float variance_x = max(moments.y - pow(moments.x, 2), 0.0001);
 	float d_x = x - moments.x;  
 
+    // P(X ≥ x) ≤ σ²/(σ² + (x−μ)²)
 	float p_x = variance_x / (variance_x + pow(d_x, 2)); 
 
 	return p_x;
@@ -115,8 +170,7 @@ int CascadeLevel(vec4 worldPos)
 	return cascadeIndex;
 }
 
-// 获取平行光源阴影值
-float DirectionalShadow(vec4 worldPos)
+float DirectionalShadow(vec4 worldPos, ivec2 pixPos, int enablePSCC, int PCFMode)
 {
 	int cascadeIndex = CascadeLevel(worldPos);
 
@@ -128,26 +182,44 @@ float DirectionalShadow(vec4 worldPos)
     vec4 ndcPos = dirLight.proj * dirLight.view * worldPos;	
     ndcPos /= ndcPos.w;
 
-#ifdef SHADOW_QUALITY_LOW
+    ivec2 texSize = textureSize(DIRECTIONAL_SHADOW[cascadeIndex], 0).xy;
+    float radius = 0.5 / float(texSize.x);                     // 保底 0.5 texel
 
-    float dirShadow = 1.0f;	
-	float dist = texture(sampler2D(DIRECTIONAL_SHADOW[cascadeIndex], SAMPLER[0]), (ndcPos.xy + vec2(1.0)) * 0.5).r;
-	if ( ndcPos.z > 0.0 && dist + 0.0002 < ndcPos.z ) 	//比较的时候还得加个小bias质量更好
-	{
-		dirShadow = 0.0f;
-	}
-	return dirShadow;
+    if (enablePSCC == 1)
+    {
+        vec2 p = FilterPSCC(ndcPos, DIRECTIONAL_SHADOW[cascadeIndex],dirLight.sunTan, dirLight.ndcZToUV, radius);
+        if (p.y < 0.5) return 1.0f;                               // 全亮早退
+        radius = p.x;
+    }
 
-#else
-
-	ivec2 texSize = textureSize(DIRECTIONAL_SHADOW[cascadeIndex], 0).xy;
-
-    float dirShadow = FilterPCF(ndcPos, texSize, DIRECTIONAL_SHADOW[cascadeIndex]);	//计算平行光源阴影取值，[0,1]
+    float dirShadow = FilterPCF(ndcPos, DIRECTIONAL_SHADOW[cascadeIndex], radius, 16u, pixPos, PCFMode);	//计算平行光源阴影取值，[0,1]
 	dirShadow = smoothstep(0.0f, 1.0f, min(1.0, dirShadow / 0.9));	                            //重映射
 
 	return dirShadow;
+}
 
-#endif
+float DirectionalShadowContrast(vec4 worldPos, texture2D histTex, int cascadeIndex)
+{
+    int currCascadeIndex = CascadeLevel(worldPos);
+    if (currCascadeIndex != cascadeIndex) return 1.0f;   // 不同级联返回纯白
+
+    // 这里实际上还要确定tex所属的light
+    // 不过目前就比较第一个灯光的第一级联，其他直接返回纯白就行
+    DirectionalLight dirLight = LIGHTS.directionalLights[currCascadeIndex];
+    if(!(dirLight.castShadow > 0)) return 1.0f;
+
+    vec4 currNdcPos = dirLight.viewProj * worldPos;	
+    currNdcPos /= currNdcPos.w;
+    float currDist = texture(sampler2D(DIRECTIONAL_SHADOW[cascadeIndex], SAMPLER[0]), (currNdcPos.xy + vec2(1.0)) * 0.5).r;
+
+    vec4 histNdcPos = dirLight.prevViewProj * worldPos;
+    histNdcPos /= histNdcPos.w;
+    float histDist = texture(sampler2D(histTex, SAMPLER[0]), (histNdcPos.xy + vec2(1.0)) * 0.5).r;
+
+    float currShadow = currDist + 0.0002 - currNdcPos.z;
+    float histShadow = histDist + 0.0002 - histNdcPos.z;
+
+    return (currShadow * histShadow > 0.0f) ? 0.0f : 1.0f;
 }
 
 // 获取点光源阴影值

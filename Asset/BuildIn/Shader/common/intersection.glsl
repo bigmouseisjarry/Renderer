@@ -5,6 +5,8 @@ bool LineIntersectPlane(vec3 begin, vec3 end, vec4 plane, out vec3 point)
 {
 	vec3 line = end - begin;
 
+    // dot(n, begin + t·line) = d
+    // d = plane.w = 原点到面的距离
 	float t = (plane.w - dot(plane.xyz, begin)) / dot(plane.xyz, line);
 
 	bool intersect = (t >= 0.0f && t <= 1.0f);	//限定相交范围在起点终点之间
@@ -92,6 +94,7 @@ BoundingBox BoundingBoxTransform(BoundingBox box, mat4 transform, vec3 boundingS
 	{
 		vec4 cornerBefore = vec4(extent * offsets[i] + center, 1.0f);
 		vec4 corner = transform * cornerBefore;
+        // 正确的转到transform代表的对应空间
 		corner /= corner.w;
 
 		newMaxBound = vec3(max(newMaxBound.x, corner.x), max(newMaxBound.y, corner.y), max(newMaxBound.z, corner.z));
@@ -145,8 +148,9 @@ bool FrustumIntersectBox(Frustum frustum, BoundingBox box)
     for (int i = 0; i < 6; i++) 
     {
         vec3 absPlane = abs(frustum.planes[i].xyz);
+        // 盒沿法线方向的支撑半径 = 3轴分别看
         float radiusProjectPlane = dot(absPlane, extent);	//包围盒的投影半径，绝对值
-
+        // 盒中心到平面的带符号距离 = d + dot(n,原点到center)
         float signedDistanceFromPlane = dot(-frustum.planes[i], vec4(center, 1.0f)); 
 
         intersect = intersect && (signedDistanceFromPlane > -radiusProjectPlane);
@@ -173,7 +177,8 @@ bool BoxIntersectSphere(BoundingBox box, BoundingSphere sphere)
 {
     bool intersect = true;
 
-    for(int i = 0; i < 3; i++)  //将box边界各扩展sphere半径长度即为可能的相交区域，对角处可能有一些误判
+    // 遍历的是轴
+    for(int i = 0; i < 3; i++)  //将box边界各扩展sphere半径长度即为可能的相交区域，对角处可能有一些误判，
     {
         intersect = intersect && !(box.minBound[i] > sphere.centerRadius[i]  && box.minBound[i] - sphere.centerRadius[i] > sphere.centerRadius[3]);
         intersect = intersect && !(box.maxBound[i] < sphere.centerRadius[i]  && box.maxBound[i] - sphere.centerRadius[i] < -sphere.centerRadius[3]);

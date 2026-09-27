@@ -7,7 +7,7 @@ layout(set = 1, binding = 0) uniform texture2D CURRENT_COLOR;
 layout(set = 1, binding = 1) uniform texture2D HISTORY_COLOR;
 layout(set = 1, binding = 2) uniform texture2D REPROJECTION_RESULT;
 layout(set = 1, binding = 3, rgba16f) uniform image2D OUT_COLOR;
-layout(set = 1, binding = 4, rgba16f) uniform image2D HISTORY_OUT;   // 下帧history直写（ping-pong另一侧，原Copy History pass已删）
+layout(set = 1, binding = 4, rgba16f) uniform image2D HISTORY_OUT; 
 
 layout(push_constant) uniform TAASetting 
 {
@@ -87,6 +87,7 @@ void main()
 
     if(!valid)  blend = 1.0f;
 
+    // 3x3
     AdjacentTex3 currentAdj     = TextureAdj3(CURRENT_COLOR, pixel);
     vec3 currColor              = currentAdj.color[1][1];
     RGBtoYCoCg(currentAdj);
@@ -110,13 +111,14 @@ void main()
     }
 
     //色调映射
+    //防亮像素主导
     historyColor        = ToneMap(max(historyColor, 0.0f));
     currColor           = ToneMap(max(currColor, 0.0f));
 
     vec3 finalColor     = Lerp(historyColor, currColor, blend);
-    finalColor          = InverseToneMap(finalColor);
     currColor           = InverseToneMap(currColor);
     historyColor        = InverseToneMap(historyColor);
+    finalColor          = InverseToneMap(finalColor);
 
     vec4 outColor = vec4(0.0f);
     if(SETTING.enable > 0)

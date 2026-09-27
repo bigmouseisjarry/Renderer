@@ -249,6 +249,7 @@ void RenderResourceManager::InitGlobalResources()
         .AddEntry({0, PER_FRAME_BINDING_DEPTH, 2, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})
         .AddEntry({0, PER_FRAME_BINDING_DEPTH_PYRAMID, 2, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})
         .AddEntry({0, PER_FRAME_BINDING_VELOCITY, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})    
+        .AddEntry({0, PER_FRAME_BINDING_STBN, 64, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})
         .AddEntry({0, PER_FRAME_BINDING_OBJECT_ID, 2, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})   
         .AddEntry({0, PER_FRAME_BINDING_VERTEX, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})
         .AddEntry({0, PER_FRAME_BINDING_GIZMO, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})  
@@ -304,6 +305,18 @@ void RenderResourceManager::InitGlobalResources()
             MIPMAP_MODE_NEAREST,
             0.0f,
             SAMPLER_REDUCTION_MODE_MAX));
+
+        multiFrameResource.samplers.push_back(std::make_shared<Sampler>(
+            ADDRESS_MODE_REPEAT,
+            FILTER_TYPE_NEAREST,
+            MIPMAP_MODE_NEAREST,
+            0.0f));
+
+        multiFrameResource.samplers.push_back(std::make_shared<Sampler>(
+            ADDRESS_MODE_CLAMP_TO_EDGE,
+            FILTER_TYPE_NEAREST,
+            MIPMAP_MODE_NEAREST,
+            0.0f));
 
         multiFrameResource.lightClusterGridTexture = std::make_shared<Texture>(
             TEXTURE_TYPE_3D,
@@ -379,6 +392,12 @@ void RenderResourceManager::InitGlobalResources()
             FORMAT_R32G32_SFLOAT,
             Extent3D(windowExtent.width, windowExtent.height, 1),
             1, 1, std::initializer_list<QueueType>{ QUEUE_TYPE_GRAPHICS, QUEUE_TYPE_COMPUTE });
+
+        for (uint32_t i = 0; i < 64; i++)
+        {
+            multiFrameResource.stbnTexture[i] = std::make_shared<Texture>(
+                "Asset/BuildIn/Texture/stbn/stbn_scalar_2Dx1Dx1D_128x128x64x1_" + std::to_string(i) + ".png");
+        }
 
         multiFrameResource.objectIDTexture[0] = std::make_shared<Texture>( 
             TEXTURE_TYPE_2D, 
@@ -603,6 +622,15 @@ void RenderResourceManager::InitGlobalResources()
             .index = 0,
             .resourceType = RESOURCE_TYPE_TEXTURE,
             .textureView = multiFrameResource.velocityTexture->textureView});
+
+        for (uint32_t i = 0; i < 64; i++)
+        {
+            resource.descriptorSet->UpdateDescriptor({
+                .binding = PER_FRAME_BINDING_STBN,
+                .index = i,
+                .resourceType = RESOURCE_TYPE_TEXTURE,
+                .textureView = multiFrameResource.stbnTexture[i]->textureView });
+        }
 
         resource.descriptorSet->UpdateDescriptor({
             .binding = PER_FRAME_BINDING_OBJECT_ID,

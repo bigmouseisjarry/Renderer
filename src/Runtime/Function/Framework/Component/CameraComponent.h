@@ -58,7 +58,9 @@ private:
 	Vec3 up = Vec3::Zero();
 	Vec3 right = Vec3::Zero();
 
+	// 平移&旋转
 	Mat4 view;
+	// 透视投影
 	Mat4 proj;
 	Mat4 viewProj;
 	Mat4 prevView;	//前一帧的view

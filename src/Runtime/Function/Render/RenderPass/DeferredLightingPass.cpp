@@ -14,7 +14,8 @@ void DeferredLightingPass::Init()
                      .AddEntry({1, 0, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })
                      .AddEntry({1, 1, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })
                      .AddEntry({1, 2, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })
-                     .AddEntry({1, 3, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE})
+                     .AddEntry({1, 3, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })
+                     .AddEntry({1, 4, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE})
                      .AddPushConstant({128, SHADER_FREQUENCY_COMPUTE});
     rootSignature = backend->CreateRootSignature(rootSignatureInfo);
 
@@ -22,6 +23,14 @@ void DeferredLightingPass::Init()
     pipelineInfo.rootSignature              = rootSignature;
     pipelineInfo.computeShader              = computeShader.shader; 
     computePipeline   = backend->CreateComputePipeline(pipelineInfo);
+
+    Extent2D extent = EngineContext::Render()->GetWindowsExtent();
+
+    directionalDepthHistoryTex = std::make_shared<Texture>(
+        TEXTURE_TYPE_2D,
+        FORMAT_D32_SFLOAT,
+        Extent3D(DIRECTIONAL_SHADOW_SIZE, DIRECTIONAL_SHADOW_SIZE, 1),
+        1, 1);
 }   
 
 void DeferredLightingPass::Build(RDGBuilder& builder) 
@@ -31,6 +40,10 @@ void DeferredLightingPass::Build(RDGBuilder& builder)
     RDGTextureHandle diffuse        = builder.GetTexture("G-Buffer Diffuse/Metallic");
     RDGTextureHandle normal         = builder.GetTexture("G-Buffer Normal/Roughness");
     RDGTextureHandle emission       = builder.GetTexture("G-Buffer Emission");
+
+    RDGTextureHandle directionalDepthHistory = builder.CreateTexture("Directional Depth History")
+        .Import(directionalDepthHistoryTex->texture, RESOURCE_STATE_UNDEFINED)
+        .Finish();
 
     RDGTextureHandle outColor = builder.GetOrCreateTexture("Mesh Pass Out Color") 
         .Exetent({windowExtent.width, windowExtent.height, 1})
@@ -52,7 +65,8 @@ void DeferredLightingPass::Build(RDGBuilder& builder)
             .Read(1, 0, 0, diffuse)
             .Read(1, 1, 0, normal)
             .Read(1, 2, 0, emission)
-            .ReadWrite(1, 3, 0, outColor)
+            .Read(1, 3, 0, directionalDepthHistory)
+            .ReadWrite(1, 4, 0, outColor)
             .Dependency(builder.GetTexture("Directional Depth [0]"), RESOURCE_STATE_SHADER_RESOURCE)
             .Dependency(builder.GetTexture("Directional Depth [1]"), RESOURCE_STATE_SHADER_RESOURCE)
             .Dependency(builder.GetTexture("Directional Depth [2]"), RESOURCE_STATE_SHADER_RESOURCE)
@@ -61,21 +75,27 @@ void DeferredLightingPass::Build(RDGBuilder& builder)
             .Dependency(builder.GetTexture("Point Shadow Filtered Color [1]"), RESOURCE_STATE_SHADER_RESOURCE)
             .Dependency(builder.GetTexture("Light Cluster Grid"), RESOURCE_STATE_SHADER_RESOURCE)
             .Dependency(builder.GetBuffer("Light Cluster Index"), RESOURCE_STATE_SHADER_RESOURCE)
-            .Execute([&](RDGPassContext context) {       
+            .Execute([&](RDGPassContext context) {
 
                 DeferredLightingSetting newSetting = setting;
-                if(EngineContext::Render()->IsPassEnabled(RESTIR_GI_PASS))
+                if (EngineContext::Render()->IsPassEnabled(RESTIR_GI_PASS))
                     newSetting.directOnly = 1;
 
-                RHICommandListRef command = context.command; 
+                RHICommandListRef command = context.command;
                 command->SetComputePipeline(computePipeline);
                 command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);
                 command->BindDescriptorSet(context.descriptors[1], 1);
                 command->PushConstants(&newSetting, sizeof(DeferredLightingSetting), SHADER_FREQUENCY_COMPUTE);
-                command->Dispatch(  Math::CeilDivide(EngineContext::Render()->GetWindowsExtent().width, 16), 
-                                    Math::CeilDivide(EngineContext::Render()->GetWindowsExtent().height, 16), 
-                                    1);
+                command->Dispatch(Math::CeilDivide(EngineContext::Render()->GetWindowsExtent().width, 16),
+                    Math::CeilDivide(EngineContext::Render()->GetWindowsExtent().height, 16),
+                    1);
             })
             .Finish();
     }
+
+    RDGCopyPassHandle copyPass = builder.CreateCopyPass(GetName() + "Copy Directional Depth [0]")
+        .From(builder.GetTexture("Directional Depth [0]"))
+        .To(directionalDepthHistory)
+        .Finish();
+
 }

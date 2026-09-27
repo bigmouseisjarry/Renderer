@@ -62,9 +62,9 @@ bool HistoryIsValid(ivec2 pixel, ivec2 textureSize,
                     uint objectID, uint prevObjectID)
 {
     if (CheckOutOfFrame(pixel, textureSize))                return false;   // 坐标超出屏幕范围 
-    if (CheckObjectId(objectID, prevObjectID))              return false;   // 法线差异过大
+    if (CheckObjectId(objectID, prevObjectID))              return false;   // 不是同一个物体
     if (CheckPlaneDistance(currentPos, prevPos, normal))    return false;   // 前帧位置距离当前位置所在平面距离过大
-    if (CheckNormal(normal, prevNormal))                    return false;   // 不是同一个物体
+    if (CheckNormal(normal, prevNormal))                    return false;   // 法线差异过大
 
     return true;
 }
@@ -88,7 +88,7 @@ bool Reproject(in ivec2 pixel,
     ivec2 textureSize   = ivec2(textureSize(prevObjectIdTex, 0));
     
     vec2 uv             = ScreenPixToUV(pixel); 
-    ivec2 nearestPixel  = UVToNearestScreenPix(uv, textureSize);
+    // ivec2 nearestPixel  = UVToNearestScreenPix(uv, textureSize);
 
     vec3 worldPos       = DepthToWorld(uv).xyz;
 
@@ -134,7 +134,9 @@ bool Reproject(in ivec2 pixel,
 				vec2 neighborUV     = ScreenPixToUV(neighborPixel);
 
 				historyColor   	+= historyPixelWeights[i] * texelFetch(prevColorTex, neighborPixel, 0).xyz;
+                // 所有离散样本的一阶距和二阶距
 				historyMoments 	+= historyPixelWeights[i] * texelFetch(prevMomentsTex, neighborPixel, 0).xy;
+                // 这个像素有效累积了多少帧样本
 				historyLength  	+= historyPixelWeights[i] * texelFetch(prevMomentsTex, neighborPixel, 0).z;
 				sumWeights 		+= historyPixelWeights[i];
 			}
@@ -163,7 +165,7 @@ void Reproject(in ivec2 pixel,
     bool valid          = false;
 
     vec2 uv             = ScreenPixToUV(pixel); 
-    ivec2 nearestPixel  = UVToNearestScreenPix(uv, textureSize);
+    // ivec2 nearestPixel  = UVToNearestScreenPix(uv, textureSize);
 
     vec3 worldPos       = DepthToWorld(uv).xyz;
 

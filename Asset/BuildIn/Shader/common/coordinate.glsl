@@ -10,6 +10,14 @@
 //NDC space;        左上[-1, -1]，右下[1, 1]（透视除法后）
 //screen space:     左上[0, 0]，右下[1, 1]
 
+// clip = p * v * w
+
+// invView * invProj * ndc = w
+
+// NDC中的一点(nx, ny, nz)
+// 逆投影到view空间得到的点是 z_v * ( A * T * nx, - T * ny, 1 )
+// z_v = N·F / (F − nz·(F−N))
+
 vec2 NDCToScreen(in vec2 ndc)
 {
     return ndc.xy * 0.5 + 0.5;
@@ -75,6 +83,7 @@ vec2 WorldToScreen(in vec4 world)
 {
     return NDCToScreen(WorldToNDC(world).xy);
 }
+
 
 vec4 NDCToWorld(in vec4 ndc)
 {	

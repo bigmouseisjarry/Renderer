@@ -20,6 +20,7 @@ public:
 private:
 	struct PostProcessingSetting
 	{
+		int enable = 1;
 		float exposure = 0.4f;
 		float luminance = 0.1f;
 		float saturation = 1.0f;

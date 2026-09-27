@@ -148,11 +148,11 @@ void EngineContext::UpdateTimers()
         std::vector<std::pair<std::string, std::array<double, 3>>> sorted(cpuTimingAgg.begin(), cpuTimingAgg.end());
         std::sort(sorted.begin(), sorted.end(),
             [](const auto& a, const auto& b) { return a.second[0] > b.second[0]; });
-        ENGINE_LOG_INFO("[CpuTiming] ===== dump: frames={} frameAvg={:.2f}ms loopAvg={:.2f}ms names={} =====",
-            dumpFrames, frameMsSum / dumpFrames, loopMsSum / dumpFrames, sorted.size());
+        //ENGINE_LOG_INFO("[CpuTiming] ===== dump: frames={} frameAvg={:.2f}ms loopAvg={:.2f}ms names={} =====",
+        //    dumpFrames, frameMsSum / dumpFrames, loopMsSum / dumpFrames, sorted.size());
         for (const auto& [name, agg] : sorted)
-            ENGINE_LOG_INFO("[CpuTiming] '{}' avg={:.3f}ms max={:.2f}ms hits={:.1f}/frame",
-                name.c_str(), agg[0] / dumpFrames, agg[1], agg[2] / dumpFrames);
+            //ENGINE_LOG_INFO("[CpuTiming] '{}' avg={:.3f}ms max={:.2f}ms hits={:.1f}/frame",
+            //    name.c_str(), agg[0] / dumpFrames, agg[1], agg[2] / dumpFrames);
 
         cpuTimingAgg.clear();
         dumpFrames = 0;

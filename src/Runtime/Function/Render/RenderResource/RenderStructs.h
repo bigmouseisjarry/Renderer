@@ -153,6 +153,7 @@ struct DirectionalLightInfo
     Mat4 view;
     Mat4 proj;
     Mat4 viewProj;
+    Mat4 prevViewProj;          
     Vec3 pos;
     float _padding0;
     Vec3 dir;
@@ -162,8 +163,9 @@ struct DirectionalLightInfo
     float intencity;            //前三维为颜色，最后一维强度
     
     float fogScattering;        //体积雾散射系数
+    float sunTan;               //太阳斜率
+    float ndcZToUV;             // extent.z/extent.x,.x 等于 .y
     uint32_t castShadow;        //是否投射阴影，非零值有效
-    float _padding1[2];
 
     Frustum frustum;            //视锥，用于计算剔除      
     BoundingSphere sphere;

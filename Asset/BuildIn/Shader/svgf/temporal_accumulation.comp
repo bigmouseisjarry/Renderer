@@ -25,6 +25,12 @@ void main()
     vec2 velocity   = FetchVelocityTex(pixel);
     vec3 normal     = texelFetch(G_BUFFER_NORMAL_ROUGHNESS, pixel, 0).xyz;
 
+	// G_BUFFER_DIFFUSE_METALLIC 材质的漫反射 albedo
+	// IN_COLOR 光照 pass 输出的含噪着色结果
+
+	// 噪声尺度和材质解耦：避免噪声收敛系数被albedo影响
+	// 不伤纹理细节
+	// 邻域盒子更紧密
 	vec3 diffuse 		= max(texelFetch(G_BUFFER_DIFFUSE_METALLIC, pixel, 0).xyz, 1e-3);
 	vec3 color 			= imageLoad(IN_COLOR, pixel).xyz / diffuse;	// demodulate albedo
 

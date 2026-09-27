@@ -25,6 +25,9 @@ void PostProcessingPass::Init()
 
 void PostProcessingPass::Build(RDGBuilder& builder) 
 {
+
+    setting.enable = IsEnabled() ? 1.0f : 0.0;
+
     Extent2D windowExtent = EngineContext::Render()->GetWindowsExtent();
 
     RDGTextureHandle taaOutColor = builder.GetTexture("TAA Out Color");

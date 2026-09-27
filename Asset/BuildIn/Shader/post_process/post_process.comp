@@ -6,7 +6,7 @@ layout(set = 0, binding = 0)   uniform texture2D IN_COLOR;			// SRV
 layout(set = 0, binding = 1, rgba8)     uniform image2D OUT_COLOR;  // UAV
 
 struct ExposureSetting
-{             
+{   
     float minLog2Luminance;             //最小亮度，对数
     float inverseLuminanceRange;        //亮度范围，对数倒数
     float luminanceRange;               //亮度范围，对数
@@ -27,6 +27,7 @@ layout(set = 0, binding = 2) buffer EXPOSURE_DATA
 // layout(set = 1, binding = 2) uniform sampler2D colorLUT;
 
 layout(push_constant) uniform PostProcessingSetting {
+	int   enable;		
     float exposure;
 	float luminance;
 	float saturation;
@@ -100,38 +101,46 @@ layout (local_size_x = THREAD_SIZE_X,
 void main() 
 {
     ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
-	vec3 color = texelFetch(IN_COLOR, pixel, 0).xyz;
+	vec3 currColor = texelFetch(IN_COLOR, pixel, 0).xyz;
 
 	float finalExposure = SETTING.exposure / adaptedLuminance;	//使得整个画面的输出光照接近setting.exposure，例如0.5
 	if(SETTING.fixLuminance != 0)
 		finalExposure = SETTING.exposure / SETTING.luminance;
+	
+	vec3 finalColor;
+	if(SETTING.enable > 0 )
+	{
+		if(SETTING.mode == 0) finalColor = CEToneMapping(currColor, finalExposure); 
+		if(SETTING.mode == 1) finalColor = Uncharted2ToneMapping(currColor, finalExposure); 
+		if(SETTING.mode == 2) finalColor = ACESToneMapping(currColor, finalExposure); 
 
-	if(SETTING.mode == 0) color = CEToneMapping(color, finalExposure); 
-	if(SETTING.mode == 1) color = Uncharted2ToneMapping(color, finalExposure); 
-	if(SETTING.mode == 2) color = ACESToneMapping(color, finalExposure); 
+		//LUT是2D纹理，要采样两次手动做插值  
+		//
+		// if(SETTING.lut > 0.0f)
+		// {
+		// 	color 				= clamp(color, vec3(0.08f), vec3(0.92f));	//采样在边缘还有问题 picolo教程说是mipmap的问题？
 
-	//LUT是2D纹理，要采样两次手动做插值  
-	//
-	// if(SETTING.lut > 0.0f)
-	// {
-	// 	color 				= clamp(color, vec3(0.08f), vec3(0.92f));	//采样在边缘还有问题 picolo教程说是mipmap的问题？
+		// 	ivec2 lut_tex_size 	= textureSize(colorLUT, 0);
 
-	// 	ivec2 lut_tex_size 	= textureSize(colorLUT, 0);
+		// 	float b 			= color.b * lut_tex_size.y;	//b通道计算offset
+		// 	float b_floor 		= floor(b);
+		// 	float b_ceil 		= ceil(b);
 
-	// 	float b 			= color.b * lut_tex_size.y;	//b通道计算offset
-	// 	float b_floor 		= floor(b);
-	// 	float b_ceil 		= ceil(b);
+		// 	vec3 color_floor 	= texture(colorLUT, vec2((b_floor + color.r) / lut_tex_size.y, color.g)).xyz;
+		// 	vec3 color_ceil 	= texture(colorLUT, vec2((b_ceil + color.r) / lut_tex_size.y, color.g)).xyz;
+		// 	color_floor 		= pow(color_floor, vec3(1.0/2.2));   
+		// 	color_ceil 			= pow(color_ceil, vec3(1.0/2.2));   
 
-	// 	vec3 color_floor 	= texture(colorLUT, vec2((b_floor + color.r) / lut_tex_size.y, color.g)).xyz;
-	// 	vec3 color_ceil 	= texture(colorLUT, vec2((b_ceil + color.r) / lut_tex_size.y, color.g)).xyz;
-	// 	color_floor 		= pow(color_floor, vec3(1.0/2.2));   
-	// 	color_ceil 			= pow(color_ceil, vec3(1.0/2.2));   
+		// 	color = mix(color_floor, color_ceil, b - b_floor);
+		// }
 
-	// 	color = mix(color_floor, color_ceil, b - b_floor);
-	// }
+		finalColor = SaturationColor(finalColor, SETTING.saturation);
+		finalColor = ContrastColor(finalColor, SETTING.contrast);
+	}
+	else
+	{
+		finalColor = currColor;
+	}
 
-	color = SaturationColor(color, SETTING.saturation);
-	color = ContrastColor(color, SETTING.contrast);
-
-	imageStore(OUT_COLOR, pixel, vec4(color, 1.0f));
+	imageStore(OUT_COLOR, pixel, vec4(finalColor, 1.0f));
 }

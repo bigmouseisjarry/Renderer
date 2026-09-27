@@ -92,6 +92,7 @@ enum PerFrameBindingID
     PER_FRAME_BINDING_DEPTH,
     PER_FRAME_BINDING_DEPTH_PYRAMID,
     PER_FRAME_BINDING_VELOCITY,
+    PER_FRAME_BINDING_STBN,
     PER_FRAME_BINDING_OBJECT_ID,
     PER_FRAME_BINDING_VERTEX,
     PER_FRAME_BINDING_GIZMO,
@@ -257,6 +258,7 @@ private:
         std::array<TextureRef, 2> depthTexture;         // current, history
         std::array<TextureRef, 2> depthPyramidTexture;  // MIN, MAX 
         TextureRef velocityTexture;
+        std::array<TextureRef, 64> stbnTexture;
         std::array<TextureRef, 2> objectIDTexture;      // current, history
         std::array<TextureRef, 2> finalColorHistoryTexture;    // 上帧最终颜色ping-pong：TAA kernel直写（消Copy History pass），SSSR Color Pyramid采上帧颜色
         std::array<TextureRef, 5> surfaceCacheTexture;

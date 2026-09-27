@@ -17,9 +17,6 @@ enum TextureType{
     TEXTURE_TYPE_MAX_ENUM,  //
 };
 
-// 定位有两个
-// 第一: 由文件资产加载而来的纹理，定位是SRV
-// 第二: 
 class Texture : public Asset
 {
 public:

@@ -106,25 +106,26 @@
 #define PER_FRAME_BINDING_DEPTH                         19
 #define PER_FRAME_BINDING_DEPTH_PYRAMID                 20
 #define PER_FRAME_BINDING_VELOCITY                      21
-#define PER_FRAME_BINDING_OBJECT_ID                     22
-#define PER_FRAME_BINDING_VERTEX                        23
-#define PER_FRAME_BINDING_GIZMO                         24
-#define PER_FRAME_BINDING_BINDLESS_POSITION             25
-#define PER_FRAME_BINDING_BINDLESS_NORMAL               26
-#define PER_FRAME_BINDING_BINDLESS_TANGENT              27
-#define PER_FRAME_BINDING_BINDLESS_TEXCOORD             28
-#define PER_FRAME_BINDING_BINDLESS_COLOR                29
-#define PER_FRAME_BINDING_BINDLESS_BONE_INDEX           30
-#define PER_FRAME_BINDING_BINDLESS_BONE_WEIGHT          31
-#define PER_FRAME_BINDING_BINDLESS_ANIMATION            32
-#define PER_FRAME_BINDING_BINDLESS_INDEX                33
-#define PER_FRAME_BINDING_BINDLESS_SAMPLER              34
-#define PER_FRAME_BINDING_BINDLESS_TEXTURE_1D           35
-#define PER_FRAME_BINDING_BINDLESS_TEXTURE_1D_ARRAY     36
-#define PER_FRAME_BINDING_BINDLESS_TEXTURE_2D           37
-#define PER_FRAME_BINDING_BINDLESS_TEXTURE_2D_ARRAY     38
-#define PER_FRAME_BINDING_BINDLESS_TEXTURE_CUBE         39
-#define PER_FRAME_BINDING_BINDLESS_TEXTURE_3D           40
+#define PER_FRAME_BINDING_STBN                          22
+#define PER_FRAME_BINDING_OBJECT_ID                     23
+#define PER_FRAME_BINDING_VERTEX                        24
+#define PER_FRAME_BINDING_GIZMO                         25
+#define PER_FRAME_BINDING_BINDLESS_POSITION             26
+#define PER_FRAME_BINDING_BINDLESS_NORMAL               27
+#define PER_FRAME_BINDING_BINDLESS_TANGENT              28
+#define PER_FRAME_BINDING_BINDLESS_TEXCOORD             29
+#define PER_FRAME_BINDING_BINDLESS_COLOR                30
+#define PER_FRAME_BINDING_BINDLESS_BONE_INDEX           31
+#define PER_FRAME_BINDING_BINDLESS_BONE_WEIGHT          32
+#define PER_FRAME_BINDING_BINDLESS_ANIMATION            33
+#define PER_FRAME_BINDING_BINDLESS_INDEX                34
+#define PER_FRAME_BINDING_BINDLESS_SAMPLER              35
+#define PER_FRAME_BINDING_BINDLESS_TEXTURE_1D           36
+#define PER_FRAME_BINDING_BINDLESS_TEXTURE_1D_ARRAY     37
+#define PER_FRAME_BINDING_BINDLESS_TEXTURE_2D           38
+#define PER_FRAME_BINDING_BINDLESS_TEXTURE_2D_ARRAY     39
+#define PER_FRAME_BINDING_BINDLESS_TEXTURE_CUBE         40
+#define PER_FRAME_BINDING_BINDLESS_TEXTURE_3D           41
 
 #if(ENABLE_RAY_TRACING != 0)
 #extension GL_EXT_ray_tracing : enable
@@ -250,6 +251,7 @@ struct DirectionalLight
     mat4 view;
     mat4 proj;
     mat4 viewProj;
+    mat4 prevViewProj;
     vec3 pos;
     float _padding0;
     vec3 dir;
@@ -258,9 +260,10 @@ struct DirectionalLight
     vec3 color;
     float intencity;            
     
-    float fogScattering;   
+    float fogScattering;
+    float sunTan;
+    float ndcZToUV;
     uint castShadow;        
-    float _padding1[2];   
 
     Frustum frustum;            
     BoundingSphere sphere;
@@ -544,7 +547,9 @@ layout(set = 0, binding = PER_FRAME_BINDING_DEPTH_PYRAMID) uniform texture2D DEP
 
 layout(set = 0, binding = PER_FRAME_BINDING_VELOCITY) uniform texture2D VELOCITY;
 
-layout(set = 0, binding = PER_FRAME_BINDING_OBJECT_ID) uniform utexture2D OBJECT_ID[2];
+layout(set = 0, binding = PER_FRAME_BINDING_STBN) uniform texture2D STBN[64];
+
+layout(set = 0, binding = PER_FRAME_BINDING_OBJECT_ID) uniform utexture2D OBJECT_ID[2];     // 本帧，前一帧，物品ID纹理
 
 layout(set = 0, binding = PER_FRAME_BINDING_VERTEX) readonly buffer vertices { 
 
@@ -1135,6 +1140,8 @@ uint FetchObjectIDTex(in ivec2 pixel) {
 #include "coordinate.glsl"
 #include "screen.glsl"
 #include "brdf.glsl"
+#include "samples.glsl"
+#include "noise.glsl"
 #include "light.glsl"
 #include "reprojection.glsl"
 #include "surface_cache.glsl"

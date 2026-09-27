@@ -171,7 +171,7 @@ void NRDPass::Build(RDGBuilder& builder)
         //     .Finish();
 
         RDGTextureHandle nrdNormal = builder.CreateTexture("NRD Normal/Roughness")
-            .Exetent({ windowExtent.width, windowExtent.height, 1 })     // [第1刀]NRD侧=半分
+            .Exetent({ windowExtent.width, windowExtent.height, 1 })    
             //.Format(FORMAT_R8G8B8A8_UNORM)
             .Format(FORMAT_R8G8B8A8_SNORM)
             //.Format(FORMAT_A2R10G10B10_UNORM)
@@ -225,11 +225,11 @@ void NRDPass::Build(RDGBuilder& builder)
         NRDSetting specSetting = setting;  specSetting.side = 1;   // view_z仅打包specular输入
         NRDSetting diffSetting = setting;  diffSetting.side = 2;   // view_z仅打包diffuse输入
 
+        // TODO这里单开specular会不会有问题
         if(specularEnabled)
         {
             RDGTextureHandle sssrResolve = builder.GetTexture("SSSR Resolve");
 
-            // —— spec链全族q0（ForceGraphics）：Copy SSSR(降采样) → GenViewZ(spec) → NRD-spec实例 ——
             RDGComputePassHandle pass2 = builder.CreateComputePass(GetName() + " Copy SSSR")
                 .AddFlag(RDGPassFlags::ForceGraphicsQueue)
                 .RootSignature(copySssrRootSignature)
@@ -251,7 +251,6 @@ void NRDPass::Build(RDGBuilder& builder)
 
         if(diffuseEnabled)
         {
-            // —— diffuse侧留q1（ReSTIR之后）：GenViewZ(diff,降采样打包) → NRD-diff实例 ——
             RDGComputePassHandle pass = builder.CreateComputePass(GetName() + " Generate View Z")
                 .RootSignature(viewZRootSignature)
                 .Read(1, 0, 0, depth, VIEW_TYPE_2D, {TEXTURE_ASPECT_DEPTH, 0, 1, 0, 1})
@@ -260,7 +259,7 @@ void NRDPass::Build(RDGBuilder& builder)
                 .ReadWrite(1, 3, 0, restirDiffuseColor)
                 .ReadWrite(1, 5, 0, nrdViewZ)
                 .ReadWrite(1, 6, 0, nrdNormal)
-                .Execute([this, diffSetting, windowExtent](RDGPassContext context) mutable {   // [修bug]按值捕获，见Copy SSSR处注释
+                .Execute([this, diffSetting, windowExtent](RDGPassContext context) mutable {  
 
                     RHICommandListRef command = context.command;
                     command->SetComputePipeline(computePipeline[0]);

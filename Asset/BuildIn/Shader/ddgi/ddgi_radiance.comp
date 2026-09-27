@@ -55,7 +55,7 @@ void main()
         // 直接光照计算，仅漫反射 //////////////////////////////////
 
         vec3 directLightColor = 
-            DirectionalDiffuseLighting(diffuse.xyz, roughness, metallic, worldPos, N, V) * DirectionalShadow(worldPos) + 
+            DirectionalDiffuseLighting(diffuse.xyz, roughness, metallic, worldPos, N, V) * DirectionalShadow(worldPos, pixel, 1, 3) + 
             PointDiffuseLighting(diffuse.xyz, roughness, metallic, worldPos, N, V);
 
         // 间接光照计算 //////////////////////////////////

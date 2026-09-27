@@ -21,8 +21,12 @@ private:
 	struct DeferredLightingSetting{
 		uint32_t mode = 0;
 		uint32_t directOnly = 1;	// 在使用ReSTIR GI时，DDGI仅用于surface cache的光照，不用于G-Buffer光照
+		uint32_t enbalePSCC = 1;
+		uint32_t PCFMode = 3;
 	};
 	DeferredLightingSetting setting = {};
+
+	TextureRef directionalDepthHistoryTex;
 
     Shader computeShader;
 

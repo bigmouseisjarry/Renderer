@@ -47,11 +47,13 @@ private:
 	float cascadeSplitLambda = 0.95f;	//在对数划分和均匀划分间的加权权值
 	std::array<int32_t, DIRECTIONAL_SHADOW_CASCADE_LEVEL> updateFrequences = { 0 };	//设置每级cascade更新频率
 	std::array<int32_t, DIRECTIONAL_SHADOW_CASCADE_LEVEL> updateCnts = { 0 };
+	std::array<float, DIRECTIONAL_SHADOW_CASCADE_LEVEL> currentRadius = { 0 };
 
 	// bias，分为固定偏移和斜率偏移两个
 	float constantBias = 1.0f;          
 	float slopeBias = 5.0f;
 	float fogScattering = 0.005f;
+	float sunTan = 0.0047f;
 
 	std::array<DirectionalLightInfo, DIRECTIONAL_SHADOW_CASCADE_LEVEL> lightInfos;          //向GPU提交的光源信息
 

@@ -116,7 +116,6 @@ void DirectionalLightComponent::UpdateCascades()
 
 		// 将相机视线台体的八个顶点转到世界空间
 		Mat4 invCam = camera->GetInvViewProjectionMatrix();
-		// Mat4 fuck = invCam.inverse();
 		for (uint32_t j = 0; j < 8; j++) 
 		{
 			Vec4 invCorner = invCam * Vec4(frustumCorners[j].x(), frustumCorners[j].y(), frustumCorners[j].z(), 1.0f);
@@ -134,7 +133,6 @@ void DirectionalLightComponent::UpdateCascades()
 			frustumCorners[j] = frustumCorners[j] + (dist * lastSplitDist);
 		}
 
-		// Get frustum center
 		// 寻找划分台体的中心，创建一个包围台体的包围球，那么包围这个包围球的正方体（正交投影时）就是cascade的视线范围
 		Vec3 frustumCenter = Vec3::Zero();
 		for (uint32_t j = 0; j < 8; j++) 
@@ -149,14 +147,29 @@ void DirectionalLightComponent::UpdateCascades()
 			float distance = (frustumCorners[j] - frustumCenter).norm();
 			radius = std::max(radius, distance); 
 		}
-		radius = std::ceil(radius * 16.0f) / 16.0f;
+
+		// 满一个整台阶余量才迁移
+		float step = radius / 128.0f;
+		if (std::abs(radius - currentRadius[i]) > step)             
+			currentRadius[i] = std::round(radius / step) * step;    
+
 		float offset = 30.0f;	// 把视锥往天上再退一点，背后的场景不在视锥里也有阴影
 
-		Vec3 maxExtents = Vec3::Constant(radius);
+		Vec3 maxExtents = Vec3::Constant(currentRadius[i]);
 		Vec3 minExtents = -maxExtents;
 
 		Vec3 lightDir = front.normalized();
-		Mat4 lightViewMatrix = Math::LookAt(frustumCenter - lightDir * (radius + offset), frustumCenter, Vec3(0.0f, 1.0f, 0.0f));
+		Vec3 lightRight = (Vec3(0, 1, 0).cross(lightDir)).normalized();   // 光view空间x轴
+		Vec3 lightUp = (lightDir.cross(lightRight)).normalized();          // 光view空间y轴
+
+		Vec3 centerLS(frustumCenter.dot(lightRight), frustumCenter.dot(lightUp), frustumCenter.dot(lightDir));
+		float texel = (2.0f * currentRadius[i]) / DIRECTIONAL_SHADOW_SIZE;    
+
+		centerLS.x() = std::round(centerLS.x() / texel) * texel;
+		centerLS.y() = std::round(centerLS.y() / texel) * texel;
+		frustumCenter = lightRight * centerLS.x() + lightUp * centerLS.y() + lightDir * centerLS.z();
+
+		Mat4 lightViewMatrix = Math::LookAt(frustumCenter - lightDir * (currentRadius[i] + offset), frustumCenter, Vec3(0.0f, 1.0f, 0.0f));
 		Mat4 lightOrthoMatrix = Math::Ortho(minExtents.x(), maxExtents.x(), minExtents.y(), maxExtents.y(), 0.0f, maxExtents.z() - minExtents.z() + offset);
 		lightOrthoMatrix(1, 1) *= -1;		// Vulkan的NDC是y向下
 
@@ -166,17 +179,20 @@ void DirectionalLightComponent::UpdateCascades()
 			lightInfos[i].depth = (camera->GetNear() + splitDist * clipRange);
 			lightInfos[i].view = lightViewMatrix;
 			lightInfos[i].proj = lightOrthoMatrix;
+			lightInfos[i].prevViewProj = lightInfos[i].viewProj;
 			lightInfos[i].viewProj = lightOrthoMatrix * lightViewMatrix;
 			lightInfos[i].pos = TryGetComponent<TransformComponent>()->GetPosition();
 			lightInfos[i].color = color;
             lightInfos[i].intencity = intencity;
             lightInfos[i].fogScattering = fogScattering;
+			lightInfos[i].sunTan = sunTan;
+			lightInfos[i].ndcZToUV = (maxExtents.z() - minExtents.z() + offset) / (maxExtents.x() - minExtents.x());
 			lightInfos[i].castShadow = castShadow;
 			lightInfos[i].dir = lightDir;
 
 			//更新裁切视锥
 			lightInfos[i].frustum = CreateFrustumFromMatrix(lightOrthoMatrix * lightViewMatrix, -1.0, 1.0, -1.0, 1.0, 0.0, 1.0);
-			lightInfos[i].sphere = BoundingSphere(frustumCenter, radius);
+			lightInfos[i].sphere = BoundingSphere(frustumCenter, currentRadius[i]);
 
 			EngineContext::RenderResource()->SetDirectionalLightInfo(lightInfos[i], i);
 		}

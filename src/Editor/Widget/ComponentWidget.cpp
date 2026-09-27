@@ -83,6 +83,7 @@ void ComponentWidget::DirectionalLightComponentUI(std::shared_ptr<DirectionalLig
 	ImGui::DragFloat("Constant bias", &component->constantBias, 0.05f);
 	ImGui::DragFloat("Slope bias", &component->slopeBias, 0.05f);
 	ImGui::ColorEdit3("Color", &component->color[0]);
+	ImGui::DragFloat("Sun Tan", &component->sunTan, 0.005f, 0.001f, 0.0547f);
 	ImGui::DragFloat("Intencity", &component->intencity, 0.05f, 0);
 	ImGui::DragFloat("Fog scattering", &component->fogScattering, 0.001f, 0.0f, 1.0f);
 }

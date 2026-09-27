@@ -58,6 +58,13 @@ void PassWidget::UI(std::shared_ptr<RenderPass> pass)
     ImGui::PopID();
 }
 
+void DragUint(const char* label, uint32_t* v, float v_speed = 1.0f, int v_min = 0, int v_max = 0, const char* format = "%d", ImGuiSliderFlags flags = 0)
+{
+    int data = (int)*v;
+    ImGui::DragInt(label, &data, v_speed, v_min, v_max, format, flags);
+    *v = (uint32_t)data;
+}
+
 std::string MeshPassName(MeshPassType type)
 {
     switch (type) {
@@ -225,8 +232,25 @@ void PassWidget::ClipmapPassUI(std::shared_ptr<ClipmapPass> pass)
 void PassWidget::DeferredLightingPassUI(std::shared_ptr<DeferredLightingPass> pass)
 {
     bool directOnly = pass->setting.directOnly > 0 ? true : false;
+    bool enablePSCC = pass->setting.enbalePSCC > 0 ? true : false;
     ImGui::Checkbox("Direct lighting only", &directOnly);
+    ImGui::Checkbox("enable PSCC", &enablePSCC);
     pass->setting.directOnly = directOnly ? 1 : 0;
+    pass->setting.enbalePSCC = enablePSCC ? 1 : 0;
+
+    //ImGui::DragInt("maxRadius", &pass->setting.maxRadius, 1.0, 2, 32);
+
+    if (ImGui::CollapsingHeader("PCF", ImGuiTreeNodeFlags_None))
+    {
+        if (ImGui::RadioButton("3x3 PCF", pass->setting.PCFMode == 0))
+            pass->setting.PCFMode = 0;
+        ImGui::SameLine();
+        if (ImGui::RadioButton("IGN", pass->setting.PCFMode == 1))
+            pass->setting.PCFMode = 1;
+        ImGui::SameLine();
+        if (ImGui::RadioButton("STBN", pass->setting.PCFMode == 2))
+            pass->setting.PCFMode = 2;
+    }
 
 	if (ImGui::RadioButton("Color", pass->setting.mode == 0))
 		pass->setting.mode = 0;
@@ -244,31 +268,34 @@ void PassWidget::DeferredLightingPassUI(std::shared_ptr<DeferredLightingPass> pa
 	if (ImGui::RadioButton("Shadow", pass->setting.mode == 4))
 		pass->setting.mode = 4;
 	ImGui::SameLine();
-	if (ImGui::RadioButton("Linear depth", pass->setting.mode == 5))
-		pass->setting.mode = 5;
-	ImGui::SameLine();
-	if (ImGui::RadioButton("Shadow cascade", pass->setting.mode == 6))
-		pass->setting.mode = 6;
-
-    //////////////////////////////////
-	if (ImGui::RadioButton("Cluster light count", pass->setting.mode == 7))
-		pass->setting.mode = 7;
+    if (ImGui::RadioButton("Shadow Contrast", pass->setting.mode == 5))
+        pass->setting.mode = 5;
     ImGui::SameLine();
-	if (ImGui::RadioButton("Cluster XY", pass->setting.mode == 8))
-		pass->setting.mode = 8;
+	if (ImGui::RadioButton("Linear depth", pass->setting.mode == 6))
+		pass->setting.mode = 6;
 	ImGui::SameLine();
-	if (ImGui::RadioButton("Cluster Z", pass->setting.mode == 9))
-		pass->setting.mode = 9;
+	if (ImGui::RadioButton("Shadow cascade", pass->setting.mode == 7))
+		pass->setting.mode = 7;
 
     //////////////////////////////////
-	if (ImGui::RadioButton("Indirect light", pass->setting.mode == 10))
-		pass->setting.mode = 10;
+	if (ImGui::RadioButton("Cluster light count", pass->setting.mode == 8))
+		pass->setting.mode = 8;
+    ImGui::SameLine();
+	if (ImGui::RadioButton("Cluster XY", pass->setting.mode == 9))
+		pass->setting.mode = 9;
 	ImGui::SameLine();
-	if (ImGui::RadioButton("Indirect irradiance", pass->setting.mode == 11))
+	if (ImGui::RadioButton("Cluster Z", pass->setting.mode == 10))
+		pass->setting.mode = 10;
+
+    //////////////////////////////////
+	if (ImGui::RadioButton("Indirect light", pass->setting.mode == 11))
 		pass->setting.mode = 11;
 	ImGui::SameLine();
-	if (ImGui::RadioButton("Direct light", pass->setting.mode == 12))
+	if (ImGui::RadioButton("Indirect irradiance", pass->setting.mode == 12))
 		pass->setting.mode = 12;
+    ImGui::SameLine();
+	if (ImGui::RadioButton("Direct light", pass->setting.mode == 13))
+		pass->setting.mode = 13;
 }
 
 void PassWidget::SSSRPassUI(std::shared_ptr<SSSRPass> pass)
@@ -424,13 +451,6 @@ void PassWidget::SVGFPassUI(std::shared_ptr<SVGFPass> pass)
     pass->setting.disocclusionFix = disocclusionFix ? 1 : 0;
     pass->setting.antiFirefly = antiFirefly ? 1 : 0;
     pass->setting.historyClamp = historyClamp ? 1 : 0;
-}
-
-void DragUint(const char* label, uint32_t* v, float v_speed = 1.0f, int v_min = 0, int v_max = 0, const char* format = "%d", ImGuiSliderFlags flags = 0)
-{
-    int data = (int)*v;
-    ImGui::DragInt(label, &data, v_speed, v_min, v_max, format, flags);
-    *v = (uint32_t)data;
 }
 
 void PassWidget::NRDPassUI(std::shared_ptr<NRDPass> pass)

@@ -18,6 +18,7 @@ float Linear01Depth(float depth, float near, float far)
 	return 1 / (((near - far) / (near)) * depth + far / near);
 }
 
+// clip.z = [f/(f−n)]·z − [nf/(f−n)]
 // 带距离的深度
 float LinearEyeDepth(float depth, float near, float far)            //view space深度的倒数和clip space深度有线性关系！！
 {                                                                   
@@ -45,6 +46,9 @@ vec4 BarycentricsInterpolation(in vec4 v0, in vec4 v1, in vec4 v2, vec3 barycent
 // https://software.intel.com/en-us/node/503873
 vec3 RGBtoYCoCg(vec3 c)
 {
+    // 把“亮度”和“颜色”拆开的色彩空间
+    // HDR 亮度不再污染色度
+    // 人眼对色度宽容
     // Y = R/4 + G/2 + B/4
     // Co = R/2 - B/2
     // Cg = -R/4 + G/2 - B/4
@@ -213,6 +217,7 @@ vec3 ClampedColor(vec3 color, AdjacentTex3 clampAdj)
 
     //return  color;
     //return  clamp(color, cmin, cmax);
+    // 从均值中心 p(cavg) 向历史颜色 q(color) 发一条射线，撞到盒面就截断
     return ClipAABB(cmin, cmax, clamp(cavg, cmin, cmax), color);      
 }
 
@@ -360,7 +365,6 @@ vec3 OctDecode(vec2 o)
 // 	return uv * 0.5f + 0.5f;
 // }
 // */
-
 
 
 

@@ -9,6 +9,9 @@
 layout (local_size_x = THREAD_SIZE_X, 
 		local_size_y = THREAD_SIZE_Y, 
 		local_size_z = THREAD_SIZE_Z) in;
+
+// gl_GlobalInvocationID = gl_WorkGroupID × local_size + gl_LocalInvocationID
+
 void main() 
 {
 	uvec3 gID = gl_GlobalInvocationID.xyz;
@@ -34,6 +37,7 @@ void main()
 	vec2 screenMin = (gID.xy * LIGHT_CLUSTER_GRID_SIZE) / vec2(WINDOW_WIDTH, WINDOW_HEIGHT);
 	vec2 screenMax = ((gID.xy + uvec2(1)) * LIGHT_CLUSTER_GRID_SIZE) / vec2(WINDOW_WIDTH, WINDOW_HEIGHT);
 
+	// 在view空间里xy就已经可以确定一条直线了
 	vec4 viewMin = ScreenToView(screenMin, 1.0f);
 	vec4 viewMax = ScreenToView(screenMax, 1.0f);
 
@@ -64,6 +68,7 @@ void main()
 
 		BoundingSphere view_sphere = SphereTransform(pointLight.sphere, CAMERA.view);
 
+		// 要看 BoxIntersectSphere
 		if(BoxIntersectSphere(box, view_sphere) && offset < MAX_LIGHTS_PER_CLUSTER) 
 		{
 			lightIDs[offset++] = lightID;
