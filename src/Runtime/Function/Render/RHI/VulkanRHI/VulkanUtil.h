@@ -651,9 +651,16 @@ public:
             case RESOURCE_TYPE_TEXTURE_CUBE:            imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;         break;
             case RESOURCE_TYPE_RW_TEXTURE:              imageLayout = VK_IMAGE_LAYOUT_GENERAL;                          break;
             case RESOURCE_TYPE_COMBINED_IMAGE_SAMPLER:  imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;         break;
-            default:                                    LOG_FATAL("Unsupported resource type!");  
+            default:                                    LOG_FATAL("Unsupported resource type!");
         }
         return imageLayout;
+    }
+
+    static VkImageLayout DescriptorToImageLayout(RHIResourceState state, ResourceType resourceType)
+    {
+        return state != RESOURCE_STATE_UNDEFINED ?
+            ResourceStateToImageLayout(state) :
+            ResourceTypeToImageLayout(resourceType);
     }
 
     static VkImageAspectFlags TextureAspectToVk(TextureAspectFlags flags) 

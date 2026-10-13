@@ -29,6 +29,7 @@ void ReSTIRGIPass::Init()
                      .AddEntry({2, 4, 1, SHADER_FREQUENCY_RAY_TRACING | SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE})    // FINAL_COLOR
                      .AddEntry({2, 5, 1, SHADER_FREQUENCY_RAY_TRACING | SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE})    // GI_DIFFUSE_COLOR
                      .AddEntry({2, 6, 1, SHADER_FREQUENCY_RAY_TRACING | SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE})    // GI_SPECULAR_COLOR
+                     .AddEntry({2, 7, 1, SHADER_FREQUENCY_RAY_TRACING | SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE})       // G_BUFFER_SPECULAR_F0_ROUGHNESS
                      .AddPushConstant({128, SHADER_FREQUENCY_RAY_TRACING | SHADER_FREQUENCY_COMPUTE});
     rootSignature = backend->CreateRootSignature(rootSignatureInfo);
 
@@ -69,8 +70,9 @@ void ReSTIRGIPass::Build(RDGBuilder& builder)
         RDGTextureHandle diffuse         = builder.GetTexture("G-Buffer Diffuse/Metallic");
         RDGTextureHandle normal          = builder.GetTexture("G-Buffer Normal/Roughness");
         RDGTextureHandle emission        = builder.GetTexture("G-Buffer Emission");
+        RDGTextureHandle specularF0      = builder.GetTexture("G-Buffer Specular F0/Roughness");
         RDGTextureHandle reprojectionOut = builder.GetTexture("Reprojection Out");
-        RDGTextureHandle outColor        = builder.GetTexture("Mesh Pass Out Color");
+        RDGTextureHandle outColor        = builder.GetTexture("Noisy HDR Color");
 
         RDGTextureHandle restirDiffuseColor = builder.GetOrCreateTexture("ReSTIR Diffuse Color") 
             .Exetent({windowExtent.width, windowExtent.height, 1})
@@ -115,12 +117,13 @@ void ReSTIRGIPass::Build(RDGBuilder& builder)
             .Read(2, 0, 0, diffuse)
             .Read(2, 1, 0, normal)
             .Read(2, 2, 0, emission)
+            .Read(2, 7, 0, specularF0)
             .Read(2, 3, 0, reprojectionOut)
             .ReadWrite(1, 1, 0, resBuffer0)
             .ReadWrite(1, 2, 0, resBuffer1)
             .ReadWrite(1, 3, 0, resBuffer2)
-            .Dependency(builder.GetBuffer("TLAS Storage"), RESOURCE_STATE_ACCELERATION_STRUCTURE)
-            .Dependency(builder.GetTexture("Surface Cache Lighting"), RESOURCE_STATE_SHADER_RESOURCE)
+            .ReadAccelerationStructure(builder.GetBuffer("TLAS Storage"))
+            .Read(builder.GetTexture("Surface Cache Lighting"))
             .Execute([&](RDGPassContext context) {
 
                 RHICommandListRef command = context.command;
@@ -140,11 +143,12 @@ void ReSTIRGIPass::Build(RDGBuilder& builder)
             .Read(2, 0, 0, diffuse)
             .Read(2, 1, 0, normal)
             .Read(2, 2, 0, emission)
+            .Read(2, 7, 0, specularF0)
             .Read(2, 3, 0, reprojectionOut)
             .ReadWrite(1, 1, 0, resBuffer0)
             .ReadWrite(1, 2, 0, resBuffer1)
             .ReadWrite(1, 3, 0, resBuffer2)
-            .Dependency(builder.GetBuffer("TLAS Storage"), RESOURCE_STATE_ACCELERATION_STRUCTURE)
+            .ReadAccelerationStructure(builder.GetBuffer("TLAS Storage"))
             .Execute([&](RDGPassContext context) {
 
                 RHICommandListRef command = context.command;
@@ -164,6 +168,7 @@ void ReSTIRGIPass::Build(RDGBuilder& builder)
             .Read(2, 0, 0, diffuse)
             .Read(2, 1, 0, normal)
             .Read(2, 2, 0, emission)
+            .Read(2, 7, 0, specularF0)
             .Read(2, 3, 0, reprojectionOut)
             .ReadWrite(2, 4, 0, outColor)
             .ReadWrite(2, 5, 0, restirDiffuseColor)
@@ -171,7 +176,7 @@ void ReSTIRGIPass::Build(RDGBuilder& builder)
             .ReadWrite(1, 1, 0, resBuffer0)
             .ReadWrite(1, 2, 0, resBuffer1)
             .ReadWrite(1, 3, 0, resBuffer2)
-            .Dependency(builder.GetTexture("Surface Cache Lighting"), RESOURCE_STATE_SHADER_RESOURCE)
+            .Read(builder.GetTexture("Surface Cache Lighting"))
             .Execute([&](RDGPassContext context) {       
 
                 RHICommandListRef command = context.command; 

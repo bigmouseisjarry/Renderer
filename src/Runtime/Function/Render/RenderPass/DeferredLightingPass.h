@@ -21,8 +21,7 @@ private:
 	struct DeferredLightingSetting{
 		uint32_t mode = 0;
 		uint32_t directOnly = 1;	// 在使用ReSTIR GI时，DDGI仅用于surface cache的光照，不用于G-Buffer光照
-		uint32_t enbalePSCC = 1;
-		uint32_t PCFMode = 3;
+		float maxRadius = 2.0f;	// PCSS半影上限（FilterPSCC的clamp上界系数，与shader侧push constant块保持同步）
 	};
 	DeferredLightingSetting setting = {};
 

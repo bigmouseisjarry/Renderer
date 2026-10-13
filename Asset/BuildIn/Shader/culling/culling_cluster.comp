@@ -12,12 +12,12 @@ layout (local_size_x = THREAD_SIZE_X,
 		local_size_z = THREAD_SIZE_Z) in;
 void main() 
 {
-	uint gID = gl_GlobalInvocationID.x;
+	uint gID = gl_GlobalInvocationID.x;			// 当前第几个cluster		// 一个线程一个cluster
 
 	// 逐cluster剔除
-	if(gID < CLUSTER_DRAW_DATAS[0].setting.processSize)
+	if(gID < CLUSTER_DRAW_DATAS[0].setting.processSize)			// 不可以超过总共的
 	{
-		IndirectClusterDrawInfo clusterInfo = CLUSTER_DRAW_DATAS[0].draws[gID];
+		IndirectClusterDrawInfo clusterInfo = CLUSTER_DRAW_DATAS[0].draws[gID];			// 每遍的Info是相同的
 
 		MeshCluster cluster = MESH_CLUSTERS.slot[clusterInfo.clusterID];
 		Object object = OBJECTS.slot[clusterInfo.objectID];
@@ -34,7 +34,8 @@ void main()
 			if(	SETTING.passType == DEPTH_PASS_INDEX ||
 				SETTING.passType == G_BUFFER_PASS_INDEX ||
 				SETTING.passType == FORWARD_PASS_INDEX ||
-				SETTING.passType == TRANSPARENT_PASS_INDEX)
+				SETTING.passType == TRANSPARENT_PASS_INDEX ||
+				SETTING.passType == G_BUFFER_THIN_PASS_INDEX)
 			{
 				frustumVisible = frustumVisible && FrustumIntersectSphere(CAMERA.frustum, worldSphere);
 
@@ -81,12 +82,14 @@ void main()
 		
 			if(visible) 
 			{
+				// 一个管线状态的cluster共用一个command
 				uint offset = atomicAdd(CLUSTER_DRAW_COMMANDS[passIndex].command[clusterInfo.commandID].instanceCount, 1);	// 更新command和缓冲
 
 				MeshClusterDrawInfo drawInfo; 
 				drawInfo.objectID = clusterInfo.objectID;
 				drawInfo.clusterID = clusterInfo.clusterID;		
 
+				// 在全局缓冲区的firstInstance已经按照最大cluster数量分配好了
 				MESH_CLUSTER_DRAW_INFOS.slot[
 					CLUSTER_DRAW_COMMANDS[passIndex].command[
 						clusterInfo.commandID].firstInstance + offset] = drawInfo;

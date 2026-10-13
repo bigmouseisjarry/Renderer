@@ -17,11 +17,11 @@ void main()
 {
     Material material   = FetchMaterial(IN_ID);
     vec4 color          = vec4(IN_COLOR, 1.0f);
-    vec4 diffuse        = FetchDiffuse(material, IN_TEXCOORD);
+    vec4 albedo         = FetchAlbedo(material, IN_TEXCOORD);
     vec3 emission       = FetchEmission(material);
     float roughness     = FetchRoughness(material, IN_TEXCOORD);
     float metallic      = FetchMetallic(material, IN_TEXCOORD);
 
-    if(GLOBAL_SETTING.clusterInspectMode == 0) OUT_COLOR = diffuse;
+    if(GLOBAL_SETTING.clusterInspectMode == 0) OUT_COLOR = albedo;
     else                                       OUT_COLOR = vec4(IN_COLOR, 1.0f);
 }

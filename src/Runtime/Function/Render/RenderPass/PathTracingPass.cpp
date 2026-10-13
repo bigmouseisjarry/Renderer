@@ -45,7 +45,7 @@ void PathTracingPass::Build(RDGBuilder& builder)
 {
     if(IsEnabled())
     {
-        RDGTextureHandle outColor = builder.GetTexture("Mesh Pass Out Color");
+        RDGTextureHandle outColor = builder.GetTexture("Noisy HDR Color");
 
         RDGTextureHandle historyColor = builder .CreateTexture("Path Tracing History Color")
             .Import(historyColorTex, RESOURCE_STATE_UNDEFINED)
@@ -53,7 +53,7 @@ void PathTracingPass::Build(RDGBuilder& builder)
 
         RDGRayTracingPassHandle pass = builder.CreateRayTracingPass(GetName())
         .RootSignature(rootSignature)
-        .Dependency(builder.GetBuffer("TLAS Storage"), RESOURCE_STATE_ACCELERATION_STRUCTURE)     
+        .ReadAccelerationStructure(builder.GetBuffer("TLAS Storage"))     
         .ReadWrite(1, 0, 0, outColor)
         .ReadWrite(1, 1, 0, historyColor)
         .Execute([&](RDGPassContext context) {       

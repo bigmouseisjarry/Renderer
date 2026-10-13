@@ -1,8 +1,6 @@
 #ifndef LIGHT_GLSL
 #define LIGHT_GLSL
 
-// #define SHADOW_QUALITY_LOW    // 使用低质量阴影时定义
-
 // cluster lighting 辅助函数////////////////////////////////////////////////////////////////////////////
 
 ivec3 FetchLightClusterGrid(vec3 ndc)
@@ -35,8 +33,11 @@ uvec2 FetchLightClusterIndex(ivec3 clusterGrid)
 
 // 阴影和衰减计算辅助函数/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-vec2 FilterPSCC(vec4 ndcPos, texture2D tex, float sunTan, float ndcZToUV, float minRadius)
+vec2 FilterPSCC(vec4 ndcPos, texture2D tex, float sunTan, float ndcZToUV, float maxRadius)
 {
+    ivec2 texSize = textureSize(tex, 0).xy;
+    float minRadius = 1.0 / float(texSize.x);  // 保底一个texel大小
+    
     // blocker 搜索半径 = 接收者深度的太阳角投影
     float searchRadius = max(ndcPos.z * ndcZToUV * sunTan, minRadius);
 
@@ -59,7 +60,7 @@ vec2 FilterPSCC(vec4 ndcPos, texture2D tex, float sunTan, float ndcZToUV, float 
     float avgBlocker = blockerSum / blockerCount;
     float penumbra   = (ndcPos.z - avgBlocker) * ndcZToUV * sunTan;
     
-    penumbra         = clamp(penumbra, minRadius, maxRadius * 16.0);
+    penumbra         = clamp(penumbra, minRadius, maxRadius * minRadius);
 
     return vec2(penumbra, 1.0);
 }
@@ -79,41 +80,41 @@ float TextureProj(vec4 ndcPos, vec2 offset, texture2D tex)
 	return shadow;
 }
 
-float FilterPCF(vec4 ndcPos, texture2D tex, float maxRadius, uint count, ivec2 pixPos, int mode)
+float FilterPCF(vec4 ndcPos, texture2D tex, float maxRadius, uint count, ivec2 pixPos)
 {
 
 	float shadowFactor = 0.0;
-    if (mode == 1)  // 3x3核
-    {
-        count = 0;
-        for (int x = -1; x <= 1; x++)
-	    {
-		    for (int y = -1; y <= 1; y++)
-		    {
-			    shadowFactor += TextureProj(ndcPos, vec2(x, y) * maxRadius, tex);
-			    count++;
-		    }
-	    }
-    }
-    else
-    {
-        float sqrtCount = sqrt(float(count));
-        float rot = 0.0f;
-        if (mode == 2)      // IGN算旋转角
-        {
-            rot = IGNRotation(pixPos);
-        }
-        else                // STBN
-        {
-            rot = StbnRotation(pixPos);
-        }
+//    if (mode == 1)  // 3x3核
+//    {
+//        count = 0;
+//        for (int x = -1; x <= 1; x++)
+//	    {
+//		    for (int y = -1; y <= 1; y++)
+//		    {
+//			    shadowFactor += TextureProj(ndcPos, vec2(x, y) * maxRadius, tex);
+//			    count++;
+//		    }
+//	    }
+//    }
 
-        for (int i = 0; i < count; i++)
-        {
-            vec2 offset = VogeLDisk(i, rot, sqrtCount);
-		    shadowFactor += TextureProj(ndcPos, offset * maxRadius, tex);
-        }
+    float sqrtCount = sqrt(float(count));
+    float rot = 0.0f;
+//    if (mode == 2)      // IGN算旋转角
+//    {
+//        rot = IGNRotation(pixPos);
+//    }
+//    else                // STBN
+//    {
+//        rot = StbnRotation(pixPos);
+//    }
+    
+    rot = StbnRotation(pixPos);
+    for (int i = 0; i < count; i++)
+    {
+        vec2 offset = VogeLDisk(i, rot, sqrtCount);
+		shadowFactor += TextureProj(ndcPos, offset * maxRadius, tex);
     }
+
 	return shadowFactor / count;
 }
 
@@ -139,8 +140,8 @@ float EVSM(vec4 moments, float depth, float c1, float c2)
 // 现在的是EVSM的半边
 float VSM(vec2 moments, float depth, float c1)
 {
-    // exp放大了靠近光源的遮挡物的权重
-    // E[exp(c·(z_r − d))] = exp(c·z_r) · E[exp(−c·d)]
+    // exp放大了关键部位的遮挡物的权重
+    // E[exp(c * (z_r − d))] = exp(c * z_r) * E[exp(−c * d)]
 	float x = exp(c1 * depth);
     // .y 平方均值  .x 均值 
     // 样本: 滤波范围内遮挡物的深度
@@ -170,7 +171,7 @@ int CascadeLevel(vec4 worldPos)
 	return cascadeIndex;
 }
 
-float DirectionalShadow(vec4 worldPos, ivec2 pixPos, int enablePSCC, int PCFMode)
+float DirectionalShadow(vec4 worldPos, ivec2 pixPos, float maxRadius)
 {
 	int cascadeIndex = CascadeLevel(worldPos);
 
@@ -182,17 +183,10 @@ float DirectionalShadow(vec4 worldPos, ivec2 pixPos, int enablePSCC, int PCFMode
     vec4 ndcPos = dirLight.proj * dirLight.view * worldPos;	
     ndcPos /= ndcPos.w;
 
-    ivec2 texSize = textureSize(DIRECTIONAL_SHADOW[cascadeIndex], 0).xy;
-    float radius = 0.5 / float(texSize.x);                     // 保底 0.5 texel
+    vec2 p = FilterPSCC(ndcPos, DIRECTIONAL_SHADOW[cascadeIndex],dirLight.sunTan, dirLight.ndcZToUV, maxRadius);
+    if (p.y < 0.5) return 1.0f;                               // 全亮早退
 
-    if (enablePSCC == 1)
-    {
-        vec2 p = FilterPSCC(ndcPos, DIRECTIONAL_SHADOW[cascadeIndex],dirLight.sunTan, dirLight.ndcZToUV, radius);
-        if (p.y < 0.5) return 1.0f;                               // 全亮早退
-        radius = p.x;
-    }
-
-    float dirShadow = FilterPCF(ndcPos, DIRECTIONAL_SHADOW[cascadeIndex], radius, 16u, pixPos, PCFMode);	//计算平行光源阴影取值，[0,1]
+    float dirShadow = FilterPCF(ndcPos, DIRECTIONAL_SHADOW[cascadeIndex], p.x, 16u, pixPos);	//计算平行光源阴影取值，[0,1]
 	dirShadow = smoothstep(0.0f, 1.0f, min(1.0, dirShadow / 0.9));	                            //重映射
 
 	return dirShadow;
@@ -233,13 +227,6 @@ float PointShadow(uint lightID, vec4 worldPos)
 	vec3 pointLightVec = normalize(pointLight.pos - worldPos.xyz);
 	float pointDistance = length(worldPos.xyz - pointLight.pos);
 
-#ifdef SHADOW_QUALITY_LOW	// 直接用深度
-
-	float pointShadow =  pointDistance / pointLight.far - texture(samplerCube(POINT_SHADOW[pointLight.shadowID], SAMPLER[0]), -pointLightVec).r;
-	pointShadow = pointShadow > pointLight.bias ? 0.0f : 1.0f;	//给阴影一点颜色？
-
-#else	// 使用VSM
-
 	vec2 moments = texture(samplerCube(POINT_SHADOW[pointLight.shadowID], SAMPLER[0]), -pointLightVec).xy;
 
 	float depth = pointDistance / pointLight.far;
@@ -247,8 +234,6 @@ float PointShadow(uint lightID, vec4 worldPos)
     float pointShadow = VSM(moments, depth, pointLight.c1);
 	//float pointShadow = EVSM(moments, depth, pointLight.c1, pointLight.c2);		//计算点光源阴影取值，[0,1]
 	pointShadow = smoothstep(0.0f, 1.0f, min(1.0, pointShadow / 0.8));	            //重映射，去掉大于0.8的部分
-
-#endif
 
     return pointShadow;
 }
@@ -281,6 +266,7 @@ float RtPointShadow(uint lightID, vec4 worldPos)
 
 	PointLight pointLight = LIGHTS.pointLights[lightID];
 
+    if(pointLight.shadowID >= MAX_POINT_SHADOW_COUNT) return 1.0f;	//无效阴影索引
     float pointShadow = RayQueryVisibility(worldPos.xyz, pointLight.pos, 0) ? 0.0f : 1.0f; 
     return pointShadow;	     // 光追就不考虑点光源是否开启投射阴影了
 }
@@ -302,6 +288,7 @@ vec3 DirectionalLighting(
         DirectionalLight dirLight = LIGHTS.directionalLights[0];
 
         vec3 L = -normalize(dirLight.dir);    
+        // 钳制为0.0到1.0
         float NoL = saturate(dot(N, L));
 
         float dirShadow     = 1.0f;
@@ -311,10 +298,38 @@ vec3 DirectionalLighting(
                         dirLight.color * 
                         dirLight.intencity;        
 
-        BRDFData data = ResolveBRDF(albedo.xyz, roughness, metallic, N, V, L);
+        BRDFData data = ResolveBRDF(albedo, roughness, metallic, N, V, L);
         vec3 f_r = data.diffuse + data.specular;
 
-        dirColor += max(vec3(0.0f), f_r * radiance * NoL);	
+        // 怎么反 * 总共有多少 * 这个方向摊多少
+        dirColor += max(vec3(0.0f), f_r * radiance * NoL);
+    }
+    return dirColor;
+}
+
+// F0直存版（G-Buffer读侧）：diffuse=预乘后漫反射率，F0=写入端算好的镜面反射率，specF=虹彩F0直用
+vec3 DirectionalLighting(
+    vec3 diffuse, float roughness, vec3 F0, float specF,
+    vec4 worldPos, vec3 N, vec3 V)
+{
+    vec3 dirColor = vec3(0.0f);
+	if(LIGHTS.lightSetting.directionalLightCnt != 0)	// 目前只支持一个
+    {
+        DirectionalLight dirLight = LIGHTS.directionalLights[0];
+
+        vec3 L = -normalize(dirLight.dir);
+        float NoL = saturate(dot(N, L));
+
+        float dirShadow     = 1.0f;
+
+        vec3 radiance = dirShadow *
+                        dirLight.color *
+                        dirLight.intencity;
+
+        BRDFData data = ResolveBRDF(diffuse, roughness, F0, specF, N, V, L);
+        vec3 f_r = data.diffuse + data.specular;
+
+        dirColor += max(vec3(0.0f), f_r * radiance * NoL);
     }
     return dirColor;
 }
@@ -338,10 +353,9 @@ vec3 DirectionalDiffuseLighting(
                         dirLight.color * 
                         dirLight.intencity;        
 
-        vec3 f_r = ResolveBRDF(albedo.xyz, roughness, metallic, N, V, L).diffuse;
+        vec3 f_r = ResolveBRDF(albedo, roughness, metallic, N, V, L).diffuse;
 
-        dirColor += max(vec3(0.0f), f_r * radiance * NoL);	
-    }
+        dirColor += max(vec3(0.0f), f_r * radiance * NoL);    }
     return dirColor;
 }
 
@@ -368,10 +382,59 @@ vec3 PointLighting(
                     pointLight.intencity *
                     attenuation;   
 
-    BRDFData data = ResolveBRDF(albedo.xyz, roughness, metallic, N, V, L);
+    BRDFData data = ResolveBRDF(albedo, roughness, metallic, N, V, L);
     vec3 f_r = data.diffuse + data.specular;
 
-    return max(vec3(0.0f), f_r * radiance * NoL);	
+    return max(vec3(0.0f), f_r * radiance * NoL);
+}
+
+// F0直存版：单点光源
+vec3 PointLighting(
+    vec3 diffuse, float roughness, vec3 F0, float specF,
+    vec4 worldPos, vec3 N, vec3 V, uint lightID)
+{
+	if(lightID == 0) return vec3(0.0f);	// 0为无效ID
+
+    PointLight pointLight = LIGHTS.pointLights[lightID];
+
+    float pointDistance = length(worldPos.xyz - pointLight.pos);
+
+    vec3 L = normalize(pointLight.pos - worldPos.xyz);
+    float NoL = saturate(dot(N, L));
+
+    float pShadow = 1.0f;
+    float attenuation   = PointLightFalloff(pointDistance, pointLight.far);
+
+    vec3 radiance = pShadow *
+                    pointLight.color *
+                    pointLight.intencity *
+                    attenuation;
+
+    BRDFData data = ResolveBRDF(diffuse, roughness, F0, specF, N, V, L);
+    vec3 f_r = data.diffuse + data.specular;
+
+    return max(vec3(0.0f), f_r * radiance * NoL);
+}
+
+// F0直存版：cluster based
+vec3 PointLighting(
+    vec3 diffuse, float roughness, vec3 F0, float specF,
+    vec4 worldPos, vec3 N, vec3 V)
+{
+    vec3 pointColor = vec3(0.0f);
+    {
+        ivec3 clusterGrid   = FetchLightClusterGrid(WorldToNDC(worldPos).xyz);
+        uvec2 clusterIndex  = FetchLightClusterIndex(clusterGrid);
+
+        for(uint i = clusterIndex.x; i < clusterIndex.x + clusterIndex.y; i++)
+        {
+            uint lightID = LIGHT_CLUSTER_INDEX.slot[i].lightID;
+
+            pointColor  +=  PointLighting(diffuse, roughness, F0, specF, worldPos, N, V, lightID) *
+                            PointShadow(lightID, worldPos);
+        }
+    }
+	return pointColor;
 }
 
 // 点光源光照计算, 使用cluster based lighting, 计算阴影
@@ -382,7 +445,7 @@ vec3 PointLighting(
     vec3 pointColor = vec3(0.0f);
     {
         ivec3 clusterGrid   = FetchLightClusterGrid(WorldToNDC(worldPos).xyz);
-        uvec2 clusterIndex  = FetchLightClusterIndex(clusterGrid);      //读取对应cluster的索引信息 
+        uvec2 clusterIndex  = FetchLightClusterIndex(clusterGrid);      //读取对应cluster的索引信息
 
         for(uint i = clusterIndex.x; i < clusterIndex.x + clusterIndex.y; i++)
         {
@@ -417,7 +480,7 @@ vec3 PointDiffuseLighting(
                     pointLight.intencity *
                     attenuation;   
 
-    vec3 f_r = ResolveBRDF(albedo.xyz, roughness, metallic, N, V, L).diffuse;
+    vec3 f_r = ResolveBRDF(albedo, roughness, metallic, N, V, L).diffuse;
 
     return max(vec3(0.0f), f_r * radiance * NoL);	
 }
@@ -444,9 +507,7 @@ vec3 PointDiffuseLighting(
 
 // 间接光照////////////////////////////////////////////////////////////////////////////
 
-vec3 IndirectIrradiance(
-    vec3 albedo, float roughness, float metallic,
-    vec4 worldPos, vec3 N, vec3 V)
+vec3 IndirectIrradiance(vec4 worldPos, vec3 N, vec3 V)
 {
     vec3 indirectIrradiance = vec3(0.0f);
     for(int i = 0; i < LIGHTS.lightSetting.volumeLightCnt; i++)
@@ -457,7 +518,7 @@ vec3 IndirectIrradiance(
         if(volumeLight.setting.enable &&
            PointIntersectBox(worldPos.xyz, volumeLight.setting.boundingBox))    //需要在包围盒范围内
         {
-            indirectIrradiance = FetchDDGIIrradiance(	volumeLight.setting, worldPos.xyz, N, V, 
+            indirectIrradiance = FetchDDGIIrradiance(	volumeLight.setting, worldPos.xyz, N, V,
 														VOLUME_LIGHT_IRRADIANCE[volumeLightID], VOLUME_LIGHT_DEPTH[volumeLightID], SAMPLER[0]);
             break;  //暂时只用一个的，没处理重叠情况
         }
@@ -476,7 +537,7 @@ vec3 IndirectLighting(
 
 	// DDGI
     {
-        vec3 indirectIrradiance = IndirectIrradiance(albedo, roughness, metallic, worldPos, N, V);
+        vec3 indirectIrradiance = IndirectIrradiance(worldPos, N, V);
 
         float NoV = saturate(dot(N, V));
 
@@ -491,44 +552,30 @@ vec3 IndirectLighting(
         indirectColor = diffuseColor;
     }
 
-    //环境光照计算，已经在SSSR里完成了
-    /*
-    vec3 ambientColor = vec3(0.0);
+    return indirectColor;
+}
+
+
+// F0直存版（G-Buffer读侧）：diffuse已预乘，不再乘(1-metallic)
+vec3 IndirectLighting(
+    vec3 diffuse, float roughness, vec3 F0,
+    vec4 worldPos, vec3 N, vec3 V)
+{
+   	vec3 indirectColor = vec3(0.0f);
+
+	// DDGI
     {
-        float NoV = clamp(dot(N, V), 0.00001, 0.99999);
+        vec3 indirectIrradiance = IndirectIrradiance(worldPos, N, V);
 
-        vec3 kS = FresnelSchlickRoughness(NoV, F0, roughness); 
-        vec3 kD = 1.0 - kS;
+        float NoV = saturate(dot(N, V));
 
-        //漫反射IBL
-        vec3 irradiance = texture(DIFFUSE_IBL_SAMPLER, N).rgb;
-        vec3 diffuse    = irradiance * albedo.rgb;
-        vec3 diffuseColor = kD * diffuse; //漫反射环境光照得到的颜色
+        vec3 k_specular = FresnelSchlickRoughness(NoV, F0, roughness);
+        vec3 k_diffuse  = 1.0 - k_specular;     //BRDF积分项里每个radiance对应的kD是不同的（k_specular = F 视角相关），把kD移出积分是一个近似估计
 
-        //镜面反射IBL
-        vec2 brdf = texture(BRDF_LUT, vec2(NoV, roughness)).rg;
-        brdf = pow(brdf, vec2(1.0/2.2));      //gamma矫正
-        vec3 reflection = PreFilteredReflection(R, roughness, SPECULAR_IBL_SAMPLER).rgb;	
-	    vec3 specularColor = reflection * (kS * brdf.x + brdf.y);
+        vec3 f_diffuse  = Diffuse_Lambert(diffuse);
 
-        ambientColor = diffuseColor + specularColor;
+        indirectColor = k_diffuse * f_diffuse * indirectIrradiance;
     }
-
-    //对于大场景的IBL不对，暂时先用定值
-    {
-        float NoV = clamp(dot(N, V), 0.00001, 0.99999);
-
-        vec3 kS = FresnelSchlickRoughness(NoV, F0, roughness); 
-        vec3 kD = 1.0 - kS;
-
-        //漫反射IBL
-        vec3 irradiance  = vec3(0.2);
-        vec3 diffuse = irradiance * albedo.rgb;
-        vec3 diffuseColor = kD * diffuse;    //漫反射环境光照得到的颜色
-
-        ambientColor = diffuseColor * ao;
-    }
-    */
 
     return indirectColor;
 }

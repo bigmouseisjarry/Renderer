@@ -12,6 +12,8 @@ layout(push_constant) uniform kawase_setting {
     uint round;
 }KAWASE_SETTING;
 
+// E : 线性叠加矩
+
 vec4 Kawase(texture2D tex, vec2 uv, vec2 texelSize, uint pixelOffset)
 {
     vec4 o = vec4(0);

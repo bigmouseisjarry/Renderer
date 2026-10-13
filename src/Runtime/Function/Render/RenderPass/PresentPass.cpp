@@ -10,7 +10,7 @@ void PresentPass::Build(RDGBuilder& builder)
 {
     RHITextureRef swapchainTexture = EngineContext::Render()->GetSwapchain()->GetTexture(EngineContext::ThreadPool()->ThreadFrameIndex());
     
-    RDGTextureHandle outColor = builder.GetTexture("Final Color");
+    RDGTextureHandle outColor = builder.GetTexture("Final LDR Color");
 
     RDGTextureHandle present = builder.CreateTexture("Present")
         .Import(swapchainTexture, RESOURCE_STATE_PRESENT)

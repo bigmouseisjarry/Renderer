@@ -18,14 +18,16 @@ void main()
     ivec2 pixel     = ivec2(gl_GlobalInvocationID.xy);
     vec2 uv         = ScreenPixToUV(pixel); 
 
-    vec4 gbffer0    = imageLoad(G_BUFFER_DIFFUSE_METALLIC, pixel);
-    vec4 gbffer1    = imageLoad(G_BUFFER_NORMAL_ROUGHNESS, pixel);
+    vec4 gbffer0    = imageLoad(G_BUFFER_DIFFUSE_TRANSPARENT, pixel);
+    vec4 gbffer1    = imageLoad(G_BUFFER_NORMAL_SPECF, pixel);
     vec4 gbffer2    = imageLoad(G_BUFFER_EMISSION, pixel);
+    vec4 gbffer6    = imageLoad(G_BUFFER_SPECULAR_F0_ROUGHNESS, pixel);
     vec3 diffuse    = gbffer0.xyz;
-    vec3 normal     = normalize(gbffer1.xyz);
-    vec3 emission   = gbffer2.xyz;
-    float roughness = gbffer1.w;
-    float metallic  = gbffer0.w;
+    float specF     = gbffer1.a;    // 虹彩标志：F直用烘焙F0跳过Schlick
+    vec3 normal     = DecodeGBufferNormal(gbffer1.xyz);
+    vec3 emission   = DecodeEmissionRGBM(gbffer2);
+    float roughness = gbffer6.w;
+    vec3 F0         = gbffer6.rgb;
     vec4 worldPos   = DepthToWorld(uv);
 	float depth 	= FetchDepthTex(pixel);
 
@@ -47,8 +49,8 @@ void main()
 		float lightSampleProb = (1.0f / LIGHTS.lightSetting.pointLightCnt);	
 
 		float pHat = EvaluatePHat(
-			lightID, worldPos.xyz, normal, 
-			diffuse, roughness, metallic); 
+			lightID, worldPos.xyz, normal,
+			diffuse, roughness, F0, specF);
 
 		AddSampleToDIReservoir(res, lightID, pHat, lightSampleProb, rand);
 	}
@@ -68,7 +70,7 @@ void main()
 			
 			float newPHat = EvaluatePHat(								// 时域复用下的可见性测试使用的是阴影贴图
 					prevRes.sampl.lightID, worldPos.xyz, normal,		// 空域用的光追
-					diffuse, roughness, metallic); 
+					diffuse, roughness, F0, specF);
 			CombineDIReservoirs(res, prevRes, newPHat, rand);		
 		}
 	}

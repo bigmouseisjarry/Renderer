@@ -17,9 +17,9 @@ void BloomPass::Init()
     computeShader[3] = Shader(EngineContext::File()->ShaderPath() + "bloom/bloom_combine.comp.spv", SHADER_FREQUENCY_COMPUTE);
 
     RHIRootSignatureInfo rootSignatureInfo = {};
-    rootSignatureInfo.AddEntry({0, 0, 2, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE})
+    rootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetSamplerRootSignature()->GetInfo())
+                     .AddEntry({0, 0, 2, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE})
                      .AddEntry({0, 1, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE})
-                     .AddEntry(EngineContext::RenderResource()->GetSamplerRootSignature()->GetInfo())
                      .AddPushConstant({128, SHADER_FREQUENCY_COMPUTE});
     rootSignature = backend->CreateRootSignature(rootSignatureInfo);
 
@@ -39,7 +39,7 @@ void BloomPass::Build(RDGBuilder& builder)
     int mipLevels = windowExtent.MipSize();
     setting.maxMip = mipLevels - 1;
 
-    RDGTextureHandle inputColor = builder.GetTexture("Mesh Pass Out Color");
+    RDGTextureHandle inputColor = builder.GetTexture("Noisy HDR Color");
 
     RDGTextureHandle outColor = builder.CreateTexture("Bloom Out Color") 
         .Exetent({windowExtent.width, windowExtent.height, 1})

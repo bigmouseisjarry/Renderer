@@ -26,30 +26,31 @@ void PassWidget::UI(std::shared_ptr<RenderPass> pass)
         ImGui::Checkbox("Enable ", &enabled);
         pass->SetEnable(enabled);
 
-        switch (pass->GetType()) {                                                                                                                                         
+        // 槽位类型dispatch：按GetType()槽位dispatch到对应UI（dynamic_pointer_cast守卫，static_cast会误转型）
+        switch (pass->GetType()) {
         case DEPTH_PASS:                                                                                                                break;
-        case GPU_CULLING_PASS:          GPUCullingPassUI(std::static_pointer_cast<GPUCullingPass>(pass));                   break;
+        case GPU_CULLING_PASS:          if(auto p = std::dynamic_pointer_cast<GPUCullingPass>(pass))              GPUCullingPassUI(p);             break;
         case POINT_SHADOW_PASS:                                                                                                         break;
         case DIRECTIONAL_SHADOW_PASS:                                                                                                   break;
-        case CLIPMAP_PASS:              ClipmapPassUI(std::static_pointer_cast<ClipmapPass>(pass));                         break;
-        case G_BUFFER_PASS:             GBufferPassUI(std::static_pointer_cast<GBufferPass>(pass));                         break;
-        case DEFERRED_LIGHTING_PASS:    DeferredLightingPassUI(std::static_pointer_cast<DeferredLightingPass>(pass));       break;
-        case SSSR_PASS:                 SSSRPassUI(std::static_pointer_cast<SSSRPass>(pass));                               break;
-        case VOLUMETIRC_FOG_PASS:       VolumetricFogPassUI(std::static_pointer_cast<VolumetricFogPass>(pass));             break;
-        case RESTIR_DI_PASS:            ReSTIRDIPassUI(std::static_pointer_cast<ReSTIRDIPass>(pass));                       break;
-        case RESTIR_GI_PASS:            ReSTIRGIPassUI(std::static_pointer_cast<ReSTIRGIPass>(pass));                       break;
-        case SVGF_PASS:                 SVGFPassUI(std::static_pointer_cast<SVGFPass>(pass));                               break;
-        case NRD_PASS:                  NRDPassUI(std::static_pointer_cast<NRDPass>(pass));                                 break;
+        case CLIPMAP_PASS:              if(auto p = std::dynamic_pointer_cast<ClipmapPass>(pass))                  ClipmapPassUI(p);                 break;
+        case G_BUFFER_PASS:             if(auto p = std::dynamic_pointer_cast<GBufferPass>(pass))                  GBufferPassUI(p);                 break;
+        case DEFERRED_LIGHTING_PASS:    if(auto p = std::dynamic_pointer_cast<DeferredLightingPass>(pass))         DeferredLightingPassUI(p);        break;
+        case SSSR_PASS:                 if(auto p = std::dynamic_pointer_cast<SSSRPass>(pass))                      SSSRPassUI(p);                   break;
+        case VOLUMETIRC_FOG_PASS:       if(auto p = std::dynamic_pointer_cast<VolumetricFogPass>(pass))            VolumetricFogPassUI(p);           break;
+        case RESTIR_DI_PASS:            if(auto p = std::dynamic_pointer_cast<ReSTIRDIPass>(pass))                 ReSTIRDIPassUI(p);                break;
+        case RESTIR_GI_PASS:            if(auto p = std::dynamic_pointer_cast<ReSTIRGIPass>(pass))                 ReSTIRGIPassUI(p);                break;
+        case SVGF_PASS:                 if(auto p = std::dynamic_pointer_cast<SVGFPass>(pass))                     SVGFPassUI(p);                    break;
+        case NRD_PASS:                  if(auto p = std::dynamic_pointer_cast<NRDPass>(pass))                      NRDPassUI(p);                     break;
         case FORWARD_PASS:                                                                                                              break;
         case TRANSPARENT_PASS:                                                                                                          break;
-        case CLIPMAP_VISUALIZE_PASS:    ClipmapVisualizePassUI(std::static_pointer_cast<ClipmapVisualizePass>(pass));       break;
-        case PATH_TRACING_PASS:         PathTracingPassUI(std::static_pointer_cast<PathTracingPass>(pass));                 break;
-        case BLOOM_PASS:                BloomPassUI(std::static_pointer_cast<BloomPass>(pass));                             break;
-        case FXAA_PASS:                 FXAAPassUI(std::static_pointer_cast<FXAAPass>(pass));                               break;
-        case TAA_PASS:                  TAAPassUI(std::static_pointer_cast<TAAPass>(pass));                                 break;
-        case EXPOSURE_PASS:             ExposurePassUI(std::static_pointer_cast<ExposurePass>(pass));                       break;
-        case POST_PROCESSING_PASS:      PostProcessingPassUI(std::static_pointer_cast<PostProcessingPass>(pass));           break;
-        case RAY_TRACING_BASE_PASS:     RayTracingBasePassUI(std::static_pointer_cast<RayTracingBasePass>(pass));           break;
+        case CLIPMAP_VISUALIZE_PASS:    if(auto p = std::dynamic_pointer_cast<ClipmapVisualizePass>(pass))          ClipmapVisualizePassUI(p);        break;
+        case PATH_TRACING_PASS:         if(auto p = std::dynamic_pointer_cast<PathTracingPass>(pass))              PathTracingPassUI(p);             break;
+        case BLOOM_PASS:                if(auto p = std::dynamic_pointer_cast<BloomPass>(pass))                    BloomPassUI(p);                   break;
+        case FXAA_PASS:                 if(auto p = std::dynamic_pointer_cast<FXAAPass>(pass))                     FXAAPassUI(p);                    break;
+        case TAA_PASS:                  if(auto p = std::dynamic_pointer_cast<TAAPass>(pass))                      TAAPassUI(p);                     break;
+        case EXPOSURE_PASS:             if(auto p = std::dynamic_pointer_cast<ExposurePass>(pass))                 ExposurePassUI(p);                break;
+        case POST_PROCESSING_PASS:      if(auto p = std::dynamic_pointer_cast<PostProcessingPass>(pass))           PostProcessingPassUI(p);          break;
+        case RAY_TRACING_BASE_PASS:     if(auto p = std::dynamic_pointer_cast<RayTracingBasePass>(pass))            RayTracingBasePassUI(p);           break;
         case EDITOR_UI_PASS:                                                                                                            break;
         case PRESENT_PASS:                                                                                                              break;
         default:                                                                                                                        break;
@@ -72,6 +73,7 @@ std::string MeshPassName(MeshPassType type)
     case MESH_POINT_SHADOW_PASS:        return "Point Shadow";
     case MESH_DIRECTIONAL_SHADOW_PASS:  return "Dir Shadow";
     case MESH_G_BUFFER_PASS:            return "G-Buffer";
+    case MESH_G_BUFFER_THIN_PASS:       return "G-Buffer Thin";
     case MESH_FORWARD_PASS:             return "Forward";
     case MESH_TRANSPARENT_PASS:         return "Transparent";
     default:                            return "";
@@ -232,25 +234,10 @@ void PassWidget::ClipmapPassUI(std::shared_ptr<ClipmapPass> pass)
 void PassWidget::DeferredLightingPassUI(std::shared_ptr<DeferredLightingPass> pass)
 {
     bool directOnly = pass->setting.directOnly > 0 ? true : false;
-    bool enablePSCC = pass->setting.enbalePSCC > 0 ? true : false;
     ImGui::Checkbox("Direct lighting only", &directOnly);
-    ImGui::Checkbox("enable PSCC", &enablePSCC);
     pass->setting.directOnly = directOnly ? 1 : 0;
-    pass->setting.enbalePSCC = enablePSCC ? 1 : 0;
 
-    //ImGui::DragInt("maxRadius", &pass->setting.maxRadius, 1.0, 2, 32);
-
-    if (ImGui::CollapsingHeader("PCF", ImGuiTreeNodeFlags_None))
-    {
-        if (ImGui::RadioButton("3x3 PCF", pass->setting.PCFMode == 0))
-            pass->setting.PCFMode = 0;
-        ImGui::SameLine();
-        if (ImGui::RadioButton("IGN", pass->setting.PCFMode == 1))
-            pass->setting.PCFMode = 1;
-        ImGui::SameLine();
-        if (ImGui::RadioButton("STBN", pass->setting.PCFMode == 2))
-            pass->setting.PCFMode = 2;
-    }
+    ImGui::DragFloat("maxRadius", &pass->setting.maxRadius, 0.1f, 1.0f, 5.0f);
 
 	if (ImGui::RadioButton("Color", pass->setting.mode == 0))
 		pass->setting.mode = 0;
@@ -294,8 +281,30 @@ void PassWidget::DeferredLightingPassUI(std::shared_ptr<DeferredLightingPass> pa
 	if (ImGui::RadioButton("Indirect irradiance", pass->setting.mode == 12))
 		pass->setting.mode = 12;
     ImGui::SameLine();
-	if (ImGui::RadioButton("Direct light", pass->setting.mode == 13))
+	if (ImGui::RadioButton("AO", pass->setting.mode == 13))
 		pass->setting.mode = 13;
+    ImGui::SameLine();
+    if (ImGui::RadioButton("gnormal", pass->setting.mode == 14))
+        pass->setting.mode = 14;
+    ImGui::SameLine();
+    if (ImGui::RadioButton("F0", pass->setting.mode == 15))
+        pass->setting.mode = 15;
+    ImGui::SameLine();
+    if (ImGui::RadioButton("transparent", pass->setting.mode == 16))
+        pass->setting.mode = 16;
+
+    //////////////////////////////////////////////////////////////
+    if (ImGui::RadioButton("emission", pass->setting.mode == 17))
+        pass->setting.mode = 17;
+    ImGui::SameLine();
+    if (ImGui::RadioButton("directLightColor", pass->setting.mode == 18))
+        pass->setting.mode = 18;
+    ImGui::SameLine();
+    if (ImGui::RadioButton("BRDFspecular", pass->setting.mode == 19))
+        pass->setting.mode = 19;
+    ImGui::SameLine();
+    if (ImGui::RadioButton("BRDFdiffuse", pass->setting.mode == 20))
+        pass->setting.mode = 20;
 }
 
 void PassWidget::SSSRPassUI(std::shared_ptr<SSSRPass> pass)
@@ -716,8 +725,8 @@ void PassWidget::RayTracingBasePassUI(std::shared_ptr<RayTracingBasePass> pass)
 		pass->setting.mode = 7; 
     
     if (ImGui::RadioButton("Emission##1", pass->setting.mode == 8))
-		pass->setting.mode = 8;    
-    ImGui::SameLine();  
+		pass->setting.mode = 8;
+    ImGui::SameLine();
     if (ImGui::RadioButton("Lighting##1", pass->setting.mode == 9))
-		pass->setting.mode = 9;   
+		pass->setting.mode = 9;
 }

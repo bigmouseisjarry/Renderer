@@ -15,14 +15,16 @@ void main()
     ivec2 pixel     = ivec2(gl_GlobalInvocationID.xy);
     vec2 uv         = ScreenPixToUV(pixel); 
 
-    vec4 gbffer0    = imageLoad(G_BUFFER_DIFFUSE_METALLIC, pixel);
-    vec4 gbffer1    = imageLoad(G_BUFFER_NORMAL_ROUGHNESS, pixel);
+    vec4 gbffer0    = imageLoad(G_BUFFER_DIFFUSE_TRANSPARENT, pixel);
+    vec4 gbffer1    = imageLoad(G_BUFFER_NORMAL_SPECF, pixel);
     vec4 gbffer2    = imageLoad(G_BUFFER_EMISSION, pixel);
+    vec4 gbffer6    = imageLoad(G_BUFFER_SPECULAR_F0_ROUGHNESS, pixel);
     vec3 diffuse    = gbffer0.xyz;
-    vec3 normal     = gbffer1.xyz;
-    vec3 emission   = gbffer2.xyz;
-    float roughness = gbffer1.w;
-    float metallic  = gbffer0.w;
+    float specF     = gbffer1.a;    // 虹彩标志：F直用烘焙F0跳过Schlick
+    vec3 normal     = DecodeGBufferNormal(gbffer1.xyz);
+    vec3 emission   = DecodeEmissionRGBM(gbffer2);
+    float roughness = gbffer6.w;
+    vec3 F0         = gbffer6.rgb;
     float depth     = FetchDepth(uv);
     vec4 worldPos   = DepthToWorld(uv, depth);
 
@@ -39,7 +41,7 @@ void main()
 
             vec3 pHat = EvaluatePHatFull(
                 lightID, worldPos.xyz, normal,
-                diffuse, roughness, metallic); 
+                diffuse, roughness, F0, specF);
 
             finalColor.xyz += pHat * res.w;
             finalColor.w = HitDistance(lightID, worldPos.xyz);  // hitDistance
@@ -54,7 +56,7 @@ void main()
 
                 vec3 pHat = EvaluatePHatFull(
                 lightID, worldPos.xyz, normal,
-                diffuse, roughness, metallic); 
+                diffuse, roughness, F0, specF);
 
                 finalColor.xyz += pHat;
             }
@@ -63,9 +65,9 @@ void main()
         // 可以把平行光加上
         {
             vec3 N = normalize(normal);
-            vec3 V = normalize(CAMERA.pos.xyz - worldPos.xyz);	
+            vec3 V = normalize(CAMERA.pos.xyz - worldPos.xyz);
 
-            finalColor.xyz +=   DirectionalLighting(diffuse, roughness, metallic, worldPos, N, V) * 
+            finalColor.xyz +=   DirectionalLighting(diffuse, roughness, F0, specF, worldPos, N, V) *
                                 RtDirectionalShadow(worldPos, 0.0f);
         }
     }
@@ -92,7 +94,7 @@ void main()
     }
     else //if(RESTIR_DI_SETTING.combineMode == 1)   // 后续降噪
     {
-        imageStore(DI_DIFFUSE_COLOR, pixel, finalColor);
+        imageStore(DI_DIFFUSE_LIGHT, pixel, finalColor);
     }
 
     // for (int i = 0; i < RESERVOIR_SIZE; ++i) 

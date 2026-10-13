@@ -283,6 +283,7 @@ vec4 ImportanceSampleGGX( vec2 E, float a2 )
 
 // Compute PDF of reflection (2 * dot( V, H ) * H - V).
 // [Heitz 2014, "Importance Sampling Microfacet-Based BSDFs using the Distribution of Visible Normals"]
+// PDF从H空间转换成L空间
 float RayPDFToReflectionRayPDF(float VoH, float RayPDF)
 {
 	float ReflectPDF = RayPDF / (4.0 * saturate(VoH));

@@ -13,6 +13,7 @@
 #include "Function/Render/RenderPass/ClipmapPass.h"
 #include "Function/Render/RenderPass/DDGIPass.h"
 #include "Function/Render/RenderPass/GBufferPass.h"
+#include "Function/Render/RenderPass/GBufferThinPass.h"
 #include "Function/Render/RenderPass/SurfaceCachePass.h"
 #include "Function/Render/RenderPass/ReprojectionPass.h"
 #include "Function/Render/RenderPass/DeferredLightingPass.h"
@@ -40,6 +41,7 @@
 #include "Function/Render/RenderPass/RenderPass.h"
 #include "RenderSurfaceCacheManager.h"
 #include <memory>
+#include <set>
 
 void RenderSystem::InitSDL()
 {
@@ -117,12 +119,12 @@ void RenderSystem::InitBaseResource()
         passBindingConfig.enable_debug_output = false;
 
         BarrierGenerationConfig barrierGenerationConfig{};
-        barrierGenerationConfig.enable_debug_output = false;   // 诊断bisection轮关闭
+        barrierGenerationConfig.enable_debug_output = false;
 
         CommandRecordingConfig commandRecordingConfig{};
         commandRecordingConfig.enable_debug_markers = true;
         commandRecordingConfig.enable_debug_output = false;
-        commandRecordingConfig.enable_gpu_timing = false;        // [临时]nsys体检轮：逐pass打点（与renderQuery的info.enable_gpu_timing共同判定，见record_stream_range）
+        commandRecordingConfig.enable_gpu_timing = false;        
         commandRecordingConfig.chunk_count = 3;     // ANY池worker(2) + 主线程(1)——亦是每队列预建命令流数
         commandRecordingConfig.coarse_cross_frame_sync = false;    // 细链（V2）：imported资源首触批wait上帧末触点；true=粗链A/B回退
         rdgCompilers[i] = std::make_shared<RDGCompiler>(crossFrameRegistry, renderQuery, queueCfg, reorderConfig, crossQueueSyncConfig, passBindingConfig, barrierGenerationConfig, commandRecordingConfig);
@@ -150,6 +152,7 @@ void RenderSystem::InitPasses()
     meshPasses[MESH_DIRECTIONAL_SHADOW_PASS]    = std::make_shared<DirectionalShadowPass>();
     meshPasses[MESH_POINT_SHADOW_PASS]          = std::make_shared<PointShadowPass>();
     meshPasses[MESH_G_BUFFER_PASS]              = std::make_shared<GBufferPass>();
+    meshPasses[MESH_G_BUFFER_THIN_PASS]         = std::make_shared<GBufferThinPass>();    // 需maxColorAttachments>=8（本机启动日志已核实=8）
     meshPasses[MESH_FORWARD_PASS]               = std::make_shared<ForwardPass>();
 
     passes[TLAS_UPDATE_PASS]                    = std::make_shared<TLASUpdatePass>();
@@ -163,6 +166,7 @@ void RenderSystem::InitPasses()
     passes[CLIPMAP_PASS]                        = nullptr;
     passes[DDGI_PASS]                           = nullptr;
     passes[G_BUFFER_PASS]                       = meshPasses[MESH_G_BUFFER_PASS];
+    passes[G_BUFFER_THIN_PASS]                  = meshPasses[MESH_G_BUFFER_THIN_PASS];
     passes[SURFACE_CACHE_PASS]                  = nullptr;
     passes[REPROJECTION_PASS]                   = std::make_shared<ReprojectionPass>();
     passes[DEFERRED_LIGHTING_PASS]              = std::make_shared<DeferredLightingPass>();     // 0 ?
@@ -188,12 +192,12 @@ void RenderSystem::InitPasses()
     passes[EDITOR_UI_PASS]                      = std::make_shared<EditorUIPass>();
     passes[PRESENT_PASS]                        = std::make_shared<PresentPass>();
 
-    passes[BLOOM_PASS]->SetEnable(false);       //TODO 
+    passes[BLOOM_PASS]->SetEnable(false);       //TODO
     passes[VOLUMETIRC_FOG_PASS]->SetEnable(false);
 
 #if ENABLE_RAY_TRACING
-    passes[CLIPMAP_PASS]                    = std::make_shared<ClipmapPass>(); 
-    passes[DDGI_PASS]                       = std::make_shared<DDGIPass>();  
+    passes[CLIPMAP_PASS]                    = std::make_shared<ClipmapPass>();
+    passes[DDGI_PASS]                       = std::make_shared<DDGIPass>();
     passes[SURFACE_CACHE_PASS]              = std::make_shared<SurfaceCachePass>();         //
     passes[RESTIR_DI_PASS]                  = std::make_shared<ReSTIRDIPass>();
     passes[RESTIR_GI_PASS]                  = std::make_shared<ReSTIRGIPass>();             // 0.6
@@ -208,11 +212,14 @@ void RenderSystem::InitPasses()
     passes[RESTIR_DI_PASS]->SetEnable(false);
     passes[SVGF_PASS]->SetEnable(false);
     passes[CLIPMAP_VISUALIZE_PASS]->SetEnable(false);
-    passes[PATH_TRACING_PASS]->SetEnable(false);  
-    passes[RAY_TRACING_BASE_PASS]->SetEnable(false);      
+    passes[PATH_TRACING_PASS]->SetEnable(false);
+    passes[RAY_TRACING_BASE_PASS]->SetEnable(false);
 #endif
 
-    for(auto& pass : passes) { if(pass) pass->Init(); }
+    // Init去重：render槽位与mesh槽位可能填同一实例（如DEPTH_PASS=MESH_DEPTH_PASS），只初始化一次
+    std::set<std::shared_ptr<RenderPass>> inited;
+    for(auto& pass : passes)
+        if(pass && inited.insert(pass).second) pass->Init();
 }
 
 void RenderSystem::Tick()
@@ -285,16 +292,20 @@ void RenderSystem::BuildRDG()
             passes[EDITOR_UI_PASS]->Build(*rdgBuilder.get()); 
             passes[PRESENT_PASS]->Build(*rdgBuilder.get()); 
         }
-        else 
+        else
         {
-            for(auto& pass : passes) 
-            { 
-                if(pass) 
+            for(auto& pass : passes)
+            {
+                if(pass)
                 {
                     ENGINE_TIME_SCOPE_STR("RDGBuilder::BuildPass::" + pass->GetName());
-                    pass->Build(*rdgBuilder.get()); 
+                    pass->Build(*rdgBuilder.get());
                 }
             }
+
+            // 链尾契约校验：必须有pass产出"Final LDR Color"（Gizmo/EditorUI/Present消费它）
+            if(rdgBuilder->GetTexture("Final LDR Color").ID() == UINT64_MAX)
+                ENGINE_LOG_FATAL("Render pipeline builds no 'Final LDR Color' producer!");
         }
     }
 

@@ -8,11 +8,11 @@ layout(set = 1, binding = 1) buffer VXGI_CLIPMAP_BUFFER {
 	ClipmapInfo clipmapInfo;
 };
 
-struct Payload 
+struct Payload
 {
 	uint objectID;
 	vec3 normal;
-	vec4 diffuse;
+	vec4 albedo;
 	vec3 worldPos;
 };
 

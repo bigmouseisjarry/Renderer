@@ -57,8 +57,6 @@
 #define DDGI_IRRADIANCE_PROBE_SIZE 8                //DDGI使用的辐照度贴图，单个probe的纹理尺寸
 #define DDGI_DEPTH_PROBE_SIZE 16                    //DDGI使用的深度贴图，单个probe的纹理尺寸
 
-#define HALF_SIZE_SSSR true                         //SSSR是否使用半精度
-
 #define VOLUMETRIC_FOG_SIZE_X 320                   //体积雾使用的屏幕空间texture3d的分辨率
 #define VOLUMETRIC_FOG_SIZE_Y 180
 #define VOLUMETRIC_FOG_SIZE_Z 128
@@ -180,6 +178,7 @@ struct Object
     uint animationID;           //动画buffer索引
     uint materialID;            //材质buffer索引
     uint vertexID;
+    // 有些东西他不止一个
     uint indexID;  
     uint meshCardID;            //card索引起始值
     uint _padding[3];           
@@ -236,9 +235,14 @@ struct Material
 
     vec4 colors[8];
 
-    uint textureSlots2D[8]; 
+    uint textureSlots2D[8];
     uint textureSlotsCube[4];
-    uint textureSlots3D[4];  
+    uint textureSlots3D[4];
+
+    float ior;                // 折射率（薄透明层），G-Buffer IOR纹理(R8, (η-1)/2) 中转给透射；虹彩时兼作薄膜η2
+    uint iridescence;         // 虹彩标志，G-Buffer 法线纹理.a 中转为 specF（光照端用烘焙F0跳过Schlick）
+    float index2;             // 虹彩基底折射率η3（G-Buffer写入端烘焙时消费，不进G-Buffer）
+    float dinc;               // 虹彩膜厚标度（OPD=dinc·cosθ2，2η2已折叠，Range约0-6，非物理nm）
 };
 
 struct LightClusterIndex
@@ -539,7 +543,7 @@ layout(set = 0, binding = PER_FRAME_BINDING_MESH_CARD_READBACK) buffer mesh_card
 
 } MESH_CARD_READBACKS;
 
-layout(set = 0, binding = PER_FRAME_BINDING_SURFACE_CACHE) uniform texture2D SURFACE_CACHE[5];  // diffuse normal emmision lighting depth  
+layout(set = 0, binding = PER_FRAME_BINDING_SURFACE_CACHE) uniform texture2D SURFACE_CACHE[5];  // albedo(+metallic) normal emmision lighting depth
 
 layout(set = 0, binding = PER_FRAME_BINDING_DEPTH) uniform texture2D DEPTH[2];  // 本帧，前一帧
 
@@ -1011,14 +1015,15 @@ float FetchEmissionIntencity(in Material material){
     return material.emission.w; 
 }
 
-vec4 FetchDiffuse(in Material material, in vec2 coord) {
-    if(material.textureDiffuse > 0)    
+// 原始反照率 = baseColor × diffuse贴图
+vec4 FetchAlbedo(in Material material, in vec2 coord) {
+    if(material.textureDiffuse > 0)
     {
-        vec4 diffuse = FetchTex2D(material.textureDiffuse, coord, material.textureOffset, material.textureScale);
-        diffuse = pow(diffuse, vec4(1.0/2.2));          //gamma矫正
-        diffuse = FetchBaseColor(material) * diffuse;         
+        vec4 albedo = FetchTex2D(material.textureDiffuse, coord, material.textureOffset, material.textureScale);
+        albedo = pow(albedo, vec4(1.0/2.2));            //gamma矫正
+        albedo = FetchBaseColor(material) * albedo;
 
-        return diffuse;
+        return albedo;
     }
     else return FetchBaseColor(material);
 }
@@ -1027,11 +1032,10 @@ vec3 FetchNormal(in Material material, in vec2 coord, in vec3 normal, in vec4 ta
 	if(material.textureNormal > 0)     
     {
         //计算每像素的tbn矩阵可以避免在vert shader输出上的额外两个vec3的插值，其实还会更快！
-        float fSign = tangent.w < 0 ? -1 : 1;        
+        float fSign = tangent.w < 0 ? -1 : 1;
         highp vec3 n = normalize(normal);
-        highp vec3 t = normalize(tangent.xyz);       
-        highp vec3 b = -fSign * normalize(cross(n, t)); //排列组合试出来的 nm的 为什么
-        t = fSign * normalize(cross(n, t));
+        highp vec3 t = normalize(tangent.xyz - n * dot(n, tangent.xyz));
+        highp vec3 b = fSign * normalize(cross(n, t));   // B = cross(N, T) * 手性
 
         highp mat3 TBN = mat3(t, b, n);
 
@@ -1057,7 +1061,7 @@ vec4 FetchSpecular(in Material material, in vec2 coord) {
 
 //默认纹理////////////////////////////////////////////////////////////////////////////
 
-int SkyboxTexureSize() {
+int SkyboxTextureSize() {
     Material material = MATERIALS.slot[GLOBAL_SETTING.skyboxMaterialID]; 
 
     return textureSize(TEXTURES_CUBE[material.textureSlotsCube[0]], 0).s;
@@ -1122,24 +1126,13 @@ uint FetchObjectIDTex(in ivec2 pixel) {
 // 	return texture(NORMAL_SAMPLER, coord).xyz;
 // }
 
-// float FetchRoughness(vec2 coord) {
-// 	return texture(VELOCITY_SAMPLER, coord).a;  //目前粗糙度放在速度的A通道
-// }
-
-// float FetchMetallic(vec2 coord) {
-// 	return texture(NORMAL_SAMPLER, coord).a;    //目前金属度放在法线的A通道
-// }
-
-// vec4 FetchDiffuse(vec2 coord) {
-//     return texture(COLOR_DEFERRED_SAMPLER, coord).xyza;    
-// }
-
 #include "gizmo.glsl"
 #include "ray_query.glsl"
 #include "ddgi.glsl"
 #include "coordinate.glsl"
 #include "screen.glsl"
 #include "brdf.glsl"
+#include "iridescence.glsl"
 #include "samples.glsl"
 #include "noise.glsl"
 #include "light.glsl"

@@ -3,7 +3,7 @@
 
 struct SurfaceCacheData
 {
-    vec3 diffuse;
+    vec3 albedo;      // 原始反照率（cache存raw，未预乘metallic）
     vec3 normal;
     vec4 emission;
     float roughness;
@@ -57,14 +57,14 @@ float FetchMeshCardData(inout SurfaceCacheData data, uint meshCardID, vec3 local
             
     bilinearWeights *= depthVisibility;
 
-    vec4 diffuseMetallic    = BilinearSample(SURFACE_CACHE[0], SAMPLER[1], atlasCoord, bilinearWeights);
+    vec4 albedoMetallic    = BilinearSample(SURFACE_CACHE[0], SAMPLER[1], atlasCoord, bilinearWeights);
     vec4 normalRoughness    = BilinearSample(SURFACE_CACHE[1], SAMPLER[1], atlasCoord, bilinearWeights);
     vec4 emission           = BilinearSample(SURFACE_CACHE[2], SAMPLER[1], atlasCoord, bilinearWeights);
 
-    data.diffuse += diffuseMetallic.rgb * sampleWeight;
+    data.albedo += albedoMetallic.rgb * sampleWeight;
     data.roughness += normalRoughness.a * sampleWeight;
     data.normal += normalize(normalRoughness.rgb) * sampleWeight;
-    data.metallic += diffuseMetallic.a * sampleWeight;
+    data.metallic += albedoMetallic.a * sampleWeight;
     data.emission += emission * sampleWeight;
     return sampleWeight;
 }
@@ -72,7 +72,7 @@ float FetchMeshCardData(inout SurfaceCacheData data, uint meshCardID, vec3 local
 // 根据hit信息和物体id采样三个card，返回是否有效
 bool FetchSurfaceCacheData(out SurfaceCacheData data, uint objectID, vec3 hitPos, vec3 hitNormal)
 {
-    data.diffuse = vec3(0.0f);
+    data.albedo = vec3(0.0f);
     data.roughness = 0.0f;
     data.normal = vec3(0.0f);
     data.metallic = 0.0f;
@@ -97,7 +97,7 @@ bool FetchSurfaceCacheData(out SurfaceCacheData data, uint objectID, vec3 hitPos
     }
     if(totalWeight > 0.001f)
     {
-        data.diffuse /= totalWeight;
+        data.albedo /= totalWeight;
         data.roughness /= totalWeight;
         data.normal /= totalWeight;
         data.metallic /= totalWeight;
@@ -128,6 +128,7 @@ float FetchMeshCardLighting(inout vec4 lighting, uint meshCardID, vec3 localPos,
     bilinearWeights.w = (1 - bilinearWeightsUV.x) * (1 - bilinearWeightsUV.y);
 
     vec4 sampleDepth = textureGather(sampler2D(SURFACE_CACHE[4], SAMPLER[1]), atlasCoord, 0);
+    // 或许我们可以改为card的texel分辨率大小(atlasExtent = viewExtent × 2^scaleFactor)
     float depthThreshold = 0.5f / card.viewExtent.z;    // 深度的最大误差，可以设置成sdf体素尺寸等，这里取+-0.5体素深度为bias，超过+-1.0体素深度不可用
     vec4 depthVisibility = vec4(1.0f);
     for (uint i = 0; i < 4; i++)

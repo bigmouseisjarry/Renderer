@@ -152,8 +152,8 @@ void VolumeLightComponent::UpdateTexture()
                             info.setting.depthTextureHeight,
                             1};
 
-        textures.depthTex = std::make_shared<Texture>( 
-            TEXTURE_TYPE_2D, 
+        textures.depthTex = std::make_shared<Texture>(
+            TEXTURE_TYPE_2D,
             FORMAT_R16G16_SFLOAT,
             extent,
             1, 1);
@@ -161,4 +161,3 @@ void VolumeLightComponent::UpdateTexture()
 
     EngineContext::RenderResource()->SetVolumeLightTextures(textures, volumeLightID);
 }
-

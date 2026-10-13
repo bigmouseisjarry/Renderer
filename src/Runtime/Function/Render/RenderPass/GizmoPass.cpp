@@ -133,7 +133,7 @@ void GizmoPass::Build(RDGBuilder& builder)
 
     if(IsEnabled())
     {
-        RDGTextureHandle outColor = builder.GetTexture("Final Color");
+        RDGTextureHandle outColor = builder.GetTexture("Final LDR Color");
         RDGTextureHandle depth = builder.GetTexture("Depth");
 
         RDGBufferHandle dataBuffer = builder.CreateBuffer("Gizmo Data")
@@ -158,7 +158,7 @@ void GizmoPass::Build(RDGBuilder& builder)
         RDGRenderPassHandle pass1 = builder.CreateRenderPass(GetName())
             .Color(0, outColor, ATTACHMENT_LOAD_OP_LOAD, ATTACHMENT_STORE_OP_STORE, {0.0f, 0.0f, 0.0f, 0.0f})
             .DepthStencil(depth, ATTACHMENT_LOAD_OP_LOAD, ATTACHMENT_STORE_OP_STORE, 1.0f, 0)
-            .Dependency(dataBuffer, RESOURCE_STATE_INDIRECT_ARGUMENT)
+            .ReadIndirect(dataBuffer)
             .Execute([&](RDGPassContext context) {
                 
                 Extent2D windowExtent = EngineContext::Render()->GetWindowsExtent();

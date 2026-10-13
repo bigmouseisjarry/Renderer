@@ -39,7 +39,7 @@ void TestTrianglePass::Build(RDGBuilder& builder)
     {
         Extent2D extent = EngineContext::Render()->GetWindowsExtent();
 
-        RDGTextureHandle outColor = builder.GetOrCreateTexture("Final Color")
+        RDGTextureHandle outColor = builder.GetOrCreateTexture("Final LDR Color")
             .Exetent({extent.width, extent.height, 1})
             .Format(FORMAT_R8G8B8A8_UNORM)
             .ArrayLayers(1)

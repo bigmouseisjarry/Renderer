@@ -82,7 +82,7 @@ void ForwardPass::Build(RDGBuilder& builder)
 {
     if(IsEnabled())
     {
-        RDGTextureHandle outColor = builder.GetTexture("Mesh Pass Out Color");
+        RDGTextureHandle outColor = builder.GetTexture("Noisy HDR Color");
 
         RDGTextureHandle depth = builder.GetTexture("Depth");
 
@@ -91,8 +91,8 @@ void ForwardPass::Build(RDGBuilder& builder)
         RDGRenderPassHandle pass = builder.CreateRenderPass(GetName())
             .Color(0, outColor, ATTACHMENT_LOAD_OP_LOAD, ATTACHMENT_STORE_OP_STORE, {0.0f, 0.0f, 0.0f, 0.0f})
             .DepthStencil(depth, ATTACHMENT_LOAD_OP_LOAD, ATTACHMENT_STORE_OP_STORE, 1.0f, 0)
-            .Dependency(builder.GetBuffer("Mesh Draw Commands" + cmdIndex), RESOURCE_STATE_INDIRECT_ARGUMENT)
-            .Dependency(builder.GetBuffer("Clusrter Draw Commands" + cmdIndex), RESOURCE_STATE_INDIRECT_ARGUMENT)
+            .ReadIndirect(builder.GetBuffer("Mesh Draw Commands" + cmdIndex))
+            .ReadIndirect(builder.GetBuffer("Clusrter Draw Commands" + cmdIndex))
             .Execute([&](RDGPassContext context) {
 
                 Extent2D windowExtent = EngineContext::Render()->GetWindowsExtent();

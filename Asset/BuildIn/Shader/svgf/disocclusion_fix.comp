@@ -44,7 +44,7 @@ void main()
 	if (historyLength < 5.0f && FetchDepthTex(pixel) != 1.0f) 	//  up to 3 frames in history
 	{
 		vec4 pPosition      = DepthToWorld(uv);
-		vec3 pNormal        = normalize(texelFetch(G_BUFFER_NORMAL_ROUGHNESS, pixel, 0).xyz);
+		vec3 pNormal        = DecodeGBufferNormal(texelFetch(G_BUFFER_NORMAL_SPECF, pixel, 0).xyz);
 
 		outColor = color;													// 本帧的数据还是需要保留，ReLAX里用的权重就是1
 		float weights = 1.0f;												// apply all edge stoppers
@@ -61,7 +61,7 @@ void main()
 				vec2 qUV        = ScreenPixToUV(qPixel); 
 				{
 					vec4 qPosition      = DepthToWorld(qUV);
-					vec3 qNormal        = normalize(texelFetch(G_BUFFER_NORMAL_ROUGHNESS, qPixel, 0).xyz);
+					vec3 qNormal        = DecodeGBufferNormal(texelFetch(G_BUFFER_NORMAL_SPECF, qPixel, 0).xyz);
 					vec3 qColor         = imageLoad(CURRENT_COLOR_VARIANCE[0], qPixel).xyz;
 
 					float wp    = GetPlaneDistanceWeight(pPosition.xyz, pNormal, qPosition.xyz);

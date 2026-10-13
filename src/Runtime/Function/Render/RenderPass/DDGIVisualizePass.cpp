@@ -49,7 +49,7 @@ void DDGIVisualizePass::Build(RDGBuilder& builder)
         !EngineContext::Render()->IsPassEnabled(RAY_TRACING_BASE_PASS) && 
         !EngineContext::Render()->IsPassEnabled(PATH_TRACING_PASS))
     {
-        RDGTextureHandle outColor = builder.GetTexture("Mesh Pass Out Color");
+        RDGTextureHandle outColor = builder.GetTexture("Noisy HDR Color");
 
         RDGTextureHandle depth = builder.GetTexture("Depth");
 

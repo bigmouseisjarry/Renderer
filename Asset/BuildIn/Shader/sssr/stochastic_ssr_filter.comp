@@ -16,10 +16,6 @@ void main() {
 
     ivec2 pixel         = ivec2(gl_GlobalInvocationID.xy);
 
-    ivec2 tracePixel    = HALF_SIZE_SSSR ? 
-                            pixel / 2 :
-                            pixel;
-
     vec2 uv             = ScreenPixToUV(pixel);
 
     // vec4 reprojection   = texelFetch(REPROJECTION_RESULT, pixel, 0);
@@ -32,7 +28,7 @@ void main() {
     ivec2 prevPixel     = ivec2(reprojection.zw);
     bool valid          = prevPixel.x > 0.0f ? true : false;	
 
-    vec3 screenColor        = (SETTING.reflectionOnly == 0) ? texture(sampler2D(IN_COLOR_PYRAMID, SAMPLER[0]), uv).xyz : vec3(0.0f); 
+    vec3 screenColor        = (SETTING.reflectionOnly == 0) ? imageLoad(OUT_COLOR, ivec2(pixel.xy)).xyz : vec3(0.0f);
     vec3 currentColor       = imageLoad(SSSR_RESOLVE, pixel).xyz; 
     vec3 historyColor 		= RGBtoYCoCg(imageLoad(SSSR_HISTORY, prevPixel).xyz);
 
@@ -63,7 +59,7 @@ void main() {
     }
     screenColor += finalColor;
 
-    vec4 traceResult = imageLoad(SSSR_HIT_RESULT, ivec2(tracePixel.xy));
+    vec4 traceResult = imageLoad(SSSR_HIT_RESULT, ivec2(pixel.xy));
     if(SETTING.visualizeHitUV != 0)     screenColor = vec3(traceResult.xy, 0.0f);
     if(SETTING.visualizeHitMask != 0)   screenColor = vec3(traceResult.www);
 

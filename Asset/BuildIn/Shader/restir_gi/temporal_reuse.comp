@@ -55,14 +55,12 @@ void main()
 	ivec2 screenPixel = ivec2(pixel.x * WIDTH_DOWNSAMPLE_RATE, pixel.y * HEIGHT_DOWNSAMPLE_RATE);
     vec2 uv         = ScreenPixToUV(screenPixel); 
 
-    vec4 gbffer0    = texelFetch(G_BUFFER_DIFFUSE_METALLIC, screenPixel, 0);
-    vec4 gbffer1    = texelFetch(G_BUFFER_NORMAL_ROUGHNESS, screenPixel, 0);
+    vec4 gbffer0    = texelFetch(G_BUFFER_DIFFUSE_TRANSPARENT, screenPixel, 0);
+    vec4 gbffer1    = texelFetch(G_BUFFER_NORMAL_SPECF, screenPixel, 0);
     vec4 gbffer2    = texelFetch(G_BUFFER_EMISSION, screenPixel, 0);
     vec3 diffuse    = gbffer0.xyz;
-    vec3 normal     = gbffer1.xyz;
-    vec3 emission   = gbffer2.xyz;
-    float roughness = gbffer1.w;
-    float metallic  = gbffer0.w;
+    vec3 normal     = DecodeGBufferNormal(gbffer1.xyz);
+    vec3 emission   = DecodeEmissionRGBM(gbffer2);
     vec4 worldPos   = DepthToWorld(uv);
 	float depth 	= FetchDepthTex(screenPixel);
 

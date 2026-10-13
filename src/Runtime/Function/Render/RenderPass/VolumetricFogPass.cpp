@@ -68,7 +68,7 @@ void VolumetricFogPass::Build(RDGBuilder& builder)
             .AllowReadWrite()
             .Finish();    
 
-        RDGTextureHandle outColor = builder.GetTexture("Mesh Pass Out Color");    
+        RDGTextureHandle outColor = builder.GetTexture("Noisy HDR Color");    
 
         RDGComputePassHandle pass0 = builder.CreateComputePass(GetName() + " Light Injection")
             .RootSignature(rootSignature)
@@ -76,14 +76,14 @@ void VolumetricFogPass::Build(RDGBuilder& builder)
             .ReadWrite(1, 1, 0, voxelRawHistory, VIEW_TYPE_3D)
             .ReadWrite(1, 2, 0, voxelIntegral, VIEW_TYPE_3D)
             .ReadWrite(1, 3, 0, outColor)
-            .Dependency(builder.GetTexture("Directional Depth [0]"), RESOURCE_STATE_SHADER_RESOURCE)
-            .Dependency(builder.GetTexture("Directional Depth [1]"), RESOURCE_STATE_SHADER_RESOURCE)
-            .Dependency(builder.GetTexture("Directional Depth [2]"), RESOURCE_STATE_SHADER_RESOURCE)
-            .Dependency(builder.GetTexture("Directional Depth [3]"), RESOURCE_STATE_SHADER_RESOURCE)
-            .Dependency(builder.GetTexture("Point Shadow Filtered Color [0]"), RESOURCE_STATE_SHADER_RESOURCE)
-            .Dependency(builder.GetTexture("Point Shadow Filtered Color [1]"), RESOURCE_STATE_SHADER_RESOURCE)
-            .Dependency(builder.GetTexture("Light Cluster Grid"), RESOURCE_STATE_SHADER_RESOURCE)
-            .Dependency(builder.GetBuffer("Light Cluster Index"), RESOURCE_STATE_SHADER_RESOURCE)
+            .Read(builder.GetTexture("Directional Depth [0]"))
+            .Read(builder.GetTexture("Directional Depth [1]"))
+            .Read(builder.GetTexture("Directional Depth [2]"))
+            .Read(builder.GetTexture("Directional Depth [3]"))
+            .Read(builder.GetTexture("Point Shadow Filtered Color [0]"))
+            .Read(builder.GetTexture("Point Shadow Filtered Color [1]"))
+            .Read(builder.GetTexture("Light Cluster Grid"))
+            .Read(builder.GetBuffer("Light Cluster Index"))
             .Execute([&](RDGPassContext context) {       
 
                 RHICommandListRef command = context.command; 

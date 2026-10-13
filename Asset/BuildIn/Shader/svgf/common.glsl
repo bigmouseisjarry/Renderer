@@ -1,7 +1,7 @@
 
-layout(set = 1, binding = 0)                uniform texture2D G_BUFFER_DIFFUSE_METALLIC;	
-layout(set = 1, binding = 1)                uniform texture2D G_BUFFER_NORMAL_ROUGHNESS;	
-layout(set = 1, binding = 2)   		        uniform texture2D HISTORY_G_BUFFER_NORMAL_ROUGHNESS;	
+layout(set = 1, binding = 0)                uniform texture2D G_BUFFER_DIFFUSE_TRANSPARENT;	
+layout(set = 1, binding = 1)                uniform texture2D G_BUFFER_NORMAL_SPECF;	
+layout(set = 1, binding = 2)   		        uniform texture2D HISTORY_G_BUFFER_NORMAL_SPECF;	
 //layout(set = 1, binding = 2)                uniform texture2D REPROJECTION_RESULT;	
 
 layout(set = 1, binding = 3, rgba16f) 		uniform image2D IN_COLOR;	

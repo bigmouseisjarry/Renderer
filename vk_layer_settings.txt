@@ -1,3 +1,6 @@
-# 验证层设置：关闭重复消息去重（默认同一条消息只上报约10次即抑制，
-# 会掩盖每帧真实错误数）。取证时通过 VK_LAYER_SETTINGS_PATH 指向本文件。
-khronos_validation.duplicate_message_limit = 1000000
+# 验证层收集常驻配置
+# 解除duplicate message limit：默认同一VUID报10次后静默，0=不限
+# （注意：光设DUPLICATE_MESSAGE_LIMIT环境变量无效，必须走本文件）
+# sync validation按需另开：VK_LAYER_ENABLES=VALIDATION_CHECKS_ENABLE_SYNCHRONIZATION_VALIDATION
+[khronos_validation]
+khronos_validation.duplicate_message_limit = 0

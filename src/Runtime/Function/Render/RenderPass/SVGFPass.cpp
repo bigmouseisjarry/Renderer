@@ -82,7 +82,7 @@ void SVGFPass::Build(RDGBuilder& builder)
         !EngineContext::Render()->IsPassEnabled(PATH_TRACING_PASS))
     {
         setting.denoisedOnly = (EngineContext::Render()->IsPassEnabled(RESTIR_DI_PASS) || denoisedOnly) ? 1 : 0;   
-        // 开启DI后，deferred流程被禁用，因此Mesh Pass Out Color里无可用数据
+        // 开启DI后，deferred流程被禁用，因此Noisy HDR Color里无可用数据
 
         Extent2D windowExtent = EngineContext::Render()->GetWindowsExtent();
 
@@ -91,7 +91,7 @@ void SVGFPass::Build(RDGBuilder& builder)
         RDGTextureHandle historyNormal   = builder.GetTexture("History G-Buffer Normal/Roughness");
         //RDGTextureHandle reprojectionOut = builder.GetTexture("Reprojection Out");
         RDGTextureHandle inColor        = builder.GetTexture("ReSTIR Diffuse Color");
-        RDGTextureHandle outColor      = builder.GetTexture("Mesh Pass Out Color");
+        RDGTextureHandle outColor      = builder.GetTexture("Noisy HDR Color");
 
         RDGTextureHandle historyMoments = builder.CreateTexture("SVGF History Moments/History Length")
             .Import(historyMomentsTex, RESOURCE_STATE_UNDEFINED)
@@ -130,6 +130,8 @@ void SVGFPass::Build(RDGBuilder& builder)
 
         RDGComputePassHandle pass0 = builder.CreateComputePass(GetName() + " Temporal Accumulation")
             .RootSignature(rootSignature)
+            .Read(builder.GetTexture("History G-Buffer Object ID"))
+            .Read(builder.GetTexture("Previous Depth"))
             .Read(1, 0, 0, diffuse)
             .Read(1, 1, 0, normal)
             .Read(1, 2, 0, historyNormal)

@@ -13,13 +13,12 @@ void TLASUpdatePass::Build(RDGBuilder& builder)
     // manager的tick在BuildRDG之前已WaitIdle，instances已就绪
     meshManager->PrepareTLASUpdate();
 
-    // 存储buffer以imported身份进图（跨帧持久资源，声明初始状态为AS）
     auto storage = builder.GetOrCreateBuffer("TLAS Storage")
         .Import(meshManager->GetTLASStorageBuffer(), RESOURCE_STATE_ACCELERATION_STRUCTURE)
         .Finish();
 
     builder.CreateRayTracingPass("TLAS Update")
-        .OutputReadWrite(storage)      // 产出边（post-state=UAV）：供RT pass的Dependency边生成 构建写→RT读 的屏障链
+        .OutputReadWrite(storage)      
         .Execute([meshManager](RDGPassContext context)
         {
             // 构建命令录进帧命令流（首帧BUILD、之后refit，由PrepareUpdate填充的模式决定）

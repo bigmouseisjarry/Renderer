@@ -34,7 +34,7 @@ void main()
 	{
 		RAY_PAYLOAD.objectID = 0;
 		RAY_PAYLOAD.normal = vec3(0.0);
-		RAY_PAYLOAD.diffuse = vec4(0.0);
+		RAY_PAYLOAD.albedo = vec4(0.0);
 		RAY_PAYLOAD.worldPos = vec3(0.0);
 
 		vec3 origin = worldPos + direction[i] * (halfVoxelSize + 2 * tmin);
@@ -57,7 +57,7 @@ void main()
 		bool valid = FetchSurfaceCacheLighting(lighting, RAY_PAYLOAD.objectID, RAY_PAYLOAD.worldPos, RAY_PAYLOAD.normal);	// 用surface cache的光照结果
 
 		ivec3 texCoord = FetchClipmapSampleCoord(clipmapLevel, worldPos, i);
-		//imageStore(VXGI_CLIPMAP, texCoord, RAY_PAYLOAD.diffuse);
+		//imageStore(VXGI_CLIPMAP, texCoord, RAY_PAYLOAD.albedo);
 		imageStore(VXGI_CLIPMAP, texCoord, valid ? lighting : vec4(0.0f));
 	}
 }

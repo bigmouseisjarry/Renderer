@@ -51,14 +51,12 @@ void main()
 	ivec2 screenPixel = ivec2(pixel.x * WIDTH_DOWNSAMPLE_RATE, pixel.y * HEIGHT_DOWNSAMPLE_RATE);
     vec2 uv         = ScreenPixToUV(screenPixel); 
 
-   	vec4 gbffer0    = texelFetch(G_BUFFER_DIFFUSE_METALLIC, screenPixel, 0);
-    vec4 gbffer1    = texelFetch(G_BUFFER_NORMAL_ROUGHNESS, screenPixel, 0);
+   	vec4 gbffer0    = texelFetch(G_BUFFER_DIFFUSE_TRANSPARENT, screenPixel, 0);
+    vec4 gbffer1    = texelFetch(G_BUFFER_NORMAL_SPECF, screenPixel, 0);
     vec4 gbffer2    = texelFetch(G_BUFFER_EMISSION, screenPixel, 0);
     vec3 diffuse    = gbffer0.xyz;
-    vec3 normal     = normalize(gbffer1.xyz);
-    vec3 emission   = gbffer2.xyz;
-    float roughness = gbffer1.w;
-    float metallic  = gbffer0.w;
+    vec3 normal     = DecodeGBufferNormal(gbffer1.xyz);
+    vec3 emission   = DecodeEmissionRGBM(gbffer2);
     vec4 worldPos   = DepthToWorld(uv); 
 	float depth 	= FetchDepthTex(screenPixel);
 
@@ -89,7 +87,7 @@ void main()
 			uint randIndex 		= ReservoirIndex(randNeighborPixel);	
 			
 			neighborNumStreamSamples[j] = RESERVOIRS[randIndex].numStreamSamples; 
-			neighborNormal[j] = normalize(texelFetch(G_BUFFER_NORMAL_ROUGHNESS, randNeighborScreenPixel, 0).xyz);
+			neighborNormal[j] = DecodeGBufferNormal(texelFetch(G_BUFFER_NORMAL_SPECF, randNeighborScreenPixel, 0).xyz);
             neighborWorldPos[j] = DepthToWorld(randNeighborUV); 
 
 			float neighborDepth = FetchDepthTex(randNeighborScreenPixel);
@@ -122,8 +120,7 @@ void main()
             uint z = originNumStreamSamples;
             // 防护：res持有有效采样（w>0且hitPos有限）才做可见性射线——空/毒化reservoir的
             // hitPos会产生无法被BVH剪枝的NaN射线（可见性测试是最主要的性能开销）
-            const bool visibilityTrace = RESTIR_GI_SETTING.visibilityReuse != 0
-                && res.w > 0.0f && IsFiniteVec3(res.sampl.hitPos);
+            const bool visibilityTrace = RESTIR_GI_SETTING.visibilityReuse != 0 && res.w > 0.0f && IsFiniteVec3(res.sampl.hitPos);
             for(int j = 0; j < NUM_NEIGHBORS; j++)
             {
                 if(visibilityTrace)

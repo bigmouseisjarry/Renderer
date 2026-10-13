@@ -75,6 +75,7 @@ private:
     RenderGlobalSetting globalSetting = {};
     RDGDependencyGraphRef rdgDependencyGraph;
 
+    // PassType枚举=管线阶段槽位表；render槽位与mesh槽位可能填同一实例（如DEPTH_PASS=MESH_DEPTH_PASS）
     std::array<std::shared_ptr<RenderPass>, PASS_TYPE_MAX_CNT> passes;
     std::array<std::shared_ptr<MeshPass>, MESH_PASS_TYPE_MAX_CNT> meshPasses;
 

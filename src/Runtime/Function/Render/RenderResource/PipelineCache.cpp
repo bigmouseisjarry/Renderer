@@ -48,8 +48,8 @@ bool GraphicsPipelineCache::IsValid(RHIGraphicsPipelineInfo info)
     }
     for(uint32_t i = 0; i < std::min(info.colorAttachmentFormats.size(), info.fragmentShader->GetReflectInfo().outputVariables.size()); i++)
     {
-        if( FormatChanelCounts(info.colorAttachmentFormats[i]) != 
-            FormatChanelCounts(info.fragmentShader->GetReflectInfo().outputVariables[i])) return false;    // 输出通道数一致
+        if (FormatChanelCounts(info.colorAttachmentFormats[i]) != FormatChanelCounts(info.fragmentShader->GetReflectInfo().outputVariables[i]))
+            return false;    // 输出通道数一致
     }
 
     // TODO 描述符等信息的检测

@@ -589,19 +589,64 @@ RDGRenderPassBuilder& RDGRenderPassBuilder::OutputRead(RDGTextureHandle texture,
     RDGTextureEdgeRef edge = new RDGTextureEdge();
     edge->state = RESOURCE_STATE_SHADER_RESOURCE;
     edge->subresource = subresource;
-    edge->asOutputReadWrite = true;
+    edge->asOutputRead = true;
 
     graph->Link(pass, graph->GetTextureNode(texture.ID()), edge);
 
     return *this;
 }
 
-RDGRenderPassBuilder& RDGRenderPassBuilder::Dependency(RDGBufferHandle buffer, RHIResourceState state)
+RDGRenderPassBuilder& RDGRenderPassBuilder::Read(RDGBufferHandle buffer)
 {
     if (buffer.ID() == UINT64_MAX) return *this;    // 生产者pass未构建（被禁用等），GetBuffer已警告
 
     RDGBufferEdgeRef edge = new RDGBufferEdge();
-    edge->state = state;
+    edge->state = RESOURCE_STATE_SHADER_RESOURCE;
+    edge->set = NO_DESCRIPTOR_SET;
+
+    graph->Link(graph->GetBufferNode(buffer.ID()), pass, edge);
+
+    return *this;
+}
+
+RDGRenderPassBuilder& RDGRenderPassBuilder::Read(RDGTextureHandle texture)
+{
+    if (texture.ID() == UINT64_MAX) return *this;    // 生产者pass未构建（被禁用等），GetTexture已警告
+
+    RDGTextureEdgeRef edge = new RDGTextureEdge();
+    edge->state = RESOURCE_STATE_SHADER_RESOURCE;
+    edge->subresource = {};
+    edge->asShaderRead = true;
+    edge->set = NO_DESCRIPTOR_SET;
+    edge->binding = 0;
+    edge->index = 0;
+    edge->type = RESOURCE_TYPE_TEXTURE;
+    edge->viewType = VIEW_TYPE_2D;
+
+    graph->Link(graph->GetTextureNode(texture.ID()), pass, edge);
+
+    return *this;
+}
+
+RDGRenderPassBuilder& RDGRenderPassBuilder::ReadIndirect(RDGBufferHandle buffer)
+{
+    if (buffer.ID() == UINT64_MAX) return *this;    // 生产者pass未构建（被禁用等），GetBuffer已警告
+
+    RDGBufferEdgeRef edge = new RDGBufferEdge();
+    edge->state = RESOURCE_STATE_INDIRECT_ARGUMENT;
+    edge->set = NO_DESCRIPTOR_SET;
+
+    graph->Link(graph->GetBufferNode(buffer.ID()), pass, edge);
+
+    return *this;
+}
+
+RDGRenderPassBuilder& RDGRenderPassBuilder::ReadAccelerationStructure(RDGBufferHandle buffer)
+{
+    if (buffer.ID() == UINT64_MAX) return *this;    // 生产者pass未构建（被禁用等），GetBuffer已警告
+
+    RDGBufferEdgeRef edge = new RDGBufferEdge();
+    edge->state = RESOURCE_STATE_ACCELERATION_STRUCTURE;
     edge->set = NO_DESCRIPTOR_SET;
 
     graph->Link(graph->GetBufferNode(buffer.ID()), pass, edge);
@@ -711,12 +756,12 @@ RDGComputePassBuilder& RDGComputePassBuilder::Read(uint32_t set, uint32_t bindin
     return *this;
 }
 
-RDGComputePassBuilder& RDGComputePassBuilder::Dependency(RDGBufferHandle buffer, RHIResourceState state)
+RDGComputePassBuilder& RDGComputePassBuilder::Read(RDGBufferHandle buffer)
 {
     if (buffer.ID() == UINT64_MAX) return *this;    // 生产者pass未构建（被禁用等），GetBuffer已警告
 
     RDGBufferEdgeRef edge = new RDGBufferEdge();
-    edge->state = state;
+    edge->state = RESOURCE_STATE_SHADER_RESOURCE;
     edge->set = NO_DESCRIPTOR_SET;
 
     graph->Link(graph->GetBufferNode(buffer.ID()), pass, edge);
@@ -724,12 +769,12 @@ RDGComputePassBuilder& RDGComputePassBuilder::Dependency(RDGBufferHandle buffer,
     return *this;
 }
 
-RDGComputePassBuilder& RDGComputePassBuilder::Dependency(RDGTextureHandle texture, RHIResourceState state)
+RDGComputePassBuilder& RDGComputePassBuilder::Read(RDGTextureHandle texture)
 {
     if (texture.ID() == UINT64_MAX) return *this;    // 生产者pass未构建（被禁用等），GetTexture已警告
 
     RDGTextureEdgeRef edge = new RDGTextureEdge();
-    edge->state = state;
+    edge->state = RESOURCE_STATE_SHADER_RESOURCE;
     edge->subresource = {};
     edge->asShaderRead = true;
     edge->set = NO_DESCRIPTOR_SET;
@@ -739,6 +784,32 @@ RDGComputePassBuilder& RDGComputePassBuilder::Dependency(RDGTextureHandle textur
     edge->viewType = VIEW_TYPE_2D;
 
     graph->Link(graph->GetTextureNode(texture.ID()), pass, edge);
+
+    return *this;
+}
+
+RDGComputePassBuilder& RDGComputePassBuilder::ReadIndirect(RDGBufferHandle buffer)
+{
+    if (buffer.ID() == UINT64_MAX) return *this;    // 生产者pass未构建（被禁用等），GetBuffer已警告
+
+    RDGBufferEdgeRef edge = new RDGBufferEdge();
+    edge->state = RESOURCE_STATE_INDIRECT_ARGUMENT;
+    edge->set = NO_DESCRIPTOR_SET;
+
+    graph->Link(graph->GetBufferNode(buffer.ID()), pass, edge);
+
+    return *this;
+}
+
+RDGComputePassBuilder& RDGComputePassBuilder::ReadAccelerationStructure(RDGBufferHandle buffer)
+{
+    if (buffer.ID() == UINT64_MAX) return *this;    // 生产者pass未构建（被禁用等），GetBuffer已警告
+
+    RDGBufferEdgeRef edge = new RDGBufferEdge();
+    edge->state = RESOURCE_STATE_ACCELERATION_STRUCTURE;
+    edge->set = NO_DESCRIPTOR_SET;
+
+    graph->Link(graph->GetBufferNode(buffer.ID()), pass, edge);
 
     return *this;
 }
@@ -795,7 +866,7 @@ RDGComputePassBuilder& RDGComputePassBuilder::OutputRead(RDGTextureHandle textur
     RDGTextureEdgeRef edge = new RDGTextureEdge();
     edge->state = RESOURCE_STATE_SHADER_RESOURCE;
     edge->subresource = subresource;
-    edge->asOutputReadWrite = true;
+    edge->asOutputRead = true;    
 
     graph->Link(pass, graph->GetTextureNode(texture.ID()), edge);
 
@@ -969,7 +1040,7 @@ RDGRayTracingPassBuilder& RDGRayTracingPassBuilder::OutputRead(RDGTextureHandle 
     RDGTextureEdgeRef edge = new RDGTextureEdge();
     edge->state = RESOURCE_STATE_SHADER_RESOURCE;
     edge->subresource = subresource;
-    edge->asOutputReadWrite = true;
+    edge->asOutputRead = true;    
 
     graph->Link(pass, graph->GetTextureNode(texture.ID()), edge);
 
@@ -1001,12 +1072,12 @@ RDGRayTracingPassBuilder& RDGRayTracingPassBuilder::OutputReadWrite(RDGTextureHa
     return *this;
 }
 
-RDGRayTracingPassBuilder& RDGRayTracingPassBuilder::Dependency(RDGBufferHandle buffer, RHIResourceState state)
+RDGRayTracingPassBuilder& RDGRayTracingPassBuilder::Read(RDGBufferHandle buffer)
 {
     if (buffer.ID() == UINT64_MAX) return *this;    // 生产者pass未构建（被禁用等），GetBuffer已警告
 
     RDGBufferEdgeRef edge = new RDGBufferEdge();
-    edge->state = state;
+    edge->state = RESOURCE_STATE_SHADER_RESOURCE;
     edge->set = NO_DESCRIPTOR_SET;
 
     graph->Link(graph->GetBufferNode(buffer.ID()), pass, edge);
@@ -1014,12 +1085,12 @@ RDGRayTracingPassBuilder& RDGRayTracingPassBuilder::Dependency(RDGBufferHandle b
     return *this;
 }
 
-RDGRayTracingPassBuilder& RDGRayTracingPassBuilder::Dependency(RDGTextureHandle texture, RHIResourceState state)
+RDGRayTracingPassBuilder& RDGRayTracingPassBuilder::Read(RDGTextureHandle texture)
 {
     if (texture.ID() == UINT64_MAX) return *this;    // 生产者pass未构建（被禁用等），GetTexture已警告
 
     RDGTextureEdgeRef edge = new RDGTextureEdge();
-    edge->state = state;
+    edge->state = RESOURCE_STATE_SHADER_RESOURCE;
     edge->subresource = {};
     edge->asShaderRead = true;
     edge->set = NO_DESCRIPTOR_SET;
@@ -1029,6 +1100,32 @@ RDGRayTracingPassBuilder& RDGRayTracingPassBuilder::Dependency(RDGTextureHandle 
     edge->viewType = VIEW_TYPE_2D;
 
     graph->Link(graph->GetTextureNode(texture.ID()), pass, edge);
+
+    return *this;
+}
+
+RDGRayTracingPassBuilder& RDGRayTracingPassBuilder::ReadIndirect(RDGBufferHandle buffer)
+{
+    if (buffer.ID() == UINT64_MAX) return *this;    // 生产者pass未构建（被禁用等），GetBuffer已警告
+
+    RDGBufferEdgeRef edge = new RDGBufferEdge();
+    edge->state = RESOURCE_STATE_INDIRECT_ARGUMENT;
+    edge->set = NO_DESCRIPTOR_SET;
+
+    graph->Link(graph->GetBufferNode(buffer.ID()), pass, edge);
+
+    return *this;
+}
+
+RDGRayTracingPassBuilder& RDGRayTracingPassBuilder::ReadAccelerationStructure(RDGBufferHandle buffer)
+{
+    if (buffer.ID() == UINT64_MAX) return *this;    // 生产者pass未构建（被禁用等），GetBuffer已警告
+
+    RDGBufferEdgeRef edge = new RDGBufferEdge();
+    edge->state = RESOURCE_STATE_ACCELERATION_STRUCTURE;
+    edge->set = NO_DESCRIPTOR_SET;
+
+    graph->Link(graph->GetBufferNode(buffer.ID()), pass, edge);
 
     return *this;
 }
@@ -1139,7 +1236,8 @@ RDGCopyPassBuilder& RDGCopyPassBuilder::OutputRead(RDGBufferHandle buffer, uint3
 RDGCopyPassBuilder& RDGCopyPassBuilder::OutputRead(RDGTextureHandle texture, TextureSubresourceLayers subresource)
 {
     RDGTextureEdgeRef edge = new RDGTextureEdge();
-    edge->state = RESOURCE_STATE_UNORDERED_ACCESS;
+
+    edge->state = RESOURCE_STATE_SHADER_RESOURCE;
     edge->subresourceLayer = subresource;
     edge->asOutputRead = true;
 

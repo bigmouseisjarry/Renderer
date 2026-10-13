@@ -86,6 +86,7 @@ layout(push_constant) uniform CullingLodSetting {
 #define G_BUFFER_PASS_INDEX 3
 #define FORWARD_PASS_INDEX 4
 #define TRANSPARENT_PASS_INDEX 5
+#define G_BUFFER_THIN_PASS_INDEX 6
 
 bool CheckLOD(BoundingSphere sphere, float error)
 {

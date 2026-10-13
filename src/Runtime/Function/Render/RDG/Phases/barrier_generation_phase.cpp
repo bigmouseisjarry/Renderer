@@ -278,7 +278,7 @@ void BarrierGenerationPhase::process_access(RDGPassNodeRef pass, const ResourceA
         const bool is_subresource = !(mip_base == 0 && mip_count == tracker.mip_levels &&
                                       array_base == 0 && array_count == tracker.array_layers);
         const TextureSubresourceRange subresource = {
-            .aspect = TEXTURE_ASPECT_NONE,
+            .aspect = access.aspect,   // 声明的aspect（NONE=整资源→RHI按格式回退）；此前恒NONE，[sub]屏障全被放大成整图
             .baseMipLevel = mip_base,
             .levelCount = mip_count,
             .baseArrayLayer = array_base,

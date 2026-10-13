@@ -50,7 +50,6 @@
 #define DDGI_IRRADIANCE_PROBE_SIZE 8                //DDGI使用的辐照度贴图，单个probe的纹理尺寸
 #define DDGI_DEPTH_PROBE_SIZE 16                    //DDGI使用的深度贴图，单个probe的纹理尺寸
 
-#define HALF_SIZE_SSSR true                        //SSSR是否使用半精度
 
 #define VOLUMETRIC_FOG_SIZE_X 320                   //体积雾使用的屏幕空间texture3d的分辨率
 #define VOLUMETRIC_FOG_SIZE_Y 180

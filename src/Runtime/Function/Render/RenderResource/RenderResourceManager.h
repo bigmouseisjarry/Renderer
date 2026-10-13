@@ -41,7 +41,6 @@ struct VolumeLightTextures
     TextureRef radianceTex;
     TextureRef irradianceTex;
     TextureRef depthTex;
-    
 };
 
 enum BindlessSlot
@@ -175,8 +174,10 @@ public:
     RHITextureRef GetVelocityTexture()                      { return multiFrameResource.velocityTexture->texture; }
     RHITextureRef GetObjectIDTexture()                      { return multiFrameResource.objectIDTexture[0]->texture; }
     RHITextureRef GetPrevObjectIDTexture()                  { return multiFrameResource.objectIDTexture[1]->texture; }
-    // 上帧最终颜色ping-pong（读写两侧由parity决定，parity=EngineContext::CurrentFrameIndex()——FRAMES_IN_FLIGHT=2严格交替）
-    RHITextureRef GetFinalColorHistoryTexture(uint32_t i)   { return multiFrameResource.finalColorHistoryTexture[i]->texture; }
+    RHITextureRef GetNormalTexture()                        { return multiFrameResource.gbufferNormalTexture[0]->texture; }
+    RHITextureRef GetPrevNormalTexture()                    { return multiFrameResource.gbufferNormalTexture[1]->texture; }
+    RHITextureRef GetIORTexture()                           { return multiFrameResource.gbufferIORTexture->texture; }    // (η-1)/2，薄透明pass写
+    RHITextureRef GetStableHDRColorTexture(uint32_t slot);
     TextureRef GetSurfaceCacheTexture(uint32_t id)          { return multiFrameResource.surfaceCacheTexture[id]; }
 
     void SetRenderGlobalSetting(const RenderGlobalSetting& globalSetting);
@@ -255,12 +256,14 @@ private:
         std::array<TextureRef, MAX_POINT_SHADOW_COUNT> pointShadowTextures;   
         std::array<TextureRef, MAX_POINT_SHADOW_COUNT> pointShadowDepthTextures;   
         std::array<TextureRef, 2> skyboxIBLTexuture;    // diffuse, specular
-        std::array<TextureRef, 2> depthTexture;         // current, history
+        std::array<TextureRef, 2> depthTexture;         // 本帧，上一帧
         std::array<TextureRef, 2> depthPyramidTexture;  // MIN, MAX 
         TextureRef velocityTexture;
         std::array<TextureRef, 64> stbnTexture;
-        std::array<TextureRef, 2> objectIDTexture;      // current, history
-        std::array<TextureRef, 2> finalColorHistoryTexture;    // 上帧最终颜色ping-pong：TAA kernel直写（消Copy History pass），SSSR Color Pyramid采上帧颜色
+        std::array<TextureRef, 2> objectIDTexture;      // 本帧，上一帧
+        std::array<TextureRef, 2> gbufferNormalTexture; // 本帧，上一帧：G-Buffer Normal的历史对
+        TextureRef gbufferIORTexture;                   // G-Buffer IOR(R8)：仅薄透明pass写，每帧CLEAR兜0=IOR 1
+        std::array<TextureRef, 2> stableHDRColorTexture;    // 最终颜色乒乓：TAA直写physical[parity]（无Copy），经语义访问器(0=本帧,1=上一帧)访问
         std::array<TextureRef, 5> surfaceCacheTexture;
         std::vector<SamplerRef> samplers; 
     };

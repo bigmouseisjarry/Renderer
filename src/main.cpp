@@ -153,7 +153,7 @@ void InitCornellBoxScene()
         MaterialRef material = std::make_shared<Material>();
         material->SetRoughness(0.55f);
         material->SetMetallic(1.0f);
-        material->SetDiffuse({0.3f, 0.3f, 0.3f, 1.0f});
+        material->SetBaseColor({0.3f, 0.3f, 0.3f, 1.0f});
 
         meshRendererComponent->SetModel(model);
         meshRendererComponent->SetMaterial(material); 
@@ -218,7 +218,7 @@ void InitCornellBoxScene()
         MaterialRef material = std::make_shared<Material>();
         material->SetMetallic(0.0f);
         material->SetRoughness(1.0f);
-        material->SetDiffuse({0.0f, 0.0f, 0.0f, 1.0f});
+        material->SetBaseColor({0.0f, 0.0f, 0.0f, 1.0f});
         material->SetEmission({0.8f, 1.0f, 0.8f, 30.0f});
 
         meshRendererComponent->SetModel(model);
@@ -291,7 +291,7 @@ void InitCornellBoxScene()
             transformComponent->SetScale(scales[i]);
 
             MaterialRef material = std::make_shared<Material>();
-            material->SetDiffuse(colors[i]);
+            material->SetBaseColor(colors[i]);
             material->SetMetallic(0.0f);
             material->SetRoughness(1.0f);
             if(i == 3)
@@ -565,6 +565,45 @@ void InitScene()
         meshRendererComponent->SetMaterials({material});
     }
 
+    //// Plane 3
+    //if (true)
+    //{
+    //    std::shared_ptr<Entity> entity = scene->CreateEntity("Plane 3");
+    //    std::shared_ptr<TransformComponent> transformComponent = entity->TryGetComponent<TransformComponent>();
+    //    std::shared_ptr<MeshRendererComponent> meshRendererComponent = entity->AddComponent<MeshRendererComponent>();
+
+    //    transformComponent->SetPosition({ -2.0f, -0.24f, 1.9f });
+    //    transformComponent->SetRotation({ 0.0f, 0.0f, 0.0f });
+    //    transformComponent->SetScale({ 30.0f, 5.0f, 20.0f });
+
+    //    ModelProcessSetting processSetting = {
+    //        .smoothNormal = false,
+    //        .flipUV = false,
+    //        .loadMaterials = false,
+    //        .tangentSpace = true,
+    //        .generateBVH = false,
+    //        .generateCluster = true,
+    //        .generateVirtualMesh = false,
+    //        .cacheCluster = false
+    //    };
+    //    std::shared_ptr<Model> model = std::make_shared<Model>("Asset/BuildIn/Model/Basic/plane.obj", processSetting);
+
+    //    MaterialRef material = std::make_shared<Material>();
+    //    // 补充材质参数
+    //    // 虹彩：甲虫壳/CD盘式金属基底薄膜（干涉对比度最高）
+    //    material->SetIridescence(true);
+    //    material->SetIOR(1.45f);        // 薄膜η₂（HRP默认，典型涂层折射率）
+    //    material->SetIndex2(1.0f);      // 基底η₃（HRP默认；金属基底的吸收由metallic承担）
+    //    material->SetDinc(1.0f);        // 膜厚标度（HRP默认；0-6扫参看彩虹周期变化）
+    //    material->SetMetallic(1.0f);    // 基底强消光κ₃→界面2反射强，干涉色最饱和；且diffuse=0纯镜面
+    //    material->SetRoughness(0.15f);  // 低粗糙度，干涉色不被微表面糊掉
+    //    material->SetBaseColor({ 0.8f, 0.8f, 0.8f, 1.0f });  // 虹彩直接覆盖F0，此值基本不影响
+
+    //    meshRendererComponent->SetModel(model);
+    //    meshRendererComponent->SetMaterials({ material });
+    //}
+
+
     // emmisive box
     if(true)
     {
@@ -592,7 +631,7 @@ void InitScene()
         MaterialRef material = std::make_shared<Material>();
         material->SetMetallic(0.0f);
         material->SetRoughness(1.0f);
-        material->SetDiffuse({0.0f, 0.0f, 0.0f, 1.0f});
+        material->SetBaseColor({0.0f, 0.0f, 0.0f, 1.0f});
         material->SetEmission({0.8f, 1.0f, 0.8f, 20.0f});
 
         meshRendererComponent->SetModel(model);
@@ -880,7 +919,7 @@ int main()
 
     EngineContext::Init();
 
-    //InitCornellBoxScene();
+    // InitCornellBoxScene();
     InitScene();
     EngineContext::MainLoop();
     EngineContext::Destroy();

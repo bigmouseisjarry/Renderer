@@ -6,12 +6,16 @@ struct DDGIPayload
 {
     float dist;
     vec4 normal;
-    vec4 diffuse;
+    vec4 albedo;      // rgb=原始反照率，a=metallic
     vec4 emission;
 };
 
 // 相对坐标：probe小纹理内的坐标
 // 绝对坐标：大纹理整体的坐标
+
+// e.g. 大纹理
+// X: 2 + 8 + + 2 + 8 + 2 + 8 + 2
+// Y：2 + 8 + + 2 + 8 + 2 + 8 + 2
 
 // 一维下标到三维下标索引
 ivec3 FetchProbeCoord(in DDGISetting ddgi, int probeIndex)
@@ -78,9 +82,7 @@ vec2 FetchProbeAbsTexCoord(vec3 dir, int probeIndex, int fullTextureWidth, int f
     float probeWithBorderSide = probeSideLength + 2.0f;                         // 单个probe纹理的像素尺寸 + 2像素padding
                                                                                 // 单个probe左上1像素padding，整个纹理左上1像素padding
 
-    vec2 octCoordNormalizedToTextureDimensions = 
-        vec2(normalizedOctCoordZeroOne * probeSideLength) / 
-        vec2(fullTextureWidth, fullTextureHeight);                              // 相对像素坐标到绝对UV坐标
+    vec2 octCoordNormalizedToTextureDimensions = vec2(normalizedOctCoordZeroOne * probeSideLength);  // 相对像素坐标
 
     int probesPerRow = (fullTextureWidth - 2) / int(probeWithBorderSide);
 
@@ -89,9 +91,8 @@ vec2 FetchProbeAbsTexCoord(vec3 dir, int probeIndex, int fullTextureWidth, int f
                                         vec2(2.0f, 2.0f);                                       // 小纹理左上在整个纹理的像素坐标，包括了padding
                                                                                                 // 小纹理按一维索引行优先排列
 
-    vec2 normalizedProbeTopLeftPosition = vec2(probeTopLeftPosition) / vec2(fullTextureWidth, fullTextureHeight);  //
-
-    return vec2(normalizedProbeTopLeftPosition + octCoordNormalizedToTextureDimensions);        //  左上UV偏移 + 小纹理内UV偏移
+    return vec2(probeTopLeftPosition + octCoordNormalizedToTextureDimensions)   //  左上像素偏移 + 小纹理内像素偏移
+                / vec2(fullTextureWidth , fullTextureHeight);        
 }
 
 
@@ -168,13 +169,14 @@ vec3 FetchDDGIIrradiance(
 
         //1. 三线性插值系数
         {
-            vec3 trilinear = mix(1.0 - alpha, alpha, offset);
+            vec3 trilinear = mix(1.0 - alpha, alpha, offset);   // 探针位置到着色点的距离 / gridStep
             weight *= trilinear.x * trilinear.y * trilinear.z;  
         }
 
         //采样，累计光照      
         {
             vec3 irradianceDir     = normal;
+            // DDGI 的八面体辐照度图存的是 irradiance——以方向 d 为索引的那一格，存的是“一个以 d 为法线的表面，能收到的前半球总光”
             vec2 texCoord          = FetchProbeAbsTexCoord(normalize(irradianceDir), probeIdx, ddgi.irradianceTextureWidth, ddgi.irradianceTextureHeight, DDGI_IRRADIANCE_PROBE_SIZE);
             vec3 probeIrradiance   = texture(sampler2D(irradianceTexture, sampl), texCoord).rgb;
         
@@ -186,6 +188,7 @@ vec3 FetchDDGIIrradiance(
     vec3 netIrradiance = sumIrradiance / sumWeight;
     netIrradiance *= ddgi.energyPreservation;
 
+    // 纹理存的是平均值需要再乘以2*PI，即整个半球表面积
     return 2 * PI * netIrradiance;   
 }
 

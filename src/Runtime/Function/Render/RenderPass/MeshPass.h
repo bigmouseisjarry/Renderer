@@ -61,6 +61,7 @@
 //  对于物体实例的索引依赖gl_instaceIndex
 //  对于index下标的索引依赖gl_VertexIndex以及计算偏移值
 
+// 收集、剔除、创建管线(pass自己的或者材质的)、打包绘制命令、pass内进行绘制命令
 
 // 每帧重新生成和收集，包含一次绘制所需要的全部上层信息
 typedef struct DrawBatch

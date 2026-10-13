@@ -1225,7 +1225,7 @@ protected:
 	
 };
 
-struct RHIDescriptorUpdateInfo	
+struct RHIDescriptorUpdateInfo
 {
 	uint32_t binding = 0;
 	uint32_t index = 0;
@@ -1236,6 +1236,10 @@ struct RHIDescriptorUpdateInfo
 	RHITextureViewRef textureView;
 	RHISamplerRef sampler;
 	RHITopLevelAccelerationStructureRef tlas;
+
+	RHIResourceState state = RESOURCE_STATE_UNDEFINED;	// 绑定时该资源的屏障状态（如RDG边的访问状态）：
+														// 提供→按状态推导布局（与附件侧ResourceStateToImageLayout同源，
+														// 声明与屏障单一真值）；缺省→按resourceType回退（per-frame等静态绑定路径）
 
 	uint64_t bufferOffset = 0;	// 仅buffer使用
 	uint64_t bufferRange = 0;

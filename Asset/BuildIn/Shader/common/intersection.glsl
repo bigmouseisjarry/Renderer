@@ -220,6 +220,7 @@ bool SphereInsideSphere(BoundingSphere sphere0, BoundingSphere sphere1) // 前�
 //https://zeux.io/2023/01/12/approximate-projected-bounds/
 
 //下两个算法也是这样的要求，已经在函数里改了
+//求一个透视图投影后的包围球在屏幕上的精确紧密 AABB
 // 2D Polyhedral Bounds of a Clipped, Perspective-Projected 3D Sphere. Michael Mara, Morgan McGuire. 2013
 bool ProjectSphereView(vec3 c, float r, float znear, float P00, float P11, out vec4 aabb)
 {
@@ -230,6 +231,7 @@ bool ProjectSphereView(vec3 c, float r, float znear, float P00, float P11, out v
     vec3 cr = c * r;
     float czr2 = c.z * c.z - r * r;
 
+    // 斜率
     float vx = sqrt(c.x * c.x + czr2);
     float minx = (vx * c.x - cr.z) / (vx * c.z + cr.x);
     float maxx = (vx * c.x + cr.z) / (vx * c.z - cr.x);
@@ -240,10 +242,14 @@ bool ProjectSphereView(vec3 c, float r, float znear, float P00, float P11, out v
 
     aabb = vec4(minx * P00, miny * P11, maxx * P00, maxy * P11);
     // clip space -> uv space
+    // 翻转回去
     aabb = aabb.xwzy * vec4(0.5f, -0.5f, 0.5f, -0.5f) + vec4(0.5f);
 
     return true;
 }
+
+//proj[0][0] = 1 / (aspect · tan(fovy/2))   // 水平焦距：view空间x → NDC x 的缩放
+//proj[1][1] = 1 / tan(fovy/2)              // 垂直焦距：view空间y → NDC y 的缩放
 
 bool ProjectSphere(vec3 c, float r, mat4 view, float znear, float P00, float P11, out vec4 aabb)
 {
@@ -345,9 +351,7 @@ bool OcclusionCull(
 		float height 				= (aabb.w - aabb.y) * depthPyramidSize.y;
 		float level 				= max(floor(log2(max(width, height))), 0.0f);
 
-		// Sampler is set up to do max reduction, so this computes the minimum depth of a 2x2 texel quad
 		vec2 uv = (aabb.xy + aabb.zw) * 0.5;
-    	uv.y = 1 - uv.y;
 		
 		float depth;
 		depth = textureLod(sampler2D(hiz, minSampler), uv, level).r;

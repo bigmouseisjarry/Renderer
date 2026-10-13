@@ -44,6 +44,6 @@ private:
     static void FXAAPassUI(std::shared_ptr<FXAAPass> pass);
     static void TAAPassUI(std::shared_ptr<TAAPass> pass);  
     static void ExposurePassUI(std::shared_ptr<ExposurePass> pass);
-    static void PostProcessingPassUI(std::shared_ptr<PostProcessingPass> pass);  
-    static void RayTracingBasePassUI(std::shared_ptr<RayTracingBasePass> pass);  
+    static void PostProcessingPassUI(std::shared_ptr<PostProcessingPass> pass);
+    static void RayTracingBasePassUI(std::shared_ptr<RayTracingBasePass> pass);
 };

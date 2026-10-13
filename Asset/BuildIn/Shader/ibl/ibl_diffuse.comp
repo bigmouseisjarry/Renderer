@@ -18,6 +18,16 @@ layout(push_constant) uniform IBLSetting {
 	uint mip;
 } SETTING;
 
+// 当前面里的这个纹素转换成代表的球面方向
+vec3 UVToWorldDir(vec2 uv) 
+{
+	vec2 dir 		= uv * 2.0f - 1.0f;			//左上[-1,-1] 右下[1,1]
+	vec3 right 		= cross(SETTING.front.xyz, SETTING.up.xyz);
+	vec3 worldDir 		= normalize(SETTING.front.xyz) + dir.x * normalize(right.xyz) + dir.y * normalize(SETTING.up.xyz);
+
+	return worldDir;
+}
+
 // https://zhuanlan.zhihu.com/p/66518450
 
 #define THREAD_SIZE_X 16
@@ -30,28 +40,42 @@ void main()
 {
     ivec2 pixel     = ivec2(gl_GlobalInvocationID.xy);
     vec2 uv         = ScreenPixToUV(pixel, ivec2(DIFFUSE_IBL_SIZE)); 
-	vec2 dir 		= uv * 2.0f - 1.0f;			//左上[-1,-1] 右下[1,1]
+	vec3 worldDir 	= UVToWorldDir(uv);
 
-	vec3 right 		= cross(SETTING.front.xyz, SETTING.up.xyz);
-	vec3 front 		= normalize(SETTING.front.xyz) + dir.x * normalize(right.xyz) + dir.y * normalize(SETTING.up.xyz);
-
-	vec3 N 			= normalize(front);
+	// 重建世界正交基
+	vec3 N 			= normalize(worldDir);
 	vec3 up 		= vec3(0.0, 1.0, 0.0);
-	right 			= normalize(cross(up, N));
+	vec3 right 		= normalize(cross(up, N));
 	up 				= cross(N, right);
 
 	vec3 color = vec3(0.0);
 	uint sampleCount = 0u;
+	// E ≈ (1/N) * ΣLᵢwᵢ / p         wᵢ = (ωᵢ·d)⁺		// p (每样本测度 dωᵢ)为 1 / sinθᵢ·Δθ·Δφ
+	// [0,2π]
 	for (float phi = 0.0; phi < PI * 2.0; phi += SETTING.deltaPhi) 
 	{
+		// [0,π/2]
 		for (float theta = 0.0; theta < PI * 0.5; theta += SETTING.deltaTheta) 
 		{
+			// (cos(phi), sin(phi)) * (right * (1, 0) + up * (0, 1))
 			vec3 tempVec 		= cos(phi) * right + sin(phi) * up;
+			// (cos(theta), sin(theta)) * (N * (1, 0) + tempVec * (0, 1))
 			vec3 sampleVector 	= cos(theta) * N + sin(theta) * tempVec;
+			// L(ωᵢ) * wᵢ * (1/p)
 			color 				+= FetchSkyLight(sampleVector) * cos(theta) * sin(theta);	
 			sampleCount++;
 		}
 	}
-	
+
+//	格点总数 count = N_φ * N_θ，而 Δθ * Δφ = (π/2 / N_θ)·(2π/N_φ) = π²/count。于是：
+//
+//  result = (π/count)·Σ L·cosθ·sinθ
+//         = (ΔθΔφ/π)·Σ L·cosθ·sinθ        ← 代入 π/count = ΔθΔφ/π
+//         = (1/π)·[Σ L·cosθ·sinθ·ΔθΔφ]
+//         = (1/π)·Riemann(E)
+//         = E/π
+// 所以我们采样端仅需albedo
 	imageStore(OUT_COLOR, pixel, vec4(PI * color / float(sampleCount), 1.0));
 }
+
+// 漫反射部分使用: (1 - F) * (1 - metallic) * ibl_diffuse(N) * albedo

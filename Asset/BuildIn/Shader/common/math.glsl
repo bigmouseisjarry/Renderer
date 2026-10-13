@@ -285,6 +285,38 @@ vec3 OctDecode(vec2 o)
     return normalize(v);
 }
 
+// ———— G-Buffer 通道打包（拼积木布局） ————
+
+// 法线：八面体 + 每轴12bit定点位拼进 RGB（24bit），A通道整个腾给 specF/AO
+vec3 EncodeGBufferNormal(vec3 n)
+{
+    vec2 o   = OctEncode(normalize(n)) * 0.5 + 0.5;          // [0,1]
+    uvec2 kk = uvec2(o * 4095.0 + 0.5);                      // 12bit/轴，round对称量化
+    vec3 p;
+    p.xy = vec2(kk & 255u) / 255.0;                          // 低8bit → R/G
+    p.z  = float(((kk.x >> 8) << 4) | (kk.y >> 8)) / 255.0;  // 双轴高4bit两个nibble拼B
+    return p;
+}
+
+vec3 DecodeGBufferNormal(vec3 p)
+{
+    uvec3 a = uvec3(p * 255.0 + 0.5);                        // +0.5：UNORM读回的浮点误差防截断错位（B字节错1=nibble跨界跳变）
+    uvec2 kk = (a.xy & 255u) + (uvec2(a.z >> 4, a.z & 15u) << 8);
+    return OctDecode(vec2(kk) / 4095.0 * 2.0 - 1.0);
+}
+
+// emission：RGBM变体（HRP语义），RGB=e/max(e,1)比率，A=log2(max)/10，上界2^10
+vec4 EncodeEmissionRGBM(vec3 e)
+{
+    float maxC = max(max(e.r, e.g), max(e.b, 1e-6));         // 防log2(0)
+    return vec4(e / max(maxC, 1.0), clamp(log2(maxC) / 10.0, 0.0, 1.0));
+}                                                            // maxC≤1→A钳0→解码乘1无损；>1024软削顶
+
+vec3 DecodeEmissionRGBM(vec4 m)
+{
+    return m.rgb * exp2(m.a * 10.0);
+}
+
 // // A simple utility to convert a float to a 2-component octohedral representation
 // // 向量压缩算法，实现思路和八面体映射一致
 // vec2 Direction_to_Octohedral(vec3 normal)

@@ -99,18 +99,18 @@ void DDGIPass::Build(RDGBuilder& builder)
                 .Import(volumeLight->GetTextres().depthTex->texture, RESOURCE_STATE_UNDEFINED)
                 .Finish();
 
-            // 光追更新G-Buffer
+            // 光追更新volumeLight的G-Buffer
 			if (volumeLight->Enable() &&
 				volumeLight->ShouldUpdate(0))
 			{		
                 RDGRayTracingPassHandle pass = builder.CreateRayTracingPass(GetName() + " Trace Ray" + index)
                     .PassIndex(i)
                     .RootSignature(rootSignature)
-                    .Dependency(builder.GetBuffer("TLAS Storage"), RESOURCE_STATE_ACCELERATION_STRUCTURE)      // 依赖TLAS Update的产出（虚拟边，不绑定描述符；ray query读AS）
-                    .Dependency(builder.GetTexture("Directional Depth [0]"), RESOURCE_STATE_SHADER_RESOURCE)
-                    .Dependency(builder.GetTexture("Directional Depth [1]"), RESOURCE_STATE_SHADER_RESOURCE)
-                    .Dependency(builder.GetTexture("Directional Depth [2]"), RESOURCE_STATE_SHADER_RESOURCE)
-                    .Dependency(builder.GetTexture("Directional Depth [3]"), RESOURCE_STATE_SHADER_RESOURCE)
+                    .ReadAccelerationStructure(builder.GetBuffer("TLAS Storage"))      // 依赖TLAS Update的产出（虚拟边，不绑定描述符；ray query读AS）
+                    .Read(builder.GetTexture("Directional Depth [0]"))
+                    .Read(builder.GetTexture("Directional Depth [1]"))
+                    .Read(builder.GetTexture("Directional Depth [2]"))
+                    .Read(builder.GetTexture("Directional Depth [3]"))
                     .ReadWrite(1, 0, 0, diffuseTex)
                     .ReadWrite(1, 1, 0, normalTex)
                     .ReadWrite(1, 2, 0, emissionTex)
@@ -163,9 +163,9 @@ void DDGIPass::Build(RDGBuilder& builder)
                         command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);  
                         command->BindDescriptorSet(context.descriptors[1], 1);
                         command->PushConstants(&setting, sizeof(DDGIComputeSetting), SHADER_FREQUENCY_ALL);
-                        command->Dispatch(  volumeLight->GetRaysPerProbe(), 
-                                            volumeLight->GetProbeCounts().x() * volumeLight->GetProbeCounts().y() * volumeLight->GetProbeCounts().z(), 
-                                            1); 
+                        command->Dispatch(volumeLight->GetRaysPerProbe() / 32,
+                            std::ceil(volumeLight->GetProbeCounts().x() * volumeLight->GetProbeCounts().y() * volumeLight->GetProbeCounts().z() / 32),
+                            1);
                     })
                     .Finish();
 

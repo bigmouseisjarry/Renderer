@@ -88,6 +88,8 @@ void PassInfoAnalysis::extract_resource_info(RDGPassNodeRef pass, PassResourceIn
         else                               access_info.access_type = EResourceAccessType::Read;
 
         // 子资源范围
+        access_info.aspect = edge->subresource.aspect;    // [sub]屏障按声明生效的钥匙：此前NONE→RHI全范围回退，
+                                                           // 逐mip屏障被静默放大成整图转移（09600风暴根因）
         access_info.mip_base = edge->subresource.baseMipLevel;
         access_info.mip_count = edge->subresource.levelCount;
         access_info.array_base = edge->subresource.baseArrayLayer;

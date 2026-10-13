@@ -53,6 +53,13 @@ void GPUCullingPass::Build(RDGBuilder& builder)
     lodSetting.enableStatistics = enableStatistics ? 1 : 0;
     // lodSetting.disableVirtualMeshCulling = 
     //     lodSetting.disableVirtualMeshCulling || (EngineContext::Render()->IsPassEnabled(RESTIR_DI_PASS) ? true : false); //
+
+
+    RDGTextureHandle depthMax = builder.GetOrCreateTexture("Depth Max")
+        .Import(EngineContext::RenderResource()->GetDepthPyramidTexture(1), RESOURCE_STATE_SHADER_RESOURCE)
+        .Finish();
+
+    // 遍历每一个标记为 Mesh_Pass 的 pass
     for(uint32_t i = 0; i < MESH_PASS_TYPE_MAX_CNT; i++)
     {
         if(!passes[i]) continue;
@@ -66,6 +73,7 @@ void GPUCullingPass::Build(RDGBuilder& builder)
         auto& processSizes = passes[i]->GetMeshPassProcessor()->GetProcessSizes();
         auto& passBuffers = passes[i]->GetMeshPassProcessor()->GetIndirectBuffers();
         uint32_t passCount = passBuffers.size();
+        // 该种类的pass需要跑多少遍
         for(uint32_t j = 0; j < passCount; j++)
         {
             std::string indexStrXY = " [" + std::to_string(i) + "][" + std::to_string(j) + "]";
@@ -91,24 +99,25 @@ void GPUCullingPass::Build(RDGBuilder& builder)
                 .Finish();
 
             pass0Builder
+                .Read(depthMax)                                  // OcclusionCull采样上帧HiZ（虚拟读边，见Build首注释）
                 .ReadWrite(1, 0, j, meshDrawDatas)
-                .ReadWrite(1, 1, j, meshDrawCommands);
+                .ReadWrite(1, 1, j, meshDrawCommands)
+                .OutputIndirectDraw(meshDrawCommands);       // 输出，作为后续间接绘制的buffer。写入者即产出：ReadWrite边=pass期间UAV态，Output边=pass后收敛INDIRECT态（barrier_generation两阶段设计）
 
             pass1Builder
                 .ReadWrite(1, 2, j, clusrterDrawDatas)
                 .ReadWrite(1, 4, j, clusrterGroupDrawDatas);
 
             pass2Builder
-                .ReadWrite(1, 1, j, meshDrawCommands)
-                .ReadWrite(1, 2, j, clusrterDrawDatas)
-                .ReadWrite(1, 3, j, clusrterDrawCommands)            
-                .OutputIndirectDraw(meshDrawCommands)       // 输出，作为后续间接绘制的buffer
-                .OutputIndirectDraw(clusrterDrawCommands);
+                .Read(depthMax)                                  // OcclusionCull采样上帧HiZ（虚拟读边，见Build首注释）
+                .ReadWrite(1, 2, j, clusrterDrawDatas)        // culling_cluster.comp不碰(1,1)：meshDrawCommands由pass0写完即终态。此处曾误声明ReadWrite(1,1)造成假依赖边pass0→pass2
+                .ReadWrite(1, 3, j, clusrterDrawCommands)
+                .OutputIndirectDraw(clusrterDrawCommands);    // 输出，作为后续间接绘制的buffer
         }
 
         pass0Builder
             .RootSignature(rootSignature)
-            .PassIndex(i, passCount, processSizes[0])
+			.PassIndex(i, passCount, processSizes[0])           // pass类型 、 该类型跑多少遍 、每遍处理多少个mesh
             .Execute([&](RDGPassContext context) {       
 
                 CullingLodSetting setting = lodSetting;
@@ -120,7 +129,7 @@ void GPUCullingPass::Build(RDGBuilder& builder)
                 command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);
                 command->BindDescriptorSet(context.descriptors[1], 1);
                 command->PushConstants(&setting, sizeof(CullingLodSetting), SHADER_FREQUENCY_COMPUTE);
-                command->Dispatch(  (context.passIndex[2] + 63) / 64, 
+                command->Dispatch(  std::ceil(context.passIndex[2] / 64.0),                                   // 64个一组
                                     1, 
                                     1); 
             })
@@ -140,7 +149,7 @@ void GPUCullingPass::Build(RDGBuilder& builder)
                 command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);
                 command->BindDescriptorSet(context.descriptors[1], 1);
                 command->PushConstants(&setting, sizeof(CullingLodSetting), SHADER_FREQUENCY_COMPUTE);
-                command->Dispatch(  (context.passIndex[2] + 63) / 64, 
+                command->Dispatch(  std::ceil(context.passIndex[2] / 64.0), 
                                     1, 
                                     1); 
             })
@@ -160,7 +169,7 @@ void GPUCullingPass::Build(RDGBuilder& builder)
                 command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);
                 command->BindDescriptorSet(context.descriptors[1], 1);
                 command->PushConstants(&setting, sizeof(CullingLodSetting), SHADER_FREQUENCY_COMPUTE);
-                command->Dispatch( (context.passIndex[2] + 63) / 64, 
+                command->Dispatch( std::ceil(context.passIndex[2] / 64.0), 
                                     1, 
                                     1);    
             })

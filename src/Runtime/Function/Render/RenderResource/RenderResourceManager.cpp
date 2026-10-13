@@ -217,9 +217,15 @@ RHIBufferRef RenderResourceManager::GetGizmoDataBuffer()
     return perFrameResources[EngineContext::ThreadPool()->ThreadFrameIndex()].gizmoBuffer.buffer;
 }
 
-RHIDescriptorSetRef RenderResourceManager::GetPerFrameDescriptorSet() 
-{ 
-    return perFrameResources[EngineContext::ThreadPool()->ThreadFrameIndex()].descriptorSet; 
+RHIDescriptorSetRef RenderResourceManager::GetPerFrameDescriptorSet()
+{
+    return perFrameResources[EngineContext::ThreadPool()->ThreadFrameIndex()].descriptorSet;
+}
+
+RHITextureRef RenderResourceManager::GetStableHDRColorTexture(uint32_t slot)
+{
+    // 语义槽(0=本帧,1=上一帧) → 物理槽：本帧TAA直写physical[parity]，上帧残留physical[parity^1]
+    return multiFrameResource.stableHDRColorTexture[EngineContext::CurrentFrameIndex() ^ slot]->texture;
 }
 
 void RenderResourceManager::InitGlobalResources()
@@ -411,13 +417,31 @@ void RenderResourceManager::InitGlobalResources()
             Extent3D(windowExtent.width, windowExtent.height, 1),
             1, 1);
 
-        multiFrameResource.finalColorHistoryTexture[0] = std::make_shared<Texture>(      
+        multiFrameResource.gbufferNormalTexture[0] = std::make_shared<Texture>(
+            TEXTURE_TYPE_2D,
+            FORMAT_R8G8B8A8_UNORM,     // 拼积木布局：八面体2×12位拼进RGB（位模式，非符号量），A=specF
+            Extent3D(windowExtent.width, windowExtent.height, 1),
+            1, 1);
+
+        multiFrameResource.gbufferNormalTexture[1] = std::make_shared<Texture>(
+            TEXTURE_TYPE_2D,
+            FORMAT_R8G8B8A8_UNORM,     // 历史对同格式（copy pass两端必须一致）
+            Extent3D(windowExtent.width, windowExtent.height, 1),
+            1, 1);
+
+        multiFrameResource.gbufferIORTexture = std::make_shared<Texture>(
+            TEXTURE_TYPE_2D,
+            FORMAT_R8_UNORM,
+            Extent3D(windowExtent.width, windowExtent.height, 1),
+            1, 1);
+
+        multiFrameResource.stableHDRColorTexture[0] = std::make_shared<Texture>(      
             TEXTURE_TYPE_2D,
             EngineContext::Render()->GetHdrColorFormat(),
             Extent3D(windowExtent.width, windowExtent.height, 1),
             1, 1);
 
-        multiFrameResource.finalColorHistoryTexture[1] = std::make_shared<Texture>(
+        multiFrameResource.stableHDRColorTexture[1] = std::make_shared<Texture>(
             TEXTURE_TYPE_2D,
             EngineContext::Render()->GetHdrColorFormat(),
             Extent3D(windowExtent.width, windowExtent.height, 1),

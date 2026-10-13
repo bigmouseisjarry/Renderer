@@ -28,15 +28,16 @@ void main()
     ivec3 probeCoord  = FetchProbeCoord(volumeLight.setting, probeIndex);
     vec3  origin      = FetchProbeWorldPos(volumeLight.setting, probeCoord);
 
-    vec4 dirDist    = imageLoad(G_BUFFER_POSITION,          pixel);
-    vec4 normal     = imageLoad(G_BUFFER_NORMAL_ROUGHNESS,   pixel);
-    vec4 diffuse    = imageLoad(G_BUFFER_DIFFUSE_METALLIC, pixel);
-    vec4 emission   = imageLoad(G_BUFFER_EMISSION,          pixel);
+    vec4 dirDist        = imageLoad(TRACE_DIRECTION_DIST,      pixel);
+    vec4 normal         = imageLoad(TRACE_NORMAL_ROUGHNESS,    pixel);
+    vec4 albedoMetallic = imageLoad(TRACE_ALBEDO_METALLIC,     pixel);
+    vec4 emission       = imageLoad(TRACE_EMISSION,            pixel);
 
     vec3 direction  = dirDist.xyz;
     float dist      = dirDist.w;
     float roughness = normal.w;     //粗糙度
-    float metallic  = diffuse.w;    //金属度
+    vec3 albedo     = albedoMetallic.xyz;    
+    float metallic  = albedoMetallic.w;    //金属度
 
     vec3 radiance   = vec3(0.0f);    //漫反射辐射率
 
@@ -54,14 +55,14 @@ void main()
 
         // 直接光照计算，仅漫反射 //////////////////////////////////
 
-        vec3 directLightColor = 
-            DirectionalDiffuseLighting(diffuse.xyz, roughness, metallic, worldPos, N, V) * DirectionalShadow(worldPos, pixel, 1, 3) + 
-            PointDiffuseLighting(diffuse.xyz, roughness, metallic, worldPos, N, V);
+        vec3 directLightColor =
+            DirectionalDiffuseLighting(albedo, roughness, metallic, worldPos, N, V) * DirectionalShadow(worldPos, pixel,2.0) +
+            PointDiffuseLighting(albedo, roughness, metallic, worldPos, N, V);
 
         // 间接光照计算 //////////////////////////////////
 
         vec3 indirectLightColor = volumeLight.setting.infiniteBounce ?
-            IndirectLighting(diffuse.xyz, roughness, metallic, worldPos, N, V) :
+            IndirectLighting(albedo, roughness, metallic, worldPos, N, V) :
             vec3(0.0f);
 
         //合并////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -73,9 +74,10 @@ void main()
     }
     else if(dist == MAX_RAY_TRACING_DISTANCE)
     {
-        radiance = diffuse.xyz;  //天光
+        radiance = albedo;  //天光
     }
 
+    // 1+3+5
     imageStore(DDGI_RADIANCE, pixel, vec4(radiance, 0.0f));
 }
 

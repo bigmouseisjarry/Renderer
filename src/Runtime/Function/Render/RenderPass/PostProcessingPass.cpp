@@ -30,11 +30,11 @@ void PostProcessingPass::Build(RDGBuilder& builder)
 
     Extent2D windowExtent = EngineContext::Render()->GetWindowsExtent();
 
-    RDGTextureHandle taaOutColor = builder.GetTexture("TAA Out Color");
+    RDGTextureHandle stableColor = builder.GetTexture("Stable HDR Color");
 
     RDGBufferHandle exposureData = builder.GetBuffer("Exposure Data");
 
-    RDGTextureHandle outColor = builder.GetOrCreateTexture("Final Color")
+    RDGTextureHandle outColor = builder.GetOrCreateTexture("Final LDR Color")
         .Exetent({windowExtent.width, windowExtent.height, 1})
         .Format(EngineContext::Render()->GetColorFormat())
         .ArrayLayers(1)
@@ -47,7 +47,7 @@ void PostProcessingPass::Build(RDGBuilder& builder)
     RDGComputePassHandle pass = builder.CreateComputePass(GetName())
         .AddFlag(RDGPassFlags::ForceGraphicsQueue)
         .RootSignature(rootSignature)
-        .Read(0, 0, 0, taaOutColor)
+        .Read(0, 0, 0, stableColor)
         .ReadWrite(0, 1, 0, outColor)
         .ReadWrite(0, 2, 0, exposureData)
         .Execute([&](RDGPassContext context) {       

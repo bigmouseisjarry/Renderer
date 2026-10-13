@@ -30,7 +30,11 @@ void main()
     OUT_ID              = objectID;
 
     PointLight light = LIGHTS.pointLights[POINT_LIGHT_SETTING.index];
+
+    // 顶点着色器的内建输出：裁剪空间坐标，光栅化器靠它拼三角形、算像素位置
     gl_Position = light.viewProj[POINT_LIGHT_SETTING.face] * worldPos;
+
+    // 分层附件的目标层号
     gl_Layer = int(POINT_LIGHT_SETTING.face);
 }
 

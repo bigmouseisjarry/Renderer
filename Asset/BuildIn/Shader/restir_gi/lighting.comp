@@ -16,14 +16,16 @@ void main()
     ivec2 pixel     = ivec2(gl_GlobalInvocationID.xy);
     vec2 uv         = ScreenPixToUV(pixel); 
 
-    vec4 gbffer0    = texelFetch(G_BUFFER_DIFFUSE_METALLIC, pixel, 0);
-    vec4 gbffer1    = texelFetch(G_BUFFER_NORMAL_ROUGHNESS, pixel, 0);
+    vec4 gbffer0    = texelFetch(G_BUFFER_DIFFUSE_TRANSPARENT, pixel, 0);
+    vec4 gbffer1    = texelFetch(G_BUFFER_NORMAL_SPECF, pixel, 0);
     vec4 gbffer2    = texelFetch(G_BUFFER_EMISSION, pixel, 0);
+    vec4 gbffer6    = texelFetch(G_BUFFER_SPECULAR_F0_ROUGHNESS, pixel, 0);
     vec3 diffuse    = gbffer0.xyz;
-    vec3 normal     = gbffer1.xyz;
-    vec3 emission   = gbffer2.xyz;
-    float roughness = gbffer1.w;
-    float metallic  = gbffer0.w;
+    float specF     = gbffer1.a;    // 虹彩标志：F直用烘焙F0跳过Schlick
+    vec3 normal     = DecodeGBufferNormal(gbffer1.xyz);
+    vec3 emission   = DecodeEmissionRGBM(gbffer2);
+    float roughness = gbffer6.w;
+    vec3 F0         = gbffer6.rgb;
     float depth     = FetchDepth(uv);
     vec4 worldPos   = DepthToWorld(uv, depth);
 
@@ -74,7 +76,7 @@ void main()
                     vec3 L = normalize(res.sampl.hitPos - worldPos.xyz);
                     float NoL = saturate(dot(N, L));
         
-                    BRDFData data = ResolveBRDF(diffuse.xyz, roughness, metallic, N, V, L);
+                    BRDFData data = ResolveBRDF(diffuse.xyz, roughness, F0, specF, N, V, L);
                     vec3 diffuseColor = data.diffuse * radiance * NoL;
                     vec3 specularColor = data.specular * radiance * NoL;
 
@@ -118,28 +120,28 @@ void main()
         vec4 color = vec4(finalDiffuse.xyz + finalSpecular.xyz, 0.0f);
         if(RESTIR_GI_SETTING.showRadiance == 0)
         {
-            vec4 baseColor = imageLoad(FINAL_COLOR, pixel);
-            color.xyz += baseColor.xyz;
+            vec4 inputColor = imageLoad(FINAL_COLOR, pixel);
+            color.xyz += inputColor.xyz;
         }
         imageStore(FINAL_COLOR, pixel, color);
     }
     if(RESTIR_GI_SETTING.combineMode == 1)   // 后续降噪
     {
-        imageStore(GI_DIFFUSE_COLOR, pixel, finalDiffuse);
-        imageStore(GI_SPECULAR_COLOR, pixel, finalSpecular);
+        imageStore(GI_DIFFUSE_LIGHT, pixel, finalDiffuse);
+        imageStore(GI_SPECULAR_LIGHT, pixel, finalSpecular);
     }
     if(RESTIR_GI_SETTING.combineMode == 2)   // 后续降噪，合并DI
     {                                        // TODO 合并??????????????
-        vec4 diffuse = imageLoad(GI_DIFFUSE_COLOR, pixel);
+        vec4 diffuse = imageLoad(GI_DIFFUSE_LIGHT, pixel);
         finalDiffuse.xyz += diffuse.xyz;
         finalDiffuse.w += diffuse.w; 
         finalDiffuse.w /= 2.0f;
-        imageStore(GI_DIFFUSE_COLOR, pixel, finalDiffuse);
+        imageStore(GI_DIFFUSE_LIGHT, pixel, finalDiffuse);
 
-        vec4 specular = imageLoad(GI_SPECULAR_COLOR, pixel);
+        vec4 specular = imageLoad(GI_SPECULAR_LIGHT, pixel);
         finalSpecular.xyz += specular.xyz;
         finalSpecular.w += specular.w; 
         finalSpecular.w /= 2.0f;
-        imageStore(GI_SPECULAR_COLOR, pixel, finalSpecular);
+        imageStore(GI_SPECULAR_LIGHT, pixel, finalSpecular);
     }
 }

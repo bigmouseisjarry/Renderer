@@ -118,18 +118,18 @@ void PointShadowPass::Build(RDGBuilder& builder)
                 .DepthStencil(depth, ATTACHMENT_LOAD_OP_CLEAR, ATTACHMENT_STORE_OP_STORE, 
                     1.0f, 0, {TEXTURE_ASPECT_DEPTH, 0, 1, 0, 6})
                 //.Multiview(6)
-                .Dependency(builder.GetBuffer("Mesh Draw Commands" + cmdIndex + std::to_string(i * 6 + 0) + "]"), RESOURCE_STATE_INDIRECT_ARGUMENT)
-                .Dependency(builder.GetBuffer("Clusrter Draw Commands" + cmdIndex + std::to_string(i * 6 + 0) + "]"), RESOURCE_STATE_INDIRECT_ARGUMENT)
-                .Dependency(builder.GetBuffer("Mesh Draw Commands" + cmdIndex + std::to_string(i * 6 + 1) + "]"), RESOURCE_STATE_INDIRECT_ARGUMENT)
-                .Dependency(builder.GetBuffer("Clusrter Draw Commands" + cmdIndex + std::to_string(i * 6 + 1) + "]"), RESOURCE_STATE_INDIRECT_ARGUMENT)
-                .Dependency(builder.GetBuffer("Mesh Draw Commands" + cmdIndex + std::to_string(i * 6 + 2) + "]"), RESOURCE_STATE_INDIRECT_ARGUMENT)
-                .Dependency(builder.GetBuffer("Clusrter Draw Commands" + cmdIndex + std::to_string(i * 6 + 2) + "]"), RESOURCE_STATE_INDIRECT_ARGUMENT)
-                .Dependency(builder.GetBuffer("Mesh Draw Commands" + cmdIndex + std::to_string(i * 6 + 3) + "]"), RESOURCE_STATE_INDIRECT_ARGUMENT)
-                .Dependency(builder.GetBuffer("Clusrter Draw Commands" + cmdIndex + std::to_string(i * 6 + 3) + "]"), RESOURCE_STATE_INDIRECT_ARGUMENT)
-                .Dependency(builder.GetBuffer("Mesh Draw Commands" + cmdIndex + std::to_string(i * 6 + 4) + "]"), RESOURCE_STATE_INDIRECT_ARGUMENT)
-                .Dependency(builder.GetBuffer("Clusrter Draw Commands" + cmdIndex + std::to_string(i * 6 + 4) + "]"), RESOURCE_STATE_INDIRECT_ARGUMENT)
-                .Dependency(builder.GetBuffer("Mesh Draw Commands" + cmdIndex + std::to_string(i * 6 + 5) + "]"), RESOURCE_STATE_INDIRECT_ARGUMENT)
-                .Dependency(builder.GetBuffer("Clusrter Draw Commands" + cmdIndex + std::to_string(i * 6 + 5) + "]"), RESOURCE_STATE_INDIRECT_ARGUMENT)
+                .ReadIndirect(builder.GetBuffer("Mesh Draw Commands" + cmdIndex + std::to_string(i * 6 + 0) + "]"))
+                .ReadIndirect(builder.GetBuffer("Clusrter Draw Commands" + cmdIndex + std::to_string(i * 6 + 0) + "]"))
+                .ReadIndirect(builder.GetBuffer("Mesh Draw Commands" + cmdIndex + std::to_string(i * 6 + 1) + "]"))
+                .ReadIndirect(builder.GetBuffer("Clusrter Draw Commands" + cmdIndex + std::to_string(i * 6 + 1) + "]"))
+                .ReadIndirect(builder.GetBuffer("Mesh Draw Commands" + cmdIndex + std::to_string(i * 6 + 2) + "]"))
+                .ReadIndirect(builder.GetBuffer("Clusrter Draw Commands" + cmdIndex + std::to_string(i * 6 + 2) + "]"))
+                .ReadIndirect(builder.GetBuffer("Mesh Draw Commands" + cmdIndex + std::to_string(i * 6 + 3) + "]"))
+                .ReadIndirect(builder.GetBuffer("Clusrter Draw Commands" + cmdIndex + std::to_string(i * 6 + 3) + "]"))
+                .ReadIndirect(builder.GetBuffer("Mesh Draw Commands" + cmdIndex + std::to_string(i * 6 + 4) + "]"))
+                .ReadIndirect(builder.GetBuffer("Clusrter Draw Commands" + cmdIndex + std::to_string(i * 6 + 4) + "]"))
+                .ReadIndirect(builder.GetBuffer("Mesh Draw Commands" + cmdIndex + std::to_string(i * 6 + 5) + "]"))
+                .ReadIndirect(builder.GetBuffer("Clusrter Draw Commands" + cmdIndex + std::to_string(i * 6 + 5) + "]"))
                 .Execute([&](RDGPassContext context) {
 
                     Extent2D windowExtent = EngineContext::Render()->GetWindowsExtent();
@@ -159,7 +159,7 @@ void PointShadowPass::Build(RDGBuilder& builder)
                 .OutputRead(color)  // 手动屏障
                 .Finish();
 
-            RDGComputePassHandle filterPass = builder.CreateComputePass(GetName() + " Filter" + index)  //TODO 多轮？
+            RDGComputePassHandle filterPass = builder.CreateComputePass(GetName() + " Filter" + index)  //TODO 多轮？(级联卷积)
                 .RootSignature(rootSignature1)
                 .Read(0, 0, 0, color, VIEW_TYPE_2D, {TEXTURE_ASPECT_COLOR, 0, 1, 0, 1})
                 .Read(0, 0, 1, color, VIEW_TYPE_2D, {TEXTURE_ASPECT_COLOR, 0, 1, 1, 1})

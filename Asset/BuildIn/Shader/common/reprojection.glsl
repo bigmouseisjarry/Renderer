@@ -110,7 +110,7 @@ bool Reproject(in ivec2 pixel,
         ivec2 neighborPixel = historyPixelFloor + offset[i];
         vec2 neighborUV     = ScreenPixToUV(neighborPixel);
 
-        vec3 prevNormal     = texelFetch(prevNormalTex, neighborPixel, 0).xyz;
+        vec3 prevNormal     = DecodeGBufferNormal(texelFetch(prevNormalTex, neighborPixel, 0).xyz);
         vec3 prevPos        = PrevDepthToWorld(neighborUV).xyz;  
         uint prevObjectID   = texelFetch(prevObjectIdTex, neighborPixel, 0).r;
 
@@ -186,7 +186,7 @@ void Reproject(in ivec2 pixel,
         ivec2 neighborPixel = historyPixelFloor + offset[i];
         vec2 neighborUV     = ScreenPixToUV(neighborPixel);
 
-        vec3 prevNormal     = texelFetch(prevNormalTex, neighborPixel, 0).xyz;
+        vec3 prevNormal     = DecodeGBufferNormal(texelFetch(prevNormalTex, neighborPixel, 0).xyz);
         vec3 prevPos        = PrevDepthToWorld(neighborUV).xyz;  
         uint prevObjectID   = texelFetch(prevObjectIdTex, neighborPixel, 0).r;
 

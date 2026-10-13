@@ -46,11 +46,14 @@ vec4 IntersectCellBoundary(vec4 start, vec4 dir, int mipLevel)  // TODO
     ivec2 cellCount     = GetCellCount(mipLevel);
     ivec2 cellIdx       = GetCell(start.xy, mipLevel);
     vec2 cellUV         = 1.0 / cellCount;
+    // 当前 cell 沿行进方向的出口边界
     vec2 planes         = vec2(cellIdx) / cellCount + cellUV * crossStep;
 
+    // 每轴一个 t
     vec2 solutions = (planes - start.xy) / dir.xy;
     vec4 intersectionPos = start + dir * min(solutions.x, solutions.y);
 
+    // 把交点推过线，进下一个 cell
     intersectionPos.xy += (solutions.x < solutions.y) ? vec2(crossOffset.x, 0.0) : vec2(0.0, crossOffset.y);
 
     return intersectionPos;
@@ -77,16 +80,16 @@ vec4 TraceHiz( int startLevel,
     vec4 start              = vec4(baseUV, baseDr, 0); 
 
     // 步进方向
-    vec4 targetWorldPos     = vec4(worldPos + worldDir, 1.0f);        // worldDir偏移距离过长会导致ndc坐标超出视锥范围，有计算错误
+    vec4 targetWorldPos     = vec4(worldPos + worldDir, 1.0f);        // worldDir偏移距离过长会导致ndc坐标超出视锥范围，有计算错误 // 还有目标点位置镜像翻转
     vec4 targetNDCPos       = WorldToNDC(targetWorldPos);                
     float targetDr          = 1.0 / targetNDCPos.z;                         // ndc空间的深度倒数，线性相关于view space的深度     //ndc空间的w坐标倒数也是线性
     vec2 targetUV           = NDCToScreen(targetNDCPos.xy);                 // uv坐标，线性 
 
     // 步进单位
     float deltaScale        = 1 / length(targetUV - baseUV);
-    vec2 deltaUV            = (targetUV - baseUV);                         
-    float deltaDr           = (targetDr - baseDr);
-    float deltaDist         = (length(targetWorldPos.xyz - worldPos));
+    vec2 deltaUV            = (targetUV - baseUV);                         // x,y
+    float deltaDr           = (targetDr - baseDr);                         // z
+    float deltaDist         = (length(targetWorldPos.xyz - worldPos));     // 世界 
     vec4 dir                = vec4(deltaUV, deltaDr, deltaDist) * deltaScale;
 
     // Hiz加速////////////////////////////////////////////
@@ -179,28 +182,19 @@ layout (local_size_x = THREAD_SIZE_X,
 		local_size_z = THREAD_SIZE_Z) in;
 void main() {
 
-    ivec2 pixel         = ivec2(gl_GlobalInvocationID.xy);          // 只有trace是半精度的，resolve和filter都是全精度
-
-    ivec2 samplePixel   = HALF_SIZE_SSSR ? 
-                            pixel * 2 :
-                            pixel;
-
-    vec2 uv             = ScreenPixToUV(samplePixel);
-
-    vec2 extent         = HALF_SIZE_SSSR ? 
-                            vec2(HALF_WINDOW_WIDTH, HALF_WINDOW_HEIGHT) : 
-                            vec2(WINDOW_WIDTH, WINDOW_HEIGHT);
+    ivec2 pixel         = ivec2(gl_GlobalInvocationID.xy);       
+    vec2 uv             = ScreenPixToUV(pixel);
 
     // 采样G Buffer信息 ////////////////////////////////////////////////////////////////////////////////////
 
-    float depth = FetchDepthTex(samplePixel);
+    float depth = FetchDepthTex(pixel);
 
-    vec4 gbffer0    = texelFetch(G_BUFFER_DIFFUSE_METALLIC, samplePixel,0);
-    vec4 gbffer1    = texelFetch(G_BUFFER_NORMAL_ROUGHNESS, samplePixel,0);
-    vec3 diffuse    = gbffer0.xyz;
-    vec3 normal     = gbffer1.xyz;
-    float roughness = max(gbffer1.w, 0.05f);
-    float metallic  = gbffer0.w;
+    vec4 gbffer0    = texelFetch(G_BUFFER_DIFFUSE_TRANSPARENT, pixel,0);
+    vec4 gbffer1    = texelFetch(G_BUFFER_NORMAL_SPECF, pixel,0);
+    vec4 gbfferF0   = texelFetch(G_BUFFER_SPECULAR_F0_ROUGHNESS, pixel,0);
+    vec3 diffuse    = gbffer0.xyz;               //写入端已预乘(1-m)（demod用）
+    vec3 normal     = DecodeGBufferNormal(gbffer1.xyz);
+    float roughness = max(gbfferF0.w, 0.05f);
     vec4 worldPos   = DepthToWorld(uv);  // 从UV重建的世界坐标会有一些精度误差，不算大
     
     // 光照参数计算 //////////////////////////////////
@@ -210,10 +204,9 @@ void main() {
     vec3 N              = normalize(normal);    
     vec3 V              = normalize(CAMERA.pos.xyz - worldPos.xyz);	
 
-    if( length(N)   < 0.01f || 
-        roughness   < 0.0f  || 
-        roughness   > SETTING.maxRoughness ||
-        depth == 1.0f)                                              //没有有效信息
+    if( length(N)   < 0.01f ||                                      // 没法构造反射方向 R
+        roughness   > SETTING.maxRoughness ||                       // GGX 瓣太宽
+        depth == 1.0f)                                              // 没有反射起点
     {
 		imageStore(SSSR_HIT_RESULT, ivec2(pixel.xy), vec4(0.0f) );
         imageStore(SSSR_PDF, ivec2(pixel.xy), vec4(0.0f) );
@@ -224,7 +217,8 @@ void main() {
 
     // vec2 seed           = Hammersley(totalTicks, 16);  
     Rand rand           = SeedRand(GLOBAL_SETTING.totalTicks, pixel.y * GLOBAL_SETTING.totalTicks + pixel.x);
-    vec2 seed           = vec2(RandFloat(rand), RandFloat(rand));
+    vec2 seed           = vec2(RandFloat(rand), RandFloat(rand));       // (方向角, 极角)
+    // 被 lerp 之后，实际采样分布已经不是 GGX 了（真实密度需要变换和截断区间的修正）。resolve 阶段拿名义 pdf 当 MC 权重去除，能量会系统性向镜向倾斜
     seed.y              = Lerp(seed.y, 0.0f, SETTING.importanceSampleBias); //BRDF的拖尾会产生大量噪声，对重要性采样的方向做些偏移限制来减小（也会导致反射比真实粗糙度偏锐利）
 
     vec4 newSample      = ImportanceSampleGGX(seed, a2);
@@ -232,6 +226,7 @@ void main() {
     float HPDF          = newSample.a;
     float VoH           = clamp(dot(V, H), 0.0f, 1.0f);
     float pdf           = RayPDFToReflectionRayPDF(VoH, HPDF);
+    // 理解成 V + L = 2.0 * dot(V, H) * H
     vec3 L              = normalize(2.0 * dot(V, H) * H - V);
 
     // 输出结果， 本轮输出的是光线命中点的位置信息和PDF，下轮负责采样颜色和计算 /////////////////////////////

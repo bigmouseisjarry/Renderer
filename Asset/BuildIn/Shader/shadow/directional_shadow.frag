@@ -9,7 +9,7 @@ layout(location = 1) in flat uint IN_ID;
 void main() 
 {
     Material material = FetchMaterial(IN_ID);
-    vec4 diffuse = FetchDiffuse(material, IN_TEXCOORD);
-    if(material.alphaClip >= diffuse.a) 
+    vec4 albedo = FetchAlbedo(material, IN_TEXCOORD);
+    if(material.alphaClip >= albedo.a)
         discard;    // 透明度测试
 }

@@ -118,7 +118,7 @@ void main()
 		if(SETTING.isotropic == 0) scattering 	= henyeyGreensteinPhase(SETTING.henyeyGreensteinG, VoL);
 		scattering *= dirLight.fogScattering;
 
-		float dirShadow = DirectionalShadow(worldPos, pixel.xy, 1, 3);           
+		float dirShadow = DirectionalShadow(worldPos, pixel.xy, 2.0);
 
         vec3 radiance = dirShadow *           //辐射率 = 阴影值 * 光强 * 颜色
                         dirLight.color * 

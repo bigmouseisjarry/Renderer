@@ -103,7 +103,7 @@ void MeshPassProcessor::Process(const std::vector<DrawBatch>& drawBatches)
     for(auto& buffers : passBuffers)
     {
         // 填写cluster的间接绘制命令
-        // 由于所有绘制指令里的索引最后指向同一个全局缓冲，需要计算全局的偏移
+        // 由于所有绘制指令(即每pass类型的每一遍)里的索引最后指向同一个全局缓冲，需要计算全局的偏移
         uint32_t globalClusterOffset = MeshPassProcessor::GetGlobalClusterOffset();
         uint32_t localClusterOffset = 0;
         clusterDrawCommand.clear();
@@ -131,8 +131,6 @@ void MeshPassProcessor::Process(const std::vector<DrawBatch>& drawBatches)
         buffers->clusterGroupDrawDataBuffer.SetData(&clusterGroupDrawSetting, sizeof(IndirectSetting), 0);
         buffers->clusterGroupDrawDataBuffer.SetData(clusterGroupDrawInfo.data(), clusterGroupDrawInfo.size() * sizeof(IndirectClusterGroupDrawInfo), sizeof(IndirectSetting));
     }
-
-    // ENGINE_LOG_INFO("Mesh pass processor process size: {} {} {}", meshDrawInfo.size(), clusterDrawInfo.size(), clusterGroupDrawInfo.size());
 }
 
 void MeshPassProcessor::Draw(RHICommandListRef command, uint32_t passIndex)
@@ -212,15 +210,12 @@ RHIGraphicsPipelineRef MeshPassProcessor::OnCreatePipeline(const DrawPipelineSta
     return GraphicsPipelineCache::Get()->Allocate(pipelineInfo).pipeline;   // 构建可能失败返回空，则后续处理将放弃该pipelineState的绘制
 }
 
-void MeshPassProcessor::OnBuildDrawCommands(
-    uint32_t pipelineIndex, 
-    RHIGraphicsPipelineRef pipeline, 
-    const std::vector<DrawGeometryInfo>& geometries)
+void MeshPassProcessor::OnBuildDrawCommands(uint32_t pipelineIndex, RHIGraphicsPipelineRef pipeline, const std::vector<DrawGeometryInfo>& geometries)
 {
     DrawCommand drawCommand = {
         .pipeline = pipeline,
 
-        .meshCommandRange = { (uint32_t)meshDrawCommand.size(), 0 },    // 下面填size
+        .meshCommandRange = { (uint32_t)meshDrawCommand.size(), 0 },    // begin 、size
         .meshCommandOffset = 0,
         //.indirectMeshCommandBuffer = buffers->meshDrawCommandBuffer.buffer,
 
@@ -271,6 +266,8 @@ void MeshPassProcessor::OnBuildDrawCommands(
         // 常规渲染 //////////////////////////////////////////////////////////
         else                                        
         {
+            // 一个Info对应一个command，剔除就是将instanceCount置为0
+            // CommandBuffer每遍只有一个，
             meshDrawInfo.push_back({
                 .objectID = geometry.objectID, 
                 .commandID = (uint32_t)meshDrawCommand.size()
@@ -284,8 +281,9 @@ void MeshPassProcessor::OnBuildDrawCommands(
             meshCount++;
         }
     }
-    drawCommand.meshCommandRange.size = meshCount;  //每个mesh一个command
+    drawCommand.meshCommandRange.size = meshCount;  
 
+    // 将复制size份连接起来
     auto& indirectBuffers = GetIndirectBuffers();
     for(int i = 0; i < indirectBuffers.size(); i++)
     {

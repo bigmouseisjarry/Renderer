@@ -30,8 +30,6 @@ private:
     RHIGraphicsPipelineRef pipeline;
     RHIGraphicsPipelineRef clusterPipeline;
 
-    RHITextureRef historyNormalTex;
-
     friend class GBufferPassProcessor;
 
 private:

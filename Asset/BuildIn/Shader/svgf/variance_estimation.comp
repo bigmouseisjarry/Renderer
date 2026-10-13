@@ -28,7 +28,7 @@ void main()
 	if (historyLength < 5.0f && FetchDepthTex(pixel) != 1.0f) 
 	{
 		vec4 pPosition      = DepthToWorld(uv);
-		vec3 pNormal        = normalize(texelFetch(G_BUFFER_NORMAL_ROUGHNESS, pixel, 0).xyz);
+		vec3 pNormal        = DecodeGBufferNormal(texelFetch(G_BUFFER_NORMAL_SPECF, pixel, 0).xyz);
 
 		vec2 sumMoments = vec2(0.0f);
 		float weights = epsilon;
@@ -43,7 +43,7 @@ void main()
 				vec2 qUV        = ScreenPixToUV(qPixel); 
 				{
 					vec4 qPosition      = DepthToWorld(qUV);
-					vec3 qNormal        = normalize(texelFetch(G_BUFFER_NORMAL_ROUGHNESS, qPixel, 0).xyz);
+					vec3 qNormal        = DecodeGBufferNormal(texelFetch(G_BUFFER_NORMAL_SPECF, qPixel, 0).xyz);
 					vec2 qMoments 		= imageLoad(CURRENT_MOMENTS, qPixel).rg;
 
 					float wp    = GetPlaneDistanceWeight(pPosition.xyz, pNormal, qPosition.xyz);

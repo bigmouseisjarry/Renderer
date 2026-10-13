@@ -60,14 +60,14 @@ void main()
     vec4 worldPos       = model * pos; 
 
 	Material material   = FetchMaterial(objectID);
-    vec4 diffuse        = FetchDiffuse(material, texCoord);
+    vec4 albedo         = FetchAlbedo(material, texCoord);
     vec3 emission       = FetchEmission(material);
     vec3 normal         = FetchNormal(material, texCoord, worldNormal, worldTangent);
     float roughness     = FetchRoughness(material, texCoord);
     float metallic      = FetchMetallic(material, texCoord);
 
     if(material.useVertexColor != 0)
-        diffuse.xyz *= color.xyz;
+        albedo.xyz *= color.xyz;
 
     // 光照参数计算 //////////////////////////////////
     
@@ -112,7 +112,7 @@ void main()
         float NoL = saturate(dot(N, L));      
         vec3 radiance = vec3(1.0f) * NoL; 
         
-        BRDFData data = ResolveBRDF(diffuse.xyz, roughness, metallic, N, V, L);
+        BRDFData data = ResolveBRDF(albedo.xyz, roughness, metallic, N, V, L);
         vec3 f_r = data.diffuse + data.specular;
         if(SETTING.diffuseOnly > 0) f_r = data.diffuse;
 
@@ -129,14 +129,14 @@ void main()
 
         if(RandFloat(RAY_PAYLOAD.rand) <= lightSamplePdf)
         {
-            lightColor +=   DirectionalLighting(diffuse.xyz, roughness, metallic, worldPos, N, V) * 
+            lightColor +=   DirectionalLighting(albedo.xyz, roughness, metallic, worldPos, N, V) *
                             RtDirectionalShadow(worldPos, 0.0f) / 
                             lightSamplePdf;
         }
         else
         {
             uint lightID = LIGHTS.lightSetting.pointLightIDs[uint(round(RandFloat(RAY_PAYLOAD.rand) * (LIGHTS.lightSetting.pointLightCnt - 1)))];	// 抽样选取点光源及其选择概率，直接用均匀分布了
-            lightColor +=   PointLighting(diffuse.xyz, roughness, metallic, worldPos, N, V, lightID) *
+            lightColor +=   PointLighting(albedo.xyz, roughness, metallic, worldPos, N, V, lightID) *
                             RtPointShadow(lightID, worldPos) /
                             lightSamplePdf;                       // 需要考虑pdf
         }     

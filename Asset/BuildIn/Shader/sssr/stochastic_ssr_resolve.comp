@@ -15,11 +15,6 @@ layout (local_size_x = THREAD_SIZE_X,
 void main() 
 {
     ivec2 pixel         = ivec2(gl_GlobalInvocationID.xy);
-
-    ivec2 tracePixel   = HALF_SIZE_SSSR ? 
-                            pixel / 2 :
-                            pixel;
-
     vec2 uv             = ScreenPixToUV(pixel);
 
 	// 采样G Buffer信息 ////////////////////////////////////////////////////////////////////////////////////
@@ -31,12 +26,13 @@ void main()
         return;
     }
 
-    vec4 gbffer0    = texelFetch(G_BUFFER_DIFFUSE_METALLIC, pixel,0);
-    vec4 gbffer1    = texelFetch(G_BUFFER_NORMAL_ROUGHNESS, pixel,0);
-    vec3 diffuse    = gbffer0.xyz;
-    vec3 normal     = gbffer1.xyz;
-    float roughness = max(gbffer1.w, 0.05f);
-    float metallic  = gbffer0.w;
+    vec4 gbffer0    = texelFetch(G_BUFFER_DIFFUSE_TRANSPARENT, pixel,0);
+    vec4 gbffer1    = texelFetch(G_BUFFER_NORMAL_SPECF, pixel,0);
+    vec4 gbfferF0   = texelFetch(G_BUFFER_SPECULAR_F0_ROUGHNESS, pixel,0);
+    vec3 diffuse    = gbffer0.xyz;               //写入端已预乘(1-m)
+    float specF     = gbffer1.a;                 //虹彩标志：F直用烘焙F0跳过Schlick（BRDF比率归一化时F=白）
+    vec3 normal     = DecodeGBufferNormal(gbffer1.xyz);
+    float roughness = max(gbfferF0.w, 0.05f);
     vec4 worldPos   = DepthToWorld(uv);  // 从UV重建的世界坐标会有一些精度误差，不算大
 
     if(roughness > SETTING.maxRoughness)
@@ -51,7 +47,7 @@ void main()
 	vec3 V          = normalize((CAMERA.pos - worldPos).xyz);	//视线
     vec3 R          = normalize(reflect(-V, N));                //反射
 
-    vec3 F0             = mix(vec3(0.04f), diffuse.rgb, metallic); 
+    vec3 F0             = gbfferF0.rgb;   //G-Buffer直存的F0（虹彩材质为染色后的烘焙值）
     float NoV           = Saturate(dot(N, V));
     float coneTangent   = Lerp(0, roughness * (1 - SETTING.importanceSampleBias), NoV * sqrt(roughness)); //锥体追踪，没搞明白，暂时抄的
 
@@ -86,8 +82,7 @@ void main()
     for(int i = minIndex; i <= maxIndex; i++)
     { 
 
-        ivec2 neighburTex   = tracePixel.xy + ivec2(round(ditterRotation * deltaUV[i]));
-        ivec2 neighburFullTex = HALF_SIZE_SSSR ? neighburTex * 2 : neighburTex;
+        ivec2 neighburTex   = pixel.xy + ivec2(round(ditterRotation * deltaUV[i]));
 
         vec4 traceResult    = imageLoad(SSSR_HIT_RESULT, neighburTex);
         vec4 traceColor     = imageLoad(SSSR_HIT_COLOR, neighburTex);
@@ -105,7 +100,7 @@ void main()
             hitDist             = length(hitPos.xyz - worldPos.xyz);
             vec3 L              = normalize(hitPos.xyz - worldPos.xyz);
 
-            float localBRDF     = ResolveBRDF(vec3(1.0f), roughness, metallic, N, V, L).specular.x;
+            float localBRDF     = ResolveBRDF(vec3(1.0f), roughness, F0, specF, N, V, L).specular.x;
             weight              = max(localBRDF / max(1e-5, hitPdf) * dot(N, L), 1e-3);    // 权重推导 https://zhuanlan.zhihu.com/p/689424019
 
             // 采样使用伪cone tracing，预先滤波颜色缓冲，然后根据粗糙度，追踪距离等估计采样mip
@@ -126,8 +121,8 @@ void main()
             hitDist             = length(hitPos.xyz - worldPos.xyz);
             vec3 L              = normalize(hitPos.xyz - worldPos.xyz);
             
-            float localBRDF     = ResolveBRDF(vec3(1.0f), roughness, metallic, N, V, L).specular.x;
-            weight              = max(localBRDF / max(1e-3, hitPdf) * dot(N, L), 1e-3);    
+            float localBRDF     = ResolveBRDF(vec3(1.0f), roughness, F0, specF, N, V, L).specular.x;
+            weight              = max(localBRDF / max(1e-3, hitPdf) * dot(N, L), 1e-3);
 
             hitColor            = traceColor;
         }

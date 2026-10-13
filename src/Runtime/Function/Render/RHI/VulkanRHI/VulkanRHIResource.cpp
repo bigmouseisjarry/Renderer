@@ -657,18 +657,38 @@ VulkanRHITexture::VulkanRHITexture(const RHITextureInfo& info, VulkanRHIBackend&
     {
         LOG_FATAL("VMA failed to allocate image!");
     }
+
+    // 调试命名：尺寸_层数_mip_格式 编码进对象名；创建日志双保险
+    {
+        char texName[96];
+        snprintf(texName, sizeof(texName), "Tex_%ux%ux%u_L%u_M%u_F%d",
+                    imageInfo.extent.width, imageInfo.extent.height, imageInfo.extent.depth,
+                    imageInfo.arrayLayers, imageInfo.mipLevels, (int)info.format);
+        VkDebugUtilsObjectNameInfoEXT nameInfo = {};
+        nameInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT;
+        nameInfo.objectType = VK_OBJECT_TYPE_IMAGE;
+        nameInfo.objectHandle = (uint64_t)(uintptr_t)handle;
+        nameInfo.pObjectName = texName;
+        vkSetDebugUtilsObjectNameEXT(backend.GetLogicalDevice(), &nameInfo);
+        LOG_DEBUG("[TexDebug] handle=0x%llx %s", (unsigned long long)(uintptr_t)handle, texName);
+    }
 }
 
 void VulkanRHITexture::Destroy()
 {
     vmaDestroyImage(Backend()->GetMemoryAllocator(), handle, allocation);
-    //vkDestroyImage(Backend()->GetLogicalDevice(), handle, nullptr);
 }
 
 VulkanRHITextureView::VulkanRHITextureView(const RHITextureViewInfo& info, VulkanRHIBackend& backend)
 : RHITextureView(info)
 {
     if(info.subresource.aspect == TEXTURE_ASPECT_NONE)  this->info.subresource = info.texture->GetDefaultSubresourceRange();
+
+    if((info.viewType == VIEW_TYPE_1D || info.viewType == VIEW_TYPE_2D || info.viewType == VIEW_TYPE_3D) &&
+        this->info.subresource.layerCount > 1)
+        LOG_DEBUG("[RHITextureView] WARNING: single-layer viewType(%d) with layerCount(%d) layers=%d mips=%d",
+                    (int)info.viewType, (int)this->info.subresource.layerCount,
+                    (int)this->info.subresource.baseArrayLayer, (int)this->info.subresource.levelCount);
 
     RHITextureInfo textureInfo = ResourceCast(info.texture)->GetInfo();
     VkImageAspectFlags aspectMask = VulkanUtil::TextureAspectToVk(this->info.subresource.aspect);
@@ -1420,14 +1440,14 @@ RHIDescriptorSet& VulkanRHIDescriptorSet::UpdateDescriptor(const RHIDescriptorUp
 	case RESOURCE_TYPE_RW_TEXTURE:
     case RESOURCE_TYPE_TEXTURE_CUBE:
         imageDescriptor.imageView = ResourceCast(descriptorUpdateInfo.textureView)->GetHandle();
-        imageDescriptor.imageLayout = VulkanUtil::ResourceTypeToImageLayout(descriptorUpdateInfo.resourceType);
+        imageDescriptor.imageLayout = VulkanUtil::DescriptorToImageLayout(descriptorUpdateInfo.state, descriptorUpdateInfo.resourceType);
         descriptorWrite.pImageInfo = &imageDescriptor;
         break;
 
 	case RESOURCE_TYPE_COMBINED_IMAGE_SAMPLER:
         imageDescriptor.sampler = ResourceCast(descriptorUpdateInfo.sampler)->GetHandle();
         imageDescriptor.imageView = ResourceCast(descriptorUpdateInfo.textureView)->GetHandle();
-        imageDescriptor.imageLayout = VulkanUtil::ResourceTypeToImageLayout(descriptorUpdateInfo.resourceType);
+        imageDescriptor.imageLayout = VulkanUtil::DescriptorToImageLayout(descriptorUpdateInfo.state, descriptorUpdateInfo.resourceType);
         descriptorWrite.pImageInfo = &imageDescriptor;
         break;
 

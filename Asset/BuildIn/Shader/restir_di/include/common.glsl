@@ -45,35 +45,36 @@ layout (set = 1, binding = 3) buffer ResultReservoirs
 	DIReservoir RESULT_RESERVOIRS[];                  // 本帧Reservoir空域合并的结果
 };
 
-layout(set = 2, binding = 0, rgba8)         uniform image2D G_BUFFER_DIFFUSE_METALLIC;	        // 本帧G-Buffer
-layout(set = 2, binding = 1, rgba8_snorm)   uniform image2D G_BUFFER_NORMAL_ROUGHNESS;	
-layout(set = 2, binding = 2, rgba16f)       uniform image2D G_BUFFER_EMISSION;
+layout(set = 2, binding = 0, rgba8)         uniform image2D G_BUFFER_DIFFUSE_TRANSPARENT;	        // 本帧G-Buffer
+layout(set = 2, binding = 1, rgba8)         uniform image2D G_BUFFER_NORMAL_SPECF;   // 八面体2×12位拼（位模式用UNORM），A=specF
+layout(set = 2, binding = 2, rgba8)         uniform image2D G_BUFFER_EMISSION;    // RGBM编码
 layout(set = 2, binding = 3)   				uniform texture2D REPROJECTION_RESULT;				// 重投影结果	
 
 layout(set = 2, binding = 4, rgba16f)       uniform image2D FINAL_COLOR;	                    // lighting的输出，无降噪
-layout(set = 2, binding = 5, rgba16f)       uniform image2D DI_DIFFUSE_COLOR;	       			// lighting的输出，有降噪
-layout(set = 2, binding = 6, rgba16f)       uniform image2D DI_SPECULAR_COLOR;	       			// lighting的输出，有降噪
+layout(set = 2, binding = 5, rgba16f)       uniform image2D DI_DIFFUSE_LIGHT;	       			// lighting的输出，有降噪
+layout(set = 2, binding = 6, rgba16f)       uniform image2D DI_SPECULAR_LIGHT;	       			// lighting的输出，有降噪
+layout(set = 2, binding = 7, rgba8)         uniform image2D G_BUFFER_SPECULAR_F0_ROUGHNESS;	// F0+roughness（只读，RW风格绑定与同组一致）
 
 //////////////////////////////////////////////////////////////////////////
 
 vec3 EvaluatePHatFull(
-	uint lightID, vec3 worldPos, vec3 normal, 
-	vec3 diffuse, float roughness, float metallic) 
+	uint lightID, vec3 worldPos, vec3 normal,
+	vec3 diffuse, float roughness, vec3 F0, float specF)
 {
 	vec3 N = normalize(normal);
-	vec3 V = normalize(CAMERA.pos.xyz - worldPos);	
+	vec3 V = normalize(CAMERA.pos.xyz - worldPos);
 
-	return PointLighting(diffuse, roughness, metallic, 
+	return PointLighting(diffuse, roughness, F0, specF,
 						 vec4(worldPos, 1.0f), N, V, lightID);
 }
 
 float EvaluatePHat(
-	uint lightID, vec3 worldPos, vec3 normal,  
-	vec3 diffuse, float roughness, float metallic) 
+	uint lightID, vec3 worldPos, vec3 normal,
+	vec3 diffuse, float roughness, vec3 F0, float specF)
 {
 	return 	RGBtoLuminance(EvaluatePHatFull(
-				lightID, worldPos, normal, 
-				diffuse, roughness, metallic));	
+				lightID, worldPos, normal,
+				diffuse, roughness, F0, specF));
 }
 
 float HitDistance(uint lightID, vec3 worldPos)

@@ -16,8 +16,8 @@ layout(location = 0) out vec2 OUT_COLOR;
 void main() 
 {	
     Material material = FetchMaterial(IN_ID);
-    vec4 diffuse = FetchDiffuse(material, IN_TEXCOORD);
-    if(material.alphaClip >= diffuse.a) 
+    vec4 albedo = FetchAlbedo(material, IN_TEXCOORD);
+    if(material.alphaClip >= albedo.a)
         discard;    // 透明度测试
 
     PointLight light = LIGHTS.pointLights[POINT_LIGHT_SETTING.index];

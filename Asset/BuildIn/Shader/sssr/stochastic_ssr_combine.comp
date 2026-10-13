@@ -17,7 +17,7 @@ void main() {
     ivec2 pixel         = ivec2(gl_GlobalInvocationID.xy);
 
     vec2 uv             = ScreenPixToUV(pixel);
-    vec3 screenColor        = (SETTING.reflectionOnly == 0) ? texture(sampler2D(IN_COLOR_PYRAMID, SAMPLER[0]), uv).xyz : vec3(0.0f); 
+    vec3 screenColor        = (SETTING.reflectionOnly == 0) ? imageLoad(OUT_COLOR, ivec2(pixel.xy)).xyz : vec3(0.0f);
     vec4 currentColor       = imageLoad(SSSR_RESOLVE, pixel); 
     if(currentColor.w < 0)
     {

@@ -16,6 +16,9 @@ void DeferredLightingPass::Init()
                      .AddEntry({1, 2, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })
                      .AddEntry({1, 3, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })
                      .AddEntry({1, 4, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE})
+                     .AddEntry({1, 5, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })
+                     .AddEntry({1, 6, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })
+                     .AddEntry({1, 7, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })
                      .AddPushConstant({128, SHADER_FREQUENCY_COMPUTE});
     rootSignature = backend->CreateRootSignature(rootSignatureInfo);
 
@@ -40,12 +43,15 @@ void DeferredLightingPass::Build(RDGBuilder& builder)
     RDGTextureHandle diffuse        = builder.GetTexture("G-Buffer Diffuse/Metallic");
     RDGTextureHandle normal         = builder.GetTexture("G-Buffer Normal/Roughness");
     RDGTextureHandle emission       = builder.GetTexture("G-Buffer Emission");
+    RDGTextureHandle geometricNormal = builder.GetTexture("G-Buffer Geometric Normal/AO");
+    RDGTextureHandle materialParams = builder.GetTexture("G-Buffer Specular F0/Roughness");
+    RDGTextureHandle ior             = builder.GetTexture("G-Buffer IOR");
 
     RDGTextureHandle directionalDepthHistory = builder.CreateTexture("Directional Depth History")
         .Import(directionalDepthHistoryTex->texture, RESOURCE_STATE_UNDEFINED)
         .Finish();
 
-    RDGTextureHandle outColor = builder.GetOrCreateTexture("Mesh Pass Out Color") 
+    RDGTextureHandle outColor = builder.GetOrCreateTexture("Noisy HDR Color") 
         .Exetent({windowExtent.width, windowExtent.height, 1})
         .Format(EngineContext::Render()->GetHdrColorFormat())
         .ArrayLayers(1)
@@ -66,15 +72,18 @@ void DeferredLightingPass::Build(RDGBuilder& builder)
             .Read(1, 1, 0, normal)
             .Read(1, 2, 0, emission)
             .Read(1, 3, 0, directionalDepthHistory)
+            .Read(1, 5, 0, geometricNormal)
+            .Read(1, 6, 0, materialParams)
+            .Read(1, 7, 0, ior)
             .ReadWrite(1, 4, 0, outColor)
-            .Dependency(builder.GetTexture("Directional Depth [0]"), RESOURCE_STATE_SHADER_RESOURCE)
-            .Dependency(builder.GetTexture("Directional Depth [1]"), RESOURCE_STATE_SHADER_RESOURCE)
-            .Dependency(builder.GetTexture("Directional Depth [2]"), RESOURCE_STATE_SHADER_RESOURCE)
-            .Dependency(builder.GetTexture("Directional Depth [3]"), RESOURCE_STATE_SHADER_RESOURCE)
-            .Dependency(builder.GetTexture("Point Shadow Filtered Color [0]"), RESOURCE_STATE_SHADER_RESOURCE)
-            .Dependency(builder.GetTexture("Point Shadow Filtered Color [1]"), RESOURCE_STATE_SHADER_RESOURCE)
-            .Dependency(builder.GetTexture("Light Cluster Grid"), RESOURCE_STATE_SHADER_RESOURCE)
-            .Dependency(builder.GetBuffer("Light Cluster Index"), RESOURCE_STATE_SHADER_RESOURCE)
+            .Read(builder.GetTexture("Directional Depth [0]"))
+            .Read(builder.GetTexture("Directional Depth [1]"))
+            .Read(builder.GetTexture("Directional Depth [2]"))
+            .Read(builder.GetTexture("Directional Depth [3]"))
+            .Read(builder.GetTexture("Point Shadow Filtered Color [0]"))
+            .Read(builder.GetTexture("Point Shadow Filtered Color [1]"))
+            .Read(builder.GetTexture("Light Cluster Grid"))
+            .Read(builder.GetBuffer("Light Cluster Index"))
             .Execute([&](RDGPassContext context) {
 
                 DeferredLightingSetting newSetting = setting;

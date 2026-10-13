@@ -585,11 +585,10 @@ vec3 fetchNormal(in MaterialInfo material, vec2 coord, vec3 normal, vec4 tangent
 	if(material.texture_normal > 0)     
     {
         //计算每像素的tbn矩阵可以避免在vert shader输出上的额外两个vec3的插值，其实还会更快！
-        float fSign = tangent.w < 0 ? -1 : 1;        
+        float fSign = tangent.w < 0 ? -1 : 1;
         highp vec3 n = normalize(normal);
-        highp vec3 t = normalize(tangent.xyz);       
-        highp vec3 b = -fSign * normalize(cross(n, t)); //排列组合试出来的 nm的 为什么
-        t = fSign * normalize(cross(n, t));
+        highp vec3 t = normalize(tangent.xyz);
+        highp vec3 b = fSign * normalize(cross(n, t));   //mikktspace约定：B = cross(N, T) * 手性；t保持顶点切线不重算
 
         highp mat3 TBN = mat3(t, b, n);
 

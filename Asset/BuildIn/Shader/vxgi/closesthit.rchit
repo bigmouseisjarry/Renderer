@@ -27,7 +27,7 @@ void main()
     vec4 worldPos       = model * pos; 
 
 	Material material   = FetchMaterial(objectID);
-    vec4 diffuse        = FetchDiffuse(material, texCoord);
+    vec4 albedo         = FetchAlbedo(material, texCoord);
     vec3 emission       = FetchEmission(material);
     vec3 normal         = FetchNormal(material, texCoord, worldNormal, worldTangent);
     float roughness     = FetchRoughness(material, texCoord);
@@ -35,6 +35,6 @@ void main()
 
     RAY_PAYLOAD.objectID = objectID;
     RAY_PAYLOAD.normal = worldNormal;
-    RAY_PAYLOAD.diffuse = diffuse;
+    RAY_PAYLOAD.albedo = albedo;
     RAY_PAYLOAD.worldPos = worldPos.xyz;
 }

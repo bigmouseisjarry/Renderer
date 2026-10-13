@@ -123,6 +123,7 @@ void VulkanRHIBackend::InitImGui(SDL_Window* window)
     initInfo.PipelineInfoMain.PipelineRenderingCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR;
     initInfo.PipelineInfoMain.PipelineRenderingCreateInfo.colorAttachmentCount = 1;
     initInfo.PipelineInfoMain.PipelineRenderingCreateInfo.pColorAttachmentFormats = colorFormats.data();
+    initInfo.PipelineInfoMain.PipelineRenderingCreateInfo.depthAttachmentFormat = VulkanUtil::RHIFormatToVkFormat(EngineContext::Render()->GetDepthFormat());
 
     //ImGui_ImplVulkan_LoadFunctions();
     //ImGui_ImplVulkan_Init(&initInfo, tempPass);
@@ -581,6 +582,9 @@ void VulkanRHIBackend::CreateLogicalDevice()
     deviceFeatures.shaderInt64 = VK_TRUE;               //64位支持
     deviceFeatures.shaderFloat64 = VK_TRUE;
     deviceFeatures.wideLines = VK_TRUE;                 //线框模式的宽度
+    deviceFeatures.vertexPipelineStoresAndAtomics = VK_TRUE;    // 顶点段读storage buffer（LIGHTS/MESH_CLUSTER_DRAW_INFOS，VUID-06341）：
+                                                                // readonly装饰不可行（culling compute写同一common.glsl声明），开特性合法化
+    deviceFeatures.fragmentStoresAndAtomics = VK_TRUE;          // 片段段读storage buffer（LIGHTS/GLOBAL_SETTING，VUID-06340）：同上合法化
     createInfo.pEnabledFeatures = &deviceFeatures;
 
     VkPhysicalDeviceVulkan12Features vulkan12Features{};                                        //1.2版本的其他支持
@@ -595,6 +599,7 @@ void VulkanRHIBackend::CreateLogicalDevice()
     vulkan12Features.descriptorBindingPartiallyBound = VK_TRUE;
     vulkan12Features.descriptorIndexing = VK_TRUE;
     vulkan12Features.bufferDeviceAddress = VK_TRUE;
+    vulkan12Features.shaderOutputLayer = VK_TRUE;       // 顶点着色器写gl_Layer（VUID-08740：SPIR-V Capabilities ShaderLayer的要求）
     createInfo.pNext = &vulkan12Features;
 
 	VkPhysicalDeviceVulkan13Features vulkan13Features{};                                        //1.3版本的其他支持

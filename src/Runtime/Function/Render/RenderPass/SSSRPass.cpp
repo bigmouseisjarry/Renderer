@@ -28,6 +28,7 @@ void SSSRPass::Init()
                      .AddEntry({2, 0, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })     // G_BUFFER_DIFFUSE_METALLIC
                      .AddEntry({2, 1, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })     // G_BUFFER_NORMAL_ROUGHNESS
                      .AddEntry({2, 2, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })     // G_BUFFER_EMISSION
+                     .AddEntry({2, 3, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })     // G_BUFFER_SPECULAR_F0_ROUGHNESS
                      .AddPushConstant({128, SHADER_FREQUENCY_COMPUTE});
     rootSignature = backend->CreateRootSignature(rootSignatureInfo);
 
@@ -59,10 +60,10 @@ void SSSRPass::Build(RDGBuilder& builder)
         !EngineContext::Render()->IsPassEnabled(PATH_TRACING_PASS))
     {
         Extent2D windowExtent = EngineContext::Render()->GetWindowsExtent();
-        Extent2D halfWindowExtent = HALF_SIZE_SSSR ? EngineContext::Render()->GetHalfWindowsExtent() : windowExtent;
+        // Extent2D windowExtent = HALF_SIZE_SSSR ? EngineContext::Render()->GetHalfWindowsExtent() : windowExtent;
 
         RDGTextureHandle sssrHit = builder.CreateTexture("SSSR Hit Result")
-            .Exetent({halfWindowExtent.width, halfWindowExtent.height, 1})
+            .Exetent({windowExtent.width, windowExtent.height, 1})
             .Format(EngineContext::Render()->GetHdrColorFormat())
             .ArrayLayers(1)
             .MipLevels(1)
@@ -71,7 +72,7 @@ void SSSRPass::Build(RDGBuilder& builder)
             .Finish();
 
         RDGTextureHandle sssrColor = builder.CreateTexture("SSSR Hit Color")
-            .Exetent({halfWindowExtent.width, halfWindowExtent.height, 1})
+            .Exetent({windowExtent.width, windowExtent.height, 1})
             .Format(EngineContext::Render()->GetHdrColorFormat())
             .ArrayLayers(1)
             .MipLevels(1)
@@ -80,7 +81,7 @@ void SSSRPass::Build(RDGBuilder& builder)
             .Finish();
 
         RDGTextureHandle sssrPDF = builder.CreateTexture("SSSR PDF")
-            .Exetent({halfWindowExtent.width, halfWindowExtent.height, 1})
+            .Exetent({windowExtent.width, windowExtent.height, 1})
             .Format(EngineContext::Render()->GetHdrColorFormat())
             .ArrayLayers(1)
             .MipLevels(1)
@@ -101,11 +102,10 @@ void SSSRPass::Build(RDGBuilder& builder)
             .Import(historyColorTex->texture, RESOURCE_STATE_UNDEFINED)
             .Finish();
 
-        RDGTextureHandle outColor = builder.GetTexture("Mesh Pass Out Color");
+        RDGTextureHandle outColor = builder.GetTexture("Noisy HDR Color");
 
-        uint32_t historyIndex = EngineContext::CurrentFrameIndex();
-        RDGTextureHandle lastFrameColor = builder.GetOrCreateTexture("Final Color History")
-            .Import(EngineContext::RenderResource()->GetFinalColorHistoryTexture(historyIndex), RESOURCE_STATE_UNDEFINED)
+        RDGTextureHandle lastFrameColor = builder.GetOrCreateTexture("Stable HDR Color History")
+            .Import(EngineContext::RenderResource()->GetStableHDRColorTexture(1), RESOURCE_STATE_UNDEFINED)     // 上一帧最终颜色（语义槽1）
             .Finish();
 
         RDGTextureHandle inColorPyramid = builder.CreateTexture("SSSR Color Pyramid")
@@ -124,6 +124,7 @@ void SSSRPass::Build(RDGBuilder& builder)
         RDGTextureHandle diffuse        = builder.GetTexture("G-Buffer Diffuse/Metallic");
         RDGTextureHandle normal         = builder.GetTexture("G-Buffer Normal/Roughness");
         RDGTextureHandle emission       = builder.GetTexture("G-Buffer Emission");
+        RDGTextureHandle specularF0     = builder.GetTexture("G-Buffer Specular F0/Roughness");
 
         // 帧首即生成上帧颜色mip（copy源为持久import纹理，无帧内生产者依赖）
         RDGCopyPassHandle copyPass = builder.CreateCopyPass(GetName() + " Color Pyramid")
@@ -146,12 +147,13 @@ void SSSRPass::Build(RDGBuilder& builder)
             .Read(2, 0, 0, diffuse)
             .Read(2, 1, 0, normal)
             .Read(2, 2, 0, emission)
-            .Dependency(builder.GetBuffer("TLAS Storage"), RESOURCE_STATE_ACCELERATION_STRUCTURE)
-            .Dependency(builder.GetTexture("Surface Cache Lighting"), RESOURCE_STATE_SHADER_RESOURCE)
+            .Read(2, 3, 0, specularF0)
+            .ReadAccelerationStructure(builder.GetBuffer("TLAS Storage"))
+            .Read(builder.GetTexture("Surface Cache Lighting"))
+            .Read(builder.GetTexture("Depth Min"))          // 层级步进采样Min金字塔（经per-frame set，图外通道）——pyramid被禁用时GetTexture返回无效句柄、Read安全跳过
             .Execute([&](RDGPassContext context) {       
 
-                Extent2D extent = (HALF_SIZE_SSSR) ? EngineContext::Render()->GetHalfWindowsExtent() : 
-                                                     EngineContext::Render()->GetWindowsExtent();
+                Extent2D extent = EngineContext::Render()->GetWindowsExtent();
 
                 RHICommandListRef command = context.command; 
                 command->SetComputePipeline(computePipeline[0]);
@@ -179,6 +181,7 @@ void SSSRPass::Build(RDGBuilder& builder)
             .Read(2, 0, 0, diffuse)
             .Read(2, 1, 0, normal)
             .Read(2, 2, 0, emission)
+            .Read(2, 3, 0, specularF0)
             .Execute([&](RDGPassContext context) {       
 
                 RHICommandListRef command = context.command; 
@@ -209,6 +212,7 @@ void SSSRPass::Build(RDGBuilder& builder)
                 .Read(2, 0, 0, diffuse)
                 .Read(2, 1, 0, normal)
                 .Read(2, 2, 0, emission)
+                .Read(2, 3, 0, specularF0)
                 .Execute([&](RDGPassContext context) {       
 
                     RHICommandListRef command = context.command; 
@@ -230,12 +234,17 @@ void SSSRPass::Build(RDGBuilder& builder)
                 .ReadWrite(1, 3, 0, sssrResolve)
                 .ReadWrite(1, 5, 0, outColor)
                 .Read(1, 6, 0, inColorPyramid)
+                .Read(2, 0, 0, diffuse)
+                .Read(2, 1, 0, normal)
+                .Read(2, 2, 0, emission)
+                .Read(2, 3, 0, specularF0)
                 .Execute([&](RDGPassContext context) {       
 
                     RHICommandListRef command = context.command; 
                     command->SetComputePipeline(computePipeline[3]);
-                    command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);  
+                    command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);
                     command->BindDescriptorSet(context.descriptors[1], 1);
+                    command->BindDescriptorSet(context.descriptors[2], 2);
                     command->PushConstants(&setting, sizeof(SSSRSetting), SHADER_FREQUENCY_COMPUTE);
                     command->Dispatch(  Math::CeilDivide(EngineContext::Render()->GetWindowsExtent().width, 16), 
                                         Math::CeilDivide(EngineContext::Render()->GetWindowsExtent().height, 16), 

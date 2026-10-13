@@ -17,14 +17,16 @@ void main()
     ivec2 pixel     = ivec2(gl_GlobalInvocationID.xy);
     vec2 uv         = ScreenPixToUV(pixel); 
 
-   	vec4 gbffer0    = imageLoad(G_BUFFER_DIFFUSE_METALLIC, pixel);
-    vec4 gbffer1    = imageLoad(G_BUFFER_NORMAL_ROUGHNESS, pixel);
+   	vec4 gbffer0    = imageLoad(G_BUFFER_DIFFUSE_TRANSPARENT, pixel);
+    vec4 gbffer1    = imageLoad(G_BUFFER_NORMAL_SPECF, pixel);
     vec4 gbffer2    = imageLoad(G_BUFFER_EMISSION, pixel);
+    vec4 gbffer6    = imageLoad(G_BUFFER_SPECULAR_F0_ROUGHNESS, pixel);
     vec3 diffuse    = gbffer0.xyz;
-    vec3 normal     = normalize(gbffer1.xyz);
-    vec3 emission   = gbffer2.xyz;
-    float roughness = gbffer1.w;
-    float metallic  = gbffer0.w;
+    float specF     = gbffer1.a;    // 虹彩标志：F直用烘焙F0跳过Schlick
+    vec3 normal     = DecodeGBufferNormal(gbffer1.xyz);
+    vec3 emission   = DecodeEmissionRGBM(gbffer2);
+    float roughness = gbffer6.w;
+    vec3 F0         = gbffer6.rgb;
     vec4 worldPos   = DepthToWorld(uv); 
 	float depth 	= FetchDepthTex(pixel);
 
@@ -54,7 +56,7 @@ void main()
 			
 			neighborPixel[j] = randNeighborPixel;
 			neighborNumStreamSamples[j] = RESERVOIRS[randIndex].numStreamSamples; 
-			neighborNormal[j] = normalize(imageLoad(G_BUFFER_NORMAL_ROUGHNESS, randNeighborPixel).xyz);
+			neighborNormal[j] = DecodeGBufferNormal(imageLoad(G_BUFFER_NORMAL_SPECF, randNeighborPixel).xyz);
 
 			float neighborDepth = FetchDepthTex(randNeighborPixel);
 			if(neighborDepth == 1.0f) 
@@ -78,7 +80,7 @@ void main()
 			DIReservoir randRes = RESERVOIRS[randIndex];
 			float newPHat = EvaluatePHat(
 					randRes.sampl.lightID, worldPos.xyz, normal,
-					diffuse, roughness, metallic); 
+					diffuse, roughness, F0, specF);
 			CombineDIReservoirs(res, randRes, newPHat, rand);
 		}
 
@@ -90,8 +92,8 @@ void main()
 				// 需要重新评估该采样光源对于临近像素是否有贡献，来更新权重
 				// 也没必要再算一遍phat，确定0项就行
 
-				// vec4 neighborGbffer0    = imageLoad(G_BUFFER_DIFFUSE_METALLIC, neighborPixel[j]);
-				// vec4 neighborGbffer1    = imageLoad(G_BUFFER_NORMAL_ROUGHNESS, neighborPixel[j]);
+				// vec4 neighborGbffer0    = imageLoad(G_BUFFER_DIFFUSE_TRANSPARENT, neighborPixel[j]);
+				// vec4 neighborGbffer1    = imageLoad(G_BUFFER_NORMAL_SPECF, neighborPixel[j]);
 				// vec4 neighborGbffer2    = imageLoad(G_BUFFER_EMISSION, neighborPixel[j]);
 				// vec3 neighborDiffuse    = neighborGbffer0.xyz;
 				// vec3 neighborNormal     = normalize(neighborGbffer1.xyz);

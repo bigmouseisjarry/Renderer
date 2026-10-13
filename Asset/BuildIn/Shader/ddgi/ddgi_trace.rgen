@@ -6,9 +6,11 @@
 #include "../common/common.glsl"
 #include "ddgi_layout.glsl"
 
+// 给定总点数 n，生成第 i 个“均匀铺满球面”的方向
 vec3 SphericalFibonacci(float i, float n)
 {
     const float PHI = sqrt(5.0) * 0.5 + 0.5;
+	// 让编译器走 FMA，少一次舍入
 #define madfrac(A, B) ((A) * (B)-floor((A) * (B)))
     float phi       = 2.0 * PI * madfrac(i, PHI - 1);
     float cos_theta = 1.0 - (2.0 * i + 1.0) * (1.0 / n);
@@ -19,6 +21,8 @@ vec3 SphericalFibonacci(float i, float n)
 #undef madfrac
 }
 
+// 调用方（rgen）声明 rayPayloadEXT，被调方（rchit/rmiss/rahit）声明rayPayloadInEXT（Incoming）。
+// 通道是双向的：rgen 先写 → hit 读；hit 写回 → rgen 读。
 layout(location = 0) rayPayloadEXT DDGIPayload RAY_PAYLOAD;
 
 layout(push_constant) uniform DDGIComputeSetting {
@@ -42,6 +46,7 @@ void main()
 	{
 		Rand rand = SeedRand(GLOBAL_SETTING.totalTicks, GLOBAL_SETTING.totalTicks + probeIndex);	// 给一个随机旋转，每个探针内相同
 		vec3 rotation = vec3(RandFloat(rand), RandFloat(rand), RandFloat(rand)) * 2 * PI;			// 其实可以每探针只算一次，or在CPU算
+		// GLSL mat3 构造器是列主序填充的？
 		mat3 rotationMat = mat3(1.0, 0.0, 0.0, 
 								0.0, cos(rotation.x), -sin(rotation.x), 
 								0.0, sin(rotation.x), cos(rotation.x)) * 
@@ -60,7 +65,7 @@ void main()
 
 	RAY_PAYLOAD.dist      = tmax;
 	RAY_PAYLOAD.normal    = vec4(0.0f);
-	RAY_PAYLOAD.diffuse   = vec4(0.0f);
+	RAY_PAYLOAD.albedo    = vec4(0.0f);
 	RAY_PAYLOAD.emission  = vec4(0.0f);
 
 	traceRayEXT(TLAS, 			  		// acceleration structure
@@ -76,10 +81,10 @@ void main()
 		0               				// payload (location = 0)
   	);
 
-	// if(RAY_PAYLOAD.dist < tmax) AddGizmoLine(origin, origin + direction * RAY_PAYLOAD.dist, RAY_PAYLOAD.diffuse);	// 可视化trace路径
+	// if(RAY_PAYLOAD.dist < tmax) AddGizmoLine(origin, origin + direction * RAY_PAYLOAD.dist, RAY_PAYLOAD.albedo);	// 可视化trace路径
 
-	imageStore(G_BUFFER_POSITION,	 		pixel, vec4(direction, RAY_PAYLOAD.dist)); 
-	imageStore(G_BUFFER_NORMAL_ROUGHNESS, 	pixel, RAY_PAYLOAD.normal);
-	imageStore(G_BUFFER_DIFFUSE_METALLIC, 	pixel, RAY_PAYLOAD.diffuse);
-	imageStore(G_BUFFER_EMISSION, 			pixel, RAY_PAYLOAD.emission);
+	imageStore(TRACE_DIRECTION_DIST,	 		pixel, vec4(direction, RAY_PAYLOAD.dist));
+	imageStore(TRACE_NORMAL_ROUGHNESS, 	        pixel, RAY_PAYLOAD.normal);
+	imageStore(TRACE_ALBEDO_METALLIC, 	        pixel, RAY_PAYLOAD.albedo);
+	imageStore(TRACE_EMISSION, 		            pixel, RAY_PAYLOAD.emission);
 }

@@ -18,6 +18,7 @@ enum RenderPassMaskBits
     PASS_MASK_FORWARD_PASS = 0x00000001,
     PASS_MASK_DEFERRED_PASS = 0x00000002,
     PASS_MASK_TRANSPARENT_PASS = 0x00000004,
+    PASS_MASK_DEFERRED_THIN_PASS = 0x00000010,  // 薄透明（HRP式queue2500：树叶/头发，进GBuffer二次绘制，写IOR/透明度）
     // PASS_MASK_POST_PROCESS_PASS = 0x00000008,    // 后处理的screen pass也暂时不支持
 
 	PASS_MASK_MAX_ENUM = 0x7FFFFFFF,	//
@@ -44,11 +45,15 @@ public:
     uint32_t GetMaterialID()                                { return materialID; }
 
     // 材质参数
-    void SetDiffuse(Vec4 diffuse)                           { this->diffuse = diffuse;      Update(); }
+    void SetBaseColor(Vec4 baseColor)                       { this->baseColor = baseColor;  Update(); }
     void SetEmission(Vec4 emission)                         { this->emission = emission;    Update(); }
     void SetRoughness(float roughness)                      { this->roughness = roughness;  Update(); }
     void SetMetallic(float metallic)                        { this->metallic = metallic;    Update(); }
     void SetAlphaClip(float alphaClip)                      { this->alphaClip = alphaClip;  Update(); }
+    void SetIOR(float ior)                                  { this->ior = ior;              Update(); }
+    void SetIridescence(bool iridescence)                   { this->iridescence = iridescence;          Update(); }
+    void SetIndex2(float index2)                            { this->index2 = index2;        Update(); }
+    void SetDinc(float dinc)                                { this->dinc = dinc;            Update(); }
     void SetUseVertexColor(bool useVertexColor)             { this->useVertexColor = useVertexColor;    Update(); }
     void SetTextureOffset(Vec2 textureOffset)               { this->textureOffset = textureOffset;      Update(); }
     void SetTextureScale(Vec2 textureScale)                 { this->textureScale = textureScale;        Update(); }
@@ -66,11 +71,15 @@ public:
     void SetGeometryShader(ShaderRef shader)                { geometryShader = shader; }
     void SetFragmentShader(ShaderRef shader)                { fragmentShader = shader; }
 
-    inline Vec4 GetDiffuse() const                          { return this->diffuse; }
+    inline Vec4 GetBaseColor() const                        { return this->baseColor; }
     inline Vec4 GetEmission() const                         { return this->emission; }
     inline float GetRoughness() const                       { return this->roughness; }
     inline float GetMetallic() const                        { return this->metallic; }
     inline float GetAlphaClip() const                       { return this->alphaClip; }
+    inline float GetIOR() const                             { return this->ior; }
+    inline bool GetIridescence() const                      { return this->iridescence; }
+    inline float GetIndex2() const                          { return this->index2; }
+    inline float GetDinc() const                            { return this->dinc; }
     inline bool GetUseVertexColor() const                   { return this->useVertexColor; }
     inline Vec2 GetTextureOffset() const                    { return this->textureOffset; }
     inline Vec2 GetTextureScale() const                     { return this->textureScale; }
@@ -103,14 +112,18 @@ public:
     void SetCastShadow(bool shadow)                         { castShadow = shadow; }
 
 protected:
-    // 材质参数
-    Vec4 diffuse = Vec4::Ones();
+    // 材质参数（baseColor：资产序列化键名保持"diffuse"兼容旧材质，GPU侧见MaterialInfo.baseColor）
+    Vec4 baseColor = Vec4::Ones();
     Vec4 emission = Vec4::Zero();
 
     float roughness = 0.9f;
     float metallic = 0.0f;
     float alphaClip = 0.0f;
     bool useVertexColor = false;
+    float ior = 1.0f;               // 折射率
+    bool iridescence = false;       // 虹彩标志
+    float index2 = 1.0f;            // 虹彩基底折射率η3
+    float dinc = 0.0f;              // 虹彩膜厚标度（Range约0-6）
     Vec2 textureOffset = Vec2::Zero();
     Vec2 textureScale = Vec2::Ones();
 
@@ -158,12 +171,16 @@ private:
     BeginSerailize()
     SerailizeBaseClass(Asset)
     SerailizeBaseClass(AssetBinder)
-    SerailizeEntry(diffuse)
+    ar(cereal::make_nvp("diffuse", baseColor));   // 键名保持"diffuse"以兼容旧资产
     SerailizeEntry(emission)
     SerailizeEntry(roughness)
     SerailizeEntry(metallic)
     SerailizeEntry(alphaClip)
     SerailizeEntry(useVertexColor)
+    SerailizeEntry(ior)
+    SerailizeEntry(iridescence)
+    SerailizeEntry(index2)
+    SerailizeEntry(dinc)
     SerailizeEntry(textureScale)
     SerailizeEntry(ints)
     SerailizeEntry(floats)

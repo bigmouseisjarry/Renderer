@@ -30,18 +30,18 @@ void main()
 
 
 	Material material   = FetchMaterial(objectID);
-    vec4 diffuse        = FetchDiffuse(material, texCoord);
+    vec4 albedo         = FetchAlbedo(material, texCoord);
     vec3 emission       = FetchEmission(material);
     vec3 normal         = FetchNormal(material, texCoord, worldNormal, worldTangent);
     float roughness     = FetchRoughness(material, texCoord);
     float metallic      = FetchMetallic(material, texCoord);
-    
+
     if(material.useVertexColor != 0)
-        diffuse.xyz *= color.xyz;
+        albedo.xyz *= color.xyz;
 
 	float dist = length(worldPos.xyz - gl_WorldRayOriginEXT);
 
-	if(RAY_TRACE_BASE_SETTING.mode == 0) HIT_VALUE = diffuse.xyz;
+	if(RAY_TRACE_BASE_SETTING.mode == 0) HIT_VALUE = albedo.xyz;
 	if(RAY_TRACE_BASE_SETTING.mode == 1) HIT_VALUE = (normal.xyz + 1.0f) / 2.0f;
 	if(RAY_TRACE_BASE_SETTING.mode == 2) HIT_VALUE = vec3(roughness, metallic, 0.0f);
 	if(RAY_TRACE_BASE_SETTING.mode == 3) HIT_VALUE = worldPos.xyz;
@@ -53,7 +53,7 @@ void main()
     vec4 lighting;
     bool valid = FetchSurfaceCacheData(data, objectID, worldPos.xyz, worldNormal);
     valid = valid && FetchSurfaceCacheLighting(lighting, objectID, worldPos.xyz, worldNormal);
-    if(RAY_TRACE_BASE_SETTING.mode == 5) HIT_VALUE = data.diffuse;
+    if(RAY_TRACE_BASE_SETTING.mode == 5) HIT_VALUE = data.albedo;
     if(RAY_TRACE_BASE_SETTING.mode == 6) HIT_VALUE = (data.normal.xyz + 1.0f) / 2.0f;
     if(RAY_TRACE_BASE_SETTING.mode == 7) HIT_VALUE = vec3(data.roughness, data.metallic, 0.0f);
     if(RAY_TRACE_BASE_SETTING.mode == 8) HIT_VALUE = data.emission.xyz;

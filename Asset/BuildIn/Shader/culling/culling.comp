@@ -12,12 +12,12 @@ layout (local_size_x = THREAD_SIZE_X,
 		local_size_z = THREAD_SIZE_Z) in;
 void main() 
 {
-	uint gID = gl_GlobalInvocationID.x;
+	uint gID = gl_GlobalInvocationID.x;		// 当前第几个mesh		// 一个线程一个mesh
 
 	// 逐物体剔除
-	if(gID < MESH_DRAW_DATAS[0].setting.processSize)
+	if(gID < MESH_DRAW_DATAS[0].setting.processSize)	// 不可以超过总共的
 	{
-		IndirectMeshDrawInfo meshInfo = MESH_DRAW_DATAS[0].draws[gID];
+		IndirectMeshDrawInfo meshInfo = MESH_DRAW_DATAS[0].draws[gID];		// 每遍的Info是相同的
 		Object object = OBJECTS.slot[meshInfo.objectID];
 		
 		BoundingSphere worldSphere = SphereTransform(object.sphere, object.model, object.localScale.xyz * object.modelScale.xyz);	//世界空间的包围球包围盒
@@ -33,7 +33,8 @@ void main()
 			if(	SETTING.passType == DEPTH_PASS_INDEX ||
 				SETTING.passType == G_BUFFER_PASS_INDEX ||
 				SETTING.passType == FORWARD_PASS_INDEX ||
-				SETTING.passType == TRANSPARENT_PASS_INDEX)
+				SETTING.passType == TRANSPARENT_PASS_INDEX ||
+				SETTING.passType == G_BUFFER_THIN_PASS_INDEX)
 			{
 				// frustumVisible = frustumVisible && FrustumIntersectSphere(CAMERA.frustum, worldSphere);
 				frustumVisible = frustumVisible && FrustumIntersectBox(CAMERA.frustum, worldBox);

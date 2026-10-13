@@ -59,6 +59,7 @@ void NRDPass::Init()
             .AddEntry({ 1, 0, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })      // G_BUFFER_DEPTH
             .AddEntry({ 1, 1, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })      // G_BUFFER_DIFFUSE_METALLIC
             .AddEntry({ 1, 2, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })      // G_BUFFER_NORMAL_ROUGHNESS
+            .AddEntry({ 1, 7, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })      // G_BUFFER_SPECULAR_F0_ROUGHNESS（漏加的这条）
             .AddEntry({ 1, 3, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE })   // RESTIR_DIFFUSE_COLOR
             .AddEntry({ 1, 4, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE })   // RESTIR_SPECULAR_COLOR
             .AddEntry({ 1, 5, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE })   // NRD_VIEW_Z
@@ -80,6 +81,7 @@ void NRDPass::Init()
         combineRootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetPerFrameRootSignature()->GetInfo())
             .AddEntry({ 1, 1, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })      // G_BUFFER_DIFFUSE_METALLIC
             .AddEntry({ 1, 2, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })      // G_BUFFER_NORMAL_ROUGHNESS
+            .AddEntry({ 1, 7, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })      // G_BUFFER_SPECULAR_F0_ROUGHNESS（nrd/common.glsl共享声明）
             .AddEntry({ 1, 3, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })      // NRD_OUT_DIFFUSE
             .AddEntry({ 1, 4, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })      // NRD_OUT_SPECULAR
             .AddEntry({ 1, 5, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE })  // OUT
@@ -98,6 +100,7 @@ void NRDPass::Init()
         copySssrRootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetPerFrameRootSignature()->GetInfo())
             .AddEntry({ 1, 1, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE })
             .AddEntry({ 1, 2, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })
+            .AddEntry({ 1, 7, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })      // G_BUFFER_SPECULAR_F0_ROUGHNESS（nrd/common.glsl共享声明）
             .AddPushConstant({128, SHADER_FREQUENCY_COMPUTE});
 
         copySssrRootSignature = backend->CreateRootSignature(copySssrRootSignatureInfo);
@@ -142,9 +145,10 @@ void NRDPass::Build(RDGBuilder& builder)
 
         RDGTextureHandle diffuse                = builder.GetTexture("G-Buffer Diffuse/Metallic");
         RDGTextureHandle normal                 = builder.GetTexture("G-Buffer Normal/Roughness");
+        RDGTextureHandle specularF0             = builder.GetTexture("G-Buffer Specular F0/Roughness");
         RDGTextureHandle velocity               = builder.GetTexture("G-Buffer Velocity");
         RDGTextureHandle depth                  = builder.GetTexture("Depth");
-        RDGTextureHandle outColor               = builder.GetTexture("Mesh Pass Out Color");
+        RDGTextureHandle outColor               = builder.GetTexture("Noisy HDR Color");
 
         RDGTextureHandle restirDiffuseColor = builder.GetOrCreateTexture("ReSTIR Diffuse Color") 
             .Exetent({windowExtent.width, windowExtent.height, 1})
@@ -233,8 +237,9 @@ void NRDPass::Build(RDGBuilder& builder)
             RDGComputePassHandle pass2 = builder.CreateComputePass(GetName() + " Copy SSSR")
                 .AddFlag(RDGPassFlags::ForceGraphicsQueue)
                 .RootSignature(copySssrRootSignature)
-                .ReadWrite(1, 1, 0, restirSpecularColor)      
+                .ReadWrite(1, 1, 0, restirSpecularColor)
                 .Read(1, 2, 0, sssrResolve)
+                .Read(1, 7, 0, specularF0)
                 .Execute([this, specSetting, windowExtent](RDGPassContext context) mutable {
 
                     RHICommandListRef command = context.command;
@@ -256,6 +261,7 @@ void NRDPass::Build(RDGBuilder& builder)
                 .Read(1, 0, 0, depth, VIEW_TYPE_2D, {TEXTURE_ASPECT_DEPTH, 0, 1, 0, 1})
                 .Read(1, 1, 0, diffuse)
                 .Read(1, 2, 0, normal)
+                .Read(1, 7, 0, specularF0)
                 .ReadWrite(1, 3, 0, restirDiffuseColor)
                 .ReadWrite(1, 5, 0, nrdViewZ)
                 .ReadWrite(1, 6, 0, nrdNormal)
@@ -294,7 +300,7 @@ void NRDPass::Build(RDGBuilder& builder)
             commonSettings.isMotionVectorInWorldSpace = false;
             commonSettings.isHistoryConfidenceAvailable = false;
             commonSettings.isDisocclusionThresholdMixAvailable = false;
-            commonSettings.isBaseColorMetalnessAvailable = commonSettings.isBaseColorMetalnessAvailable;   
+            commonSettings.isBaseColorMetalnessAvailable = false;   // G-Buffer diffuse.a已从metallic改为transparent，metalness语义作废（拼积木布局S1）
             commonSettings.splitScreen = setting.splitScreen;
             commonSettings.resourceSize[0] = (uint16_t)windowExtent.width;
             commonSettings.resourceSize[1] = (uint16_t)windowExtent.height;
@@ -355,6 +361,7 @@ void NRDPass::Build(RDGBuilder& builder)
                 .RootSignature(combineRootSignature)
                 .Read(1, 1, 0, diffuse)
                 .Read(1, 2, 0, normal)
+                .Read(1, 7, 0, specularF0)
                 .Read(1, 3, 0, nrdOutDiffuse)
                 .Read(1, 4, 0, nrdOutSpecular)
                 .ReadWrite(1, 5, 0, outColor)

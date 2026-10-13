@@ -50,16 +50,24 @@ vec3 PreFilteredReflection(vec3 R, float roughness, textureCube prefilteredMap, 
 
 //Learn OpenGL//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+// R(θ) = F0 + (1 − F0)(1 − cosθ)⁵
+// VoH
 vec3 FresnelSchlick(float cosTheta, vec3 F0)
 {
     return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
 }  
 
+// k_specular = FresnelSchlickRoughness(NoV, F0, roughness)
+// k_diffuse  = 1 − k_specular
+
+// NoV
 vec3 FresnelSchlickRoughness(float cosTheta, vec3 F0, float roughness)	// 对上式的一个近似，使得k_diffuse项与入射方向无关可以移出积分
 {
     return F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(1.0 - cosTheta, 5.0);
 }   
 
+// D = α²/(π* cos⁴θ * (α²+tan²θ)²)
+// 法线恰好指向半程向量 H 的微表面，密度有多大
 float DistributionGGX(vec3 N, vec3 H, float roughness)
 {
     float a      = roughness*roughness;
@@ -74,6 +82,7 @@ float DistributionGGX(vec3 N, vec3 H, float roughness)
     return num / denom;
 }
 
+// G = 微表面里有多少真正参与了这次光路
 float GeometrySchlickGGX(float NdotV, float roughness)
 {
     float r = (roughness + 1.0);
@@ -120,8 +129,7 @@ float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness)
 
 //漫反射项////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-
-
+// https://zhuanlan.zhihu.com/p/342807202
 vec3 Diffuse_Lambert( vec3 DiffuseColor )
 {
 	return DiffuseColor * (1 / PI);
@@ -350,17 +358,6 @@ float Vis_SmithJoint(float a2, float NoV, float NoL)
 	return 0.5 * rcp(Vis_SmithV + Vis_SmithL);
 }
 
-
-
-
-
-
-
-
-
-
-
-
 //////////////////////////////////////////////////////////////////////////////////////////////////////
 
 struct BRDFData {
@@ -380,23 +377,58 @@ BRDFData ResolveBRDF(vec3 albedo, float roughness, float metallic, vec3 N, vec3 
 	if(context.NoL <= 0) return data;
 
 	float a2 			= Pow4(roughness);  
-	vec3 F0 			= mix(vec3(0.04f), albedo, metallic);                                        
+	vec3 F0 			= mix(vec3(0.04f), albedo, metallic);															// 光线垂直入射时的反射率                                       
 
 	float D             = D_GGX(a2, context.NoH);        
     float Vis           = Vis_Smith(a2, context.NoV, context.NoL ); 
     vec3 F              = F_Schlick(F0, context.VoH );      
 
-	vec3 f_diffuse    	= Diffuse_Lambert(albedo);                                                                  	//BRDF反射函数，漫反射项
-	//vec3 f_diffuse      = Diffuse_Burley(albedo, roughness, context.NoV, context.NoL, context.VoH );
-	vec3 f_specular     = D * Vis * F;                                                                                  //BRDF反射函数，镜面反射项
+	// 第一层(菲涅尔分配) 入射光
+	vec3 k_specular     = F;										// 镜面反射率，也就是菲涅尔项
+	vec3 k_diffuse      = (vec3(1.0f) - k_specular);				// 漫反射率
 
-	vec3 k_specular     = F;                                                                                            //镜面反射率，也就是菲涅尔项
-	vec3 k_diffuse      = (vec3(1.0f) - k_specular);                                                                    //漫反射率
+	// 第二层 折射光
+	vec3 f_diffuse    	= Diffuse_Lambert(albedo);                  //BRDF反射函数，漫反射项
+	vec3 f_specular     = D * Vis * F;                              //BRDF反射函数，镜面反射项
 
-	vec3 f_r            = (1.0 - metallic) * k_diffuse * f_diffuse +                                                    //BRDF反射函数             
-							f_specular;																					//(1.0 - metallic)是漫反射颜色和albedo之间的系数差
+	// 总的
+	// 漫反射部分：(1 − F)(先折射进来) * (1 − metallic)(会散射的材料) * f_diffuse(漫反射项)
+	// 镜面反射部分：F(任何材质都有镜面反射) * (D * Vis)
+	vec3 f_r = k_diffuse * (1.0 - metallic) * f_diffuse + f_specular;
 
-	data.diffuse = (1.0 - metallic) * k_diffuse * f_diffuse;
+	data.diffuse = k_diffuse * (1.0 - metallic) * f_diffuse;
+	data.specular = f_specular;
+
+	return data;
+}
+
+// F0直存版
+// diffuse=写入端已预乘(1-m)的漫反射率，F0=写入端算好的镜面反射率
+// specF=虹彩标志：非0时F直接用烘焙F0跳过Schlick（G-Buffer写入端已按当时视角烘焙薄膜干涉色）
+BRDFData ResolveBRDF(vec3 diffuse, float roughness, vec3 F0, float specF, vec3 N, vec3 V, vec3 L)
+{
+	BRDFData data;
+	data.diffuse = vec3(0.0f);
+	data.specular = vec3(0.0f);
+
+	BxDFContext context;
+    Init(context, N, V, L);
+
+	if(context.NoL <= 0) return data;
+
+	float a2 			= Pow4(roughness);
+
+	float D             = D_GGX(a2, context.NoH);
+    float Vis           = Vis_Smith(a2, context.NoV, context.NoL );
+    vec3 F              = specF > 0.5 ? F0 : F_Schlick(F0, context.VoH );
+
+	vec3 k_specular     = F;										// 镜面反射率，也就是菲涅尔项
+	vec3 k_diffuse      = (vec3(1.0f) - k_specular);				// 漫反射率
+
+	vec3 f_diffuse    	= Diffuse_Lambert(diffuse);                  //BRDF反射函数，漫反射项（已预乘，不再乘(1-metallic)）
+	vec3 f_specular     = D * Vis * F;                              //BRDF反射函数，镜面反射项
+
+	data.diffuse = k_diffuse * f_diffuse;
 	data.specular = f_specular;
 
 	return data;

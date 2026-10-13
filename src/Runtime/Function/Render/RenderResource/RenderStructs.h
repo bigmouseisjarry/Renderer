@@ -119,7 +119,7 @@ struct MaterialInfo
     float alphaClip;
     uint32_t useVertexColor;    //是否启用顶点颜色
 
-    Vec4 diffuse;
+    Vec4 baseColor;    // 材质常量色因子（词表：baseColor=常量，albedo=baseColor×贴图，diffuse=albedo×(1-m)）
     Vec4 emission;
 
     uint32_t textureDiffuse;
@@ -140,7 +140,13 @@ struct MaterialInfo
     std::array<uint32_t, 4> textureCube;    // 4个cube纹理
     std::array<uint32_t, 4> texture3D;      // 4个3d纹理
 
+    float ior = 1.0f;                       // 折射率（薄透明层用，经G-Buffer IOR纹理(R8, (η-1)/2)中转给透射）；虹彩时兼作薄膜η2
+    uint32_t iridescence = 0;               // 虹彩标志（经G-Buffer法线纹理.a中转为specF，光照端用烘焙F0跳过Schlick）
+    float index2 = 1.0f;                    // 虹彩基底折射率η3（G-Buffer写入端烘焙时消费，不进G-Buffer）
+    float dinc = 0.0f;                      // 虹彩膜厚标度（OPD=dinc·cosθ2，2η2已折叠，Range约0-6，非物理nm）
 };
+
+static_assert(sizeof(MaterialInfo) == 352, "MaterialInfo stride must match GLSL std430 ArrayStride 352 (see deferred.frag.spv)"); // TEMP DEBUG
 
 struct LightClusterIndex
 {

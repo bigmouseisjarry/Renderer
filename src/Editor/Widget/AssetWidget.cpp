@@ -46,8 +46,15 @@ bool AssetWidget::MaterialAssetUI(std::shared_ptr<Material> material)
         update |= ImGui::Checkbox("Use vertex color", &material->useVertexColor);
         update |= ImGui::DragFloat2("Texture offset", material->textureOffset.data(), 0.001f);
         update |= ImGui::DragFloat2("Texture scale", material->textureScale.data(), 0.001f);
+        update |= ImGui::Checkbox("Iridescence", &material->iridescence);
+        if(material->iridescence)
+        {
+            update |= ImGui::DragFloat("Iridescent IOR (film)", &material->ior, 0.005f, 1.0f, 3.0f);
+            update |= ImGui::DragFloat("Iridescent IOR (base)", &material->index2, 0.005f, 1.0f, 3.0f);
+            update |= ImGui::DragFloat("Iridescent thickness", &material->dinc, 0.01f, 0.0f, 6.0f);
+        }
 
-        update |= ImGui::ColorEdit4("Base color", &material->diffuse[0]);
+        update |= ImGui::ColorEdit4("Base color", &material->baseColor[0]);
         update |= ImGui::ColorEdit3("Emission", &material->emission[0]);
         update |= ImGui::DragFloat("Emission instencity", &material->emission[3], 0.001f, 0.0f);
     }
@@ -95,6 +102,8 @@ bool AssetWidget::MaterialAssetUI(std::shared_ptr<Material> material)
         ImGui::CheckboxFlags("Deferred", &material->renderPassMask, PASS_MASK_DEFERRED_PASS);
         ImGui::SameLine();
         ImGui::CheckboxFlags("Transparent", &material->renderPassMask, PASS_MASK_TRANSPARENT_PASS);
+        ImGui::SameLine();
+        ImGui::CheckboxFlags("Thin", &material->renderPassMask, PASS_MASK_DEFERRED_THIN_PASS);   // 薄透明：只勾THIN（DEFERRED/FORWARD+THIN会双画），建议关useForDepthPass
 
         ImGui::SeparatorText("Vertex shader");
         update |= AssetWidget::UI(material->vertexShader, pushID++);

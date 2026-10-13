@@ -62,8 +62,12 @@ void Material::Update()
     materialInfo.metallic = metallic;
     materialInfo.alphaClip = alphaClip;
     materialInfo.useVertexColor = useVertexColor ? 1 : 0;
+    materialInfo.ior = ior;
+    materialInfo.iridescence = iridescence ? 1 : 0;
+    materialInfo.index2 = index2;
+    materialInfo.dinc = dinc;
 
-    materialInfo.diffuse = diffuse;
+    materialInfo.baseColor = baseColor;
     materialInfo.emission = emission;
 
     if(textureDiffuse)  materialInfo.textureDiffuse = textureDiffuse->textureID;

@@ -3,17 +3,19 @@
 #extension GL_EXT_samplerless_texture_functions : enable
 #include "../common/common.glsl"
 
-layout(set = 1, binding = 0)            uniform texture2D   G_BUFFER_DIFFUSE_METALLIC;	
-layout(set = 1, binding = 1)            uniform texture2D   G_BUFFER_NORMAL_ROUGHNESS;	
-layout(set = 1, binding = 2)            uniform texture2D   G_BUFFER_EMISSION;	
+layout(set = 1, binding = 0)            uniform texture2D   G_BUFFER_DIFFUSE_TRANSPARENT;	
+layout(set = 1, binding = 1)            uniform texture2D   G_BUFFER_NORMAL_SPECF;	
+layout(set = 1, binding = 2)            uniform texture2D   G_BUFFER_EMISSION;
 layout(set = 1, binding = 3)            uniform texture2D   DIRECTIONAL_DEPTH_HISTORY;
 layout(set = 1, binding = 4, rgba16f)   uniform image2D     FINAL_COLOR;		
+layout(set = 1, binding = 5)            uniform texture2D   G_BUFFER_GEOMETRIC_NORMAL_AO;
+layout(set = 1, binding = 6)            uniform texture2D   G_BUFFER_SPECULAR_F0_ROUGHNESS;
+layout(set = 1, binding = 7)            uniform texture2D   G_BUFFER_IOR;
 
 layout(push_constant) uniform DeferredLightSetting {
     uint mode;
     uint directOnly;
-    int enablePSCC;
-    int PCFMode;
+    float maxRadius;
 } SETTING;
 
 // 0    Color
@@ -48,14 +50,24 @@ void main()
     ivec2 pixel     = ivec2(gl_GlobalInvocationID.xy);
     vec2 uv         = ScreenPixToUV(pixel); 
 
-    vec4 gbffer0 = texelFetch(G_BUFFER_DIFFUSE_METALLIC, pixel, 0);
-    vec4 gbffer1 = texelFetch(G_BUFFER_NORMAL_ROUGHNESS, pixel, 0);
+    vec4 gbffer0 = texelFetch(G_BUFFER_DIFFUSE_TRANSPARENT, pixel, 0);
+    vec4 gbffer1 = texelFetch(G_BUFFER_NORMAL_SPECF, pixel, 0);
     vec4 gbffer2 = texelFetch(G_BUFFER_EMISSION, pixel, 0);
-    vec3 diffuse    = gbffer0.xyz;
-    vec3 normal     = gbffer1.xyz;
-    vec3 emission   = gbffer2.xyz;
-    float roughness = gbffer1.w;
-    float metallic  = gbffer0.w;
+    vec4 gbffer6 = texelFetch(G_BUFFER_SPECULAR_F0_ROUGHNESS, pixel, 0);
+    vec3 diffuse    = gbffer0.xyz;                      //写入端已预乘(1-m)
+    vec3 normal     = DecodeGBufferNormal(gbffer1.xyz);
+    vec3 emission   = DecodeEmissionRGBM(gbffer2);
+    float roughness = gbffer6.w;
+    vec3 F0         = gbffer6.rgb;
+    float specF     = gbffer1.a;                        
+
+    vec4 gbffer5        = texelFetch(G_BUFFER_GEOMETRIC_NORMAL_AO, pixel, 0);
+    vec3 gnormal        = DecodeGBufferNormal(gbffer5.xyz);   //几何法线：供后续RT偏移/AO方向gating
+    float ao            = gbffer5.w;
+    float transparent   = gbffer0.a;                    
+    float ior           = texelFetch(G_BUFFER_IOR, pixel, 0).r * 2.0f + 1.0f;   //R8编码(η-1)/2的解码；薄透明pass写，透射落地后消费
+    diffuse             *= (1.0f - transparent);
+
     vec4 worldPos   = DepthToWorld(uv);  // 从UV重建的世界坐标会有一些精度误差，不算大
 
     // 光照参数计算 //////////////////////////////////
@@ -65,34 +77,41 @@ void main()
     vec3 R          = normalize(reflect(-V, N));                //反射
 
     // 直接光照计算 //////////////////////////////////
-
-    vec3 directLightColor = 
-        DirectionalLighting(diffuse, roughness, metallic, worldPos, N, V) * DirectionalShadow(worldPos, pixel, SETTING.enablePSCC, SETTING.PCFMode, SETTING.maxRadius) + 
-        PointLighting(diffuse, roughness, metallic, worldPos, N, V);
+    // 1+2
+    vec3 directLightColor =
+        DirectionalLighting(diffuse, roughness, F0, specF, worldPos, N, V) * DirectionalShadow(worldPos, pixel, SETTING.maxRadius) +
+        PointLighting(diffuse, roughness, F0, specF, worldPos, N, V);
 
     // 间接光照计算 //////////////////////////////////
-
+    // 3
     vec3 indirectLightColor = vec3(0.0f);
     if(SETTING.directOnly == 0)
-    //if(SETTING.directOnly == 0 || roughness > 0.75f) // 给高粗糙度的提供DDGI的radiance做镜面反射???
+    //if(SETTING.directOnly == 0 || roughness > 0.75f) // 给高粗糙度的提供DDGI的radiance做镜面反射
     {
-        indirectLightColor = IndirectLighting(diffuse.xyz, roughness, metallic, worldPos, N, V);
+        indirectLightColor = IndirectLighting(diffuse, roughness, F0, worldPos, N, V) * ao;    //AO只衰减间接（直接光已有阴影项）
     }
 
     // 输出 //////////////////////////////////
+    // 1+2+3+5
     vec3 outColor           = directLightColor + indirectLightColor + emission;	
 
     int cascadeLevel        = CascadeLevel(worldPos);
-    float directionalShadow = DirectionalShadow(worldPos, pixel, SETTING.enablePSCC, SETTING.PCFMode);
+    float directionalShadow = DirectionalShadow(worldPos, pixel, SETTING.maxRadius);
     float directionalShadowContrast = DirectionalShadowContrast(worldPos, DIRECTIONAL_DEPTH_HISTORY, 0);
 
     ivec3 clusterGrid       = FetchLightClusterGrid(WorldToNDC(worldPos).xyz);
     uvec2 clusterIndex      = FetchLightClusterIndex(clusterGrid);  //读取对应cluster的索引信息 
 
+    DirectionalLight probeLight  = LIGHTS.directionalLights[0];
+    vec3 probeL                  = -normalize(probeLight.dir);
+    vec3 probeRadiance           = probeLight.color * probeLight.intencity;
+    BRDFData probeBRDF           = ResolveBRDF(diffuse, roughness, F0, specF, N, V, probeL);
+    float probeNoL               = saturate(dot(N, probeL));
+
     vec4 finalColor = vec4(0.0f);
     if(SETTING.mode == 0)   finalColor = vec4(outColor, 1.0f);
     if(SETTING.mode == 1)   finalColor = vec4(vec3(N * 0.5f + 0.5f), 1.0f);
-    if(SETTING.mode == 2)   finalColor = vec4(roughness, metallic, 0.0f, 1.0f);
+    if(SETTING.mode == 2)   finalColor = vec4(roughness, RGBtoLuminance(F0), 0.0f, 1.0f);
     if(SETTING.mode == 3)   finalColor = worldPos;
     if(SETTING.mode == 4)   finalColor = vec4(vec3(directionalShadow), 1.0f);
     if(SETTING.mode == 5)   finalColor = vec4(vec3(directionalShadowContrast),1.0f);
@@ -102,7 +121,15 @@ void main()
     if(SETTING.mode == 9)   finalColor = vec4(clusterGrid.xy / vec2(LIGHT_CLUSTER_WIDTH, LIGHT_CLUSTER_HEIGHT), 0.0f, 1.0f);
     if(SETTING.mode == 10)  finalColor = vec4(vec3(clusterGrid.z / float(LIGHT_CLUSTER_DEPTH)), 1.0f);
     if(SETTING.mode == 11)  finalColor = vec4(indirectLightColor, 1.0f);
-    if(SETTING.mode == 12)  finalColor = vec4(IndirectIrradiance(diffuse.xyz, roughness, metallic, worldPos, N, V), 1.0f);
+    if(SETTING.mode == 12)  finalColor = vec4(IndirectIrradiance(worldPos, N, V), 1.0f);
+    if(SETTING.mode == 13)  finalColor = vec4(vec3(ao), 1.0f);                    
+    if(SETTING.mode == 14)  finalColor = vec4(gnormal * 0.5f + 0.5f, 1.0f);       
+    if(SETTING.mode == 15)  finalColor = vec4(F0, 1.0f);                           
+    if(SETTING.mode == 16)  finalColor = vec4(vec3(transparent), 1.0f);            
+    if(SETTING.mode == 17)  finalColor = vec4(emission, 1.0f);                     
+    if(SETTING.mode == 18)  finalColor = vec4(directLightColor, 1.0f);            
+    if(SETTING.mode == 19)  finalColor = vec4(probeBRDF.specular * probeRadiance * probeNoL, 1.0f);   
+    if(SETTING.mode == 20)  finalColor = vec4(probeBRDF.diffuse * probeRadiance * probeNoL, 1.0f);   
 
     if(GLOBAL_SETTING.clusterInspectMode != 0) finalColor = vec4(diffuse.xyz, 1.0f);
 
@@ -112,3 +139,8 @@ void main()
 
 
 
+// 直接光漫反射 = 1
+// 直接光镜面反射 = 2
+// 间接光漫反射 = 3
+// 间接光镜面反射 = 4
+// 自发光 = 5

@@ -70,14 +70,17 @@ void ClipmapVisualizePass::Build(RDGBuilder& builder)
         !EngineContext::Render()->IsPassEnabled(RAY_TRACING_BASE_PASS) && 
         !EngineContext::Render()->IsPassEnabled(PATH_TRACING_PASS))
     {
-        RDGTextureHandle outColor = builder.GetTexture("Mesh Pass Out Color");
+        RDGTextureHandle outColor = builder.GetTexture("Noisy HDR Color");
 
         RDGTextureHandle depth = builder.GetTexture("Depth");
 
         RDGBufferHandle clipmapBuf = builder.GetBuffer("VXGI Clipmap Buffer");
         RDGTextureHandle clipmapTex = builder.GetTexture("VXGI Clipmap Texture");
 
-        clipmap = std::dynamic_pointer_cast<ClipmapPass>(EngineContext::Render()->GetPasses()[CLIPMAP_PASS])->GetClipmap();
+        // CLIPMAP槽位可能为null或非ClipmapPass（管线模式切换换实例），拿不到就不构建
+        auto clipmapPass = std::dynamic_pointer_cast<ClipmapPass>(EngineContext::Render()->GetPasses()[CLIPMAP_PASS]);
+        if(!clipmapPass) return;
+        clipmap = clipmapPass->GetClipmap();
 
         if(mode == 0)   // 光栅化体素
         {
@@ -118,7 +121,7 @@ void ClipmapVisualizePass::Build(RDGBuilder& builder)
             
             RDGRayTracingPassHandle pass = builder.CreateRayTracingPass(GetName() + " Ray tracing")
                 .RootSignature(rootSignature)
-                .Dependency(builder.GetBuffer("TLAS Storage"), RESOURCE_STATE_ACCELERATION_STRUCTURE)      
+                .ReadAccelerationStructure(builder.GetBuffer("TLAS Storage"))      
                 .ReadWrite(1, 0, 0, clipmapTex, VIEW_TYPE_3D)
                 .ReadWrite(1, 1, 0, clipmapBuf)
                 .ReadWrite(1, 2, 0, outColor)

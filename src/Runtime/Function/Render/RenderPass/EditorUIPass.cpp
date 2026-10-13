@@ -5,7 +5,6 @@
 #include "Function/Render/RHI/RHIStructs.h"
 #include "imgui.h"
 #include "ImGuizmo.h"
-// #include "imgui_impl_glfw.h"
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_vulkan.h"
 #include <string>
@@ -19,7 +18,7 @@ void EditorUIPass::Build(RDGBuilder& builder)
 {
     //if(IsEnabled())
     {
-        RDGTextureHandle outColor = builder.GetTexture("Final Color");
+        RDGTextureHandle outColor = builder.GetTexture("Final LDR Color");
         RDGTextureHandle depth = builder.GetTexture("Depth");
 
         RDGRenderPassHandle pass = builder.CreateRenderPass(GetName())

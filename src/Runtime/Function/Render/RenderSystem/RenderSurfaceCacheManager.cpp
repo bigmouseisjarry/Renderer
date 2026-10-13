@@ -348,13 +348,15 @@ void RenderSurfaceCacheManager::UpdateSurfaceCache()
                             for(int row = 0; row < tiledExtent.y(); row++)
                             {
                                 entry.directLightings.emplace_back();
-                                entry.directLightings.back().meshCardID = sortedID[i]; 
+                                entry.directLightings.back().meshCardID = meashCardID;
                                 entry.directLightings.back().objectID = entry.objectID;
                                 entry.directLightings.back().tileOffset = tiledOffset;
                                 entry.directLightings.back().tileIndex = UVec2(col, row);   
                             }
                         }
                     }
+                    // 一个tile对应一个dispatch
+                    // offset代表的是surface cache全局，一次更新一整个Card
                     perFrameTask.directLightingDispatches.insert(perFrameTask.directLightingDispatches.end(), 
                                                     entry.directLightings.begin(), 
                                                     entry.directLightings.end());

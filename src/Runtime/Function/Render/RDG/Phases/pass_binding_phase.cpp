@@ -267,6 +267,10 @@ void PassBindingPhase::prepare_descriptor_sets(RDGDependencyGraphRef graph)
 
             if (edge->IsOutput()) return;    // 作为output声明时不需要view
 
+            // 虚拟依赖边（Dependency()声明，set==NO_DESCRIPTOR_SET且非附件）：只表达排序/屏障，不绑定描述符也非渲染目标——
+            // 不建view。曾在下方无条件Allocate，给多层纹理（点光阴影cube的[0]/[1]被三处依赖）建出"2D+全6层"非法view（VUID-04973）
+            if (edge->set == NO_DESCRIPTOR_SET && !edge->asColor && !edge->asDepthStencil) return;
+
             RHITextureViewRef view = RDGTextureViewPool::Get(EngineContext::ThreadPool()->ThreadFrameIndex())->Allocate({
             .texture = texture->texture,    // Step1 已完成集中分配
             .format = texture->info.format,
@@ -326,7 +330,8 @@ void PassBindingPhase::prepare_descriptor_sets(RDGDependencyGraphRef graph)
                     .binding = edge->binding,
                     .index = edge->index,
                     .resourceType = edge->type,
-                    .textureView = view
+                    .textureView = view,
+                    .state = edge->state      // 声明布局与屏障同源（边的访问状态）：消除描述符/屏障双真值分叉
                 };
                 descriptor->UpdateDescriptor(updateInfo);
             }

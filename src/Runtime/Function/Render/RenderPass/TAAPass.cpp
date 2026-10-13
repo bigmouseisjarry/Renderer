@@ -33,26 +33,15 @@ void TAAPass::Build(RDGBuilder& builder)
 
     RDGTextureHandle inColor = builder.GetTexture("FXAA Out Color");
 
-    uint32_t historyIndex = EngineContext::CurrentFrameIndex();
-    RDGTextureHandle historyColor = builder.GetOrCreateTexture("Final Color History")
-        .Import(EngineContext::RenderResource()->GetFinalColorHistoryTexture(historyIndex), RESOURCE_STATE_UNDEFINED)
-        .Finish();
-
-    RDGTextureHandle historyColorNext = builder.CreateTexture("Final Color History Next")
-        .Import(EngineContext::RenderResource()->GetFinalColorHistoryTexture(historyIndex ^ 1), RESOURCE_STATE_UNDEFINED)
+    RDGTextureHandle historyColor = builder.GetOrCreateTexture("Stable HDR Color History")
+        .Import(EngineContext::RenderResource()->GetStableHDRColorTexture(1), RESOURCE_STATE_UNDEFINED)
         .Finish();
 
     RDGTextureHandle reprojectionOut = builder.GetTexture("Reprojection Out");
 
-    RDGTextureHandle outColor = builder.CreateTexture("TAA Out Color")
-        .Exetent({windowExtent.width, windowExtent.height, 1})
-        .Format(EngineContext::Render()->GetHdrColorFormat())
-        .ArrayLayers(1)
-        .MipLevels(1)
-        .MemoryUsage(MEMORY_USAGE_GPU_ONLY)
-        .AllowReadWrite()
-        .AllowRenderTarget()
-        .Finish();  
+    RDGTextureHandle outColor = builder.CreateTexture("Stable HDR Color")
+        .Import(EngineContext::RenderResource()->GetStableHDRColorTexture(0), RESOURCE_STATE_UNDEFINED)
+        .Finish();
 
     RDGComputePassHandle pass = builder.CreateComputePass(GetName())
         .AddFlag(RDGPassFlags::ForceGraphicsQueue)
@@ -61,7 +50,6 @@ void TAAPass::Build(RDGBuilder& builder)
         .Read(1, 1, 0, historyColor)
         .Read(1, 2, 0, reprojectionOut)
         .ReadWrite(1, 3, 0, outColor)
-        .ReadWrite(1, 4, 0, historyColorNext)
         .Execute([&](RDGPassContext context) {
 
             RHICommandListRef command = context.command;

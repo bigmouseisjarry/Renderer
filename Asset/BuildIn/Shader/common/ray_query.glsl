@@ -61,6 +61,7 @@ bool RayQueryHitObject(
         dir, 
         tmax);
 
+    // 循环形态只在要做 alpha 测试这类逐候选决策时才需要
     rayQueryProceedEXT(query);
 
     if (rayQueryGetIntersectionTypeEXT(query, true) != gl_RayQueryCommittedIntersectionNoneEXT)

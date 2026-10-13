@@ -44,7 +44,7 @@ void ExposurePass::Build(RDGBuilder& builder)
     exposureDataBuffer.SetData(&setting, sizeof(ExposureSetting), 0);
 
 
-    RDGTextureHandle taaOutColor = builder.GetTexture("TAA Out Color");
+    RDGTextureHandle stableColor = builder.GetTexture("Stable HDR Color");
     
     RDGBufferHandle exposureData = builder.CreateBuffer("Exposure Data")
         .Import(exposureDataBuffer.buffer, RESOURCE_STATE_UNDEFINED)
@@ -53,7 +53,7 @@ void ExposurePass::Build(RDGBuilder& builder)
     RDGComputePassHandle pass0 = builder.CreateComputePass("Luminance Histogram")
         .AddFlag(RDGPassFlags::ForceGraphicsQueue)
         .RootSignature(rootSignature)
-        .Read(0, 0, 0, taaOutColor)
+        .Read(0, 0, 0, stableColor)
         .ReadWrite(0, 1, 0, exposureData)
         .Execute([&](RDGPassContext context) {       
 
@@ -69,7 +69,7 @@ void ExposurePass::Build(RDGBuilder& builder)
     RDGComputePassHandle pass1 = builder.CreateComputePass("Luminance Exposure")
         .AddFlag(RDGPassFlags::ForceGraphicsQueue)
         .RootSignature(rootSignature)
-        .Read(0, 0, 0, taaOutColor)
+        .Read(0, 0, 0, stableColor)
         .ReadWrite(0, 1, 0, exposureData)
         .Execute([&](RDGPassContext context) {       
 
