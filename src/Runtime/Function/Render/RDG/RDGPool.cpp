@@ -3,6 +3,7 @@
 #include "Function/Global/EngineContext.h"
 #include "Function/Render/RHI/RHIResource.h"
 #include "Function/Render/RHI/RHIStructs.h"
+#include <cassert>
 #include <cstdint>
 
 RDGBufferPool::PooledBuffer RDGBufferPool::Allocate(const RHIBufferInfo& info)
@@ -41,10 +42,9 @@ RDGTexturePool::PooledTexture RDGTexturePool::Allocate(const RHITextureInfo& inf
 {
     RDGTexturePool::PooledTexture ret;
 
-    RHITextureInfo tempInfo = info;
-    if(tempInfo.mipLevels == 0) tempInfo.mipLevels = tempInfo.extent.MipSize();     // 处理一下自动的mipLevels
+    assert(info.mipLevels != 0);
 
-    auto& textures = pooledTextures[tempInfo];
+    auto& textures = pooledTextures[info];
     for(auto iter = textures.begin(); iter != textures.end(); iter++) 
     {
         ret = *iter;                    
@@ -55,7 +55,7 @@ RDGTexturePool::PooledTexture RDGTexturePool::Allocate(const RHITextureInfo& inf
     
     LOG_DEBUG("RHITexture not found in cache, creating new.");
     ret = {
-        .texture = EngineContext::RHI()->CreateTexture(tempInfo),
+        .texture = EngineContext::RHI()->CreateTexture(info),
         .state = RESOURCE_STATE_UNDEFINED,
         .queueFamily = RHI_QUEUE_FAMILY_IGNORED,    // 新建纹理无归属族
     };
@@ -102,30 +102,45 @@ void RDGTextureViewPool::Release(const RDGTextureViewPool::PooledTextureView& po
 }
 
 
-RDGDescriptorSetPool::PooledDescriptor RDGDescriptorSetPool::Allocate(const RHIRootSignatureRef& rootSignature, uint32_t set)
+RDGDescriptorSetPool::PooledDescriptor RDGDescriptorSetPool::Allocate(const Key& key, const RHIRootSignatureRef& rootSignature)
 {
     RDGDescriptorSetPool::PooledDescriptor ret;
 
-    auto& descriptors = pooledDescriptors[{rootSignature->GetInfo(), set}];
-    for(auto iter = descriptors.begin(); iter != descriptors.end(); iter++) 
+    auto& descriptors = pooledDescriptors[key];     // 桶=足迹键;miss即该足迹首帧,走创建
+    for(auto iter = descriptors.begin(); iter != descriptors.end(); iter++)
     {
-        ret = *iter;                    
+        ret = *iter;
         descriptors.erase(iter);
         pooledSize--;
-        return ret;
+        break;
     }
-    
-    LOG_DEBUG("RHIDescriptorSet not found in cache, creating new.");
-    ret = {
-        .descriptor = rootSignature->CreateDescriptorSet(set)
-    };
-    allocatedSize++;
+
+    if (ret.descriptor == nullptr)
+    {
+        LOG_DEBUG("RHIDescriptorSet not found in cache, creating new.");
+        ret = {
+            .descriptor = rootSignature->CreateDescriptorSet(key.set)
+        };
+        allocatedSize++;
+    }
+
+    // 静态采样器幂等重播：池键只含entries，同键异表RS共用池条目时保证本分配者的采样器生效
+    // （CreateDescriptorSet创建期已播一次；重播成本=每pass几个写，与旧pass->samplers旁路等价）
+    for (const RHIStaticSampler& staticSampler : rootSignature->GetInfo().GetStaticSamplers())
+    {
+        if (staticSampler.set != key.set || staticSampler.sampler == nullptr) continue;
+        ret.descriptor->UpdateDescriptor({
+            .binding = staticSampler.binding,
+            .index = staticSampler.index,
+            .resourceType = RESOURCE_TYPE_SAMPLER,
+            .sampler = staticSampler.sampler});
+    }
 
     return ret;
 }
 
-void RDGDescriptorSetPool::Release(const RDGDescriptorSetPool::PooledDescriptor& pooledDescriptor, const RHIRootSignatureRef& rootSignature, uint32_t set)
+void RDGDescriptorSetPool::Release(const Key& key, const PooledDescriptor& pooledDescriptor)
 {
-    pooledDescriptors[{rootSignature->GetInfo(), set}].push_back(pooledDescriptor);
-    pooledSize++;    
+    pooledDescriptors[key].push_back(pooledDescriptor);
+    pooledSize++;
 }

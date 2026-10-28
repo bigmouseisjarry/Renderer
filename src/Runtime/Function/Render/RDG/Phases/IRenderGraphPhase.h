@@ -11,12 +11,13 @@ struct RDGQueueFrameSlot
 {
     RHIQueueRef queue = nullptr;
 
-    // 本队列专属时间线信号量：跨队列同步点的signal端 + 队列末批queueDone。
+    // 本队列专属时间线信号量：跨队列同步的signal端（时间线双signal模型——值分配在
+    // RDGCrossFrameRegistry的B中，刀2b起Phase 8零值分配）。
     // 每队列独立一条的原因：同一vkQueueSubmit内wait值必须小于signal值——单条共享时间线在
     // 跨队列乒乓依赖（A等B、B等A）下无解；按队列分线后，队列X的批次只signal自己的时间线、
     // 只wait他队时间线，约束恒满足
+    // 我们缺少全局发射器
     RHISemaphoreRef timeline = nullptr;
-    uint64_t timelineValueBase = 0;    // 运行计数；Phase 8每帧推进（帧槽fence保证旧值已终定）
 
     // 每命令流独立pool + byPass列表（独占context）：vkBegin/vkEnd/vkResetCommandBuffer要求父
     // VkCommandPool外部同步，并行录制时各worker同时BeginCommand必须物理隔离；

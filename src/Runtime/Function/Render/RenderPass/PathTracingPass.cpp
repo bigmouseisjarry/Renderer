@@ -20,8 +20,8 @@ void PathTracingPass::Init()
 
     RHIRootSignatureInfo rootSignatureInfo = {};
     rootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetPerFrameRootSignature()->GetInfo())
-                     .AddEntry({1, 0, 1, SHADER_FREQUENCY_RAY_TRACING, RESOURCE_TYPE_RW_TEXTURE})
-                     .AddEntry({1, 1, 1, SHADER_FREQUENCY_RAY_TRACING, RESOURCE_TYPE_RW_TEXTURE})
+                     .AddEntry(EngineContext::RenderResource()->GetBindlessRootSignature()->GetInfo())
+.AddEntry(EngineContext::RenderResource()->GetSet2RootSignature()->GetInfo())       // 刀7b-3：set2全局统一RS（98槽）
                      .AddPushConstant({128, SHADER_FREQUENCY_RAY_TRACING});
     rootSignature = backend->CreateRootSignature(rootSignatureInfo);
 
@@ -47,15 +47,17 @@ void PathTracingPass::Build(RDGBuilder& builder)
     {
         RDGTextureHandle outColor = builder.GetTexture("Noisy HDR Color");
 
+        // 稳态=UAV：唯一触碰者是TraceRays的ReadWrite（本pass当前禁用）
         RDGTextureHandle historyColor = builder .CreateTexture("Path Tracing History Color")
-            .Import(historyColorTex, RESOURCE_STATE_UNDEFINED)
+            .Import(historyColorTex)
             .Finish();
 
         RDGRayTracingPassHandle pass = builder.CreateRayTracingPass(GetName())
         .RootSignature(rootSignature)
+        .Shaders({rayGenShader.shader, rayMissShader.shader, closestHitShader.shader})   // 刀7b-3：严格边校验
         .ReadAccelerationStructure(builder.GetBuffer("TLAS Storage"))     
-        .ReadWrite(1, 0, 0, outColor)
-        .ReadWrite(1, 1, 0, historyColor)
+        .ReadWrite(2, SET2_BINDING_PT_A, 0, outColor)
+        .ReadWrite(2, SET2_BINDING_PT_B, 0, historyColor)
         .Execute([&](RDGPassContext context) {       
 
             auto camera = EngineContext::World()->GetActiveScene()->GetActiveCamera();
@@ -66,8 +68,9 @@ void PathTracingPass::Build(RDGBuilder& builder)
 
             RHICommandListRef command = context.command; 
             command->SetRayTracingPipeline(rayTracingPipeline);
-            command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);  
-            command->BindDescriptorSet(context.descriptors[1], 1);
+            command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);
+                command->BindDescriptorSet(EngineContext::RenderResource()->GetPoolDescriptorSet(), 1);  
+            command->BindDescriptorSet(context.descriptors[2], 2);
             command->PushConstants(&setting, sizeof(PathTracingSetting), SHADER_FREQUENCY_RAY_TRACING);
             command->TraceRays(  EngineContext::Render()->GetWindowsExtent().width, 
                                 EngineContext::Render()->GetWindowsExtent().height, 

@@ -159,14 +159,6 @@ using RDGBufferNodeRef = RDGBufferNode*;
 
 // pass节点/////////////////////////////////////////////////////////////////////////////////////
 
-struct SamplerBind
-{
-    RHISamplerRef sampler;
-    uint32_t set;
-    uint32_t binding;
-    uint32_t index;
-};
-
 enum class RDGPassFlags : uint32_t
 {
     None = 0x0,
@@ -231,7 +223,18 @@ protected:
 
     std::vector<RHITextureViewRef> pooledViews;             // 动态分配的池化资源，执行完毕后返回资源池
     std::vector<std::pair<RHIDescriptorSetRef, uint32_t>> pooledDescriptorSets;
-    std::vector<SamplerBind> samplers;                
+
+    // 刀7b-5：ReadIfValid缺席留痕（set,binding）——边校验对该集合的accessed槽放行+计数
+    // （条件性资源的合法缺席：无阴影光源帧/RT模式禁G-Buffer等；与刀3a"错误是信号"不冲突）
+    std::vector<std::pair<uint32_t, uint32_t>> conditionalBindings;
+
+    // set2反射入口:所有已声明shader的resources中 used&&set==2 条目的并集
+    // (按set+binding去重/frequency按位或/size取max/已排序——描述符池键的稳定来源)
+    // SAMPLER型条目滤除:采样器槽由池Allocate幂等重播提供,无对应边(防御性,当前set2无采样器槽)
+    std::vector<ShaderResourceEntry> set2Entries;
+    std::vector<uint8_t>            set2EntryDone;      // 描述符边补齐标记,Finish校验用
+    bool                            shadersDeclared = false;
+    bool                            bindingApiMigrated = false;   // S3-S5过渡门:新边API首次使用后置位,Finish才启用严格检查(S5b全迁后拆门)
 
     friend class RDGBuilder;
 

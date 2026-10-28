@@ -2,11 +2,7 @@
 #extension GL_GOOGLE_include_directive : enable
 #extension GL_EXT_samplerless_texture_functions : enable
 
-#include "../common/screen.glsl"
-
-layout(set = 0, binding = 0) uniform texture2D IN_COLOR[];
-layout(set = 0, binding = 1, rgba16f) uniform image2D OUT_COLOR;
-layout(set = 1, binding = 0) uniform sampler SAMPLER[];
+#include "include/common.glsl"
 
 layout(push_constant) uniform bloom_setting {
 	int maxMip;

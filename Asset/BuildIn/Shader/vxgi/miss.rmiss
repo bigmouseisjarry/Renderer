@@ -3,9 +3,12 @@
 #extension GL_ARB_separate_shader_objects : enable
 #extension GL_GOOGLE_include_directive : enable
 
-#include "../common/common.glsl"
+#include "include/common.glsl"
 #include "../clipmap/clipmap.glsl"
-#include "common.glsl"
+
+layout(push_constant) uniform vxgi_setting {
+	ClipmapRegion region;
+} SETTING;
 
 layout(location = 0) rayPayloadInEXT Payload RAY_PAYLOAD;
 

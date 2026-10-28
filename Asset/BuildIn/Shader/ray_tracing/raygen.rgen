@@ -3,9 +3,8 @@
 #extension GL_ARB_separate_shader_objects : enable
 #extension GL_GOOGLE_include_directive : enable
 
-#include "../common/common.glsl"
+#include "include/common.glsl"
 
-layout(set = 1, binding = 0, rgba8) uniform image2D OUT_COLOR;
 
 layout(push_constant) uniform ray_trace_base_setting {
 	uint mode;
@@ -42,5 +41,5 @@ void main()
 		0               				// payload (location = 0)
   	);
 
-	imageStore(OUT_COLOR, ivec2(gl_LaunchIDEXT.xy), vec4(HIT_VALUE, 0.0));
+	imageStore(RTB_OUT, ivec2(gl_LaunchIDEXT.xy), vec4(HIT_VALUE, 0.0));
 }

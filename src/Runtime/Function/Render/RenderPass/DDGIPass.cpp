@@ -27,14 +27,9 @@ void DDGIPass::Init()
 
     RHIRootSignatureInfo rootSignatureInfo = {};
     rootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetPerFrameRootSignature()->GetInfo())
-                     .AddEntry({1, 0, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})
-                     .AddEntry({1, 1, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})
-                     .AddEntry({1, 2, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})
-                     .AddEntry({1, 3, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})
-                     .AddEntry({1, 4, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})
-                     .AddEntry({1, 5, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})
-                     .AddEntry({1, 6, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})
-                     .AddPushConstant({128, SHADER_FREQUENCY_ALL});
+                     .AddEntry(EngineContext::RenderResource()->GetBindlessRootSignature()->GetInfo())
+                     .AddEntry(EngineContext::RenderResource()->GetSet2RootSignature()->GetInfo())       
+                                                                                                                                                                                                                                                                                                      .AddPushConstant({128, SHADER_FREQUENCY_ALL});
     rootSignature = backend->CreateRootSignature(rootSignatureInfo);
 
     {
@@ -56,9 +51,9 @@ void DDGIPass::Init()
     }
 }   
 
-void DDGIPass::Build(RDGBuilder& builder) 
+void DDGIPass::Build(RDGBuilder& builder)
 {
-    if( IsEnabled() && 
+    if( IsEnabled() &&
         // !EngineContext::Render()->IsPassEnabled(RESTIR_DI_PASS) &&
         // !EngineContext::Render()->IsPassEnabled(RAY_TRACING_BASE_PASS) &&    //Surface cache有使用
         !EngineContext::Render()->IsPassEnabled(PATH_TRACING_PASS))
@@ -72,54 +67,50 @@ void DDGIPass::Build(RDGBuilder& builder)
             std::string index = " [" + std::to_string(volumeLight->GetVolumeLightID()) + "]";
 
             RDGTextureHandle diffuseTex = builder.CreateTexture(GetName() + " G-Buffer Diffuse/Metallic " + index)
-                .Import(volumeLight->GetTextres().diffuseTex->texture, RESOURCE_STATE_UNDEFINED)
+                .Import(volumeLight->GetTextres().diffuseTex->texture)
                 .Finish();
 
             RDGTextureHandle normalTex = builder.CreateTexture(GetName() + " G-Buffer Normal/Roughness " + index)
-                .Import(volumeLight->GetTextres().normalTex->texture, RESOURCE_STATE_UNDEFINED)
+                .Import(volumeLight->GetTextres().normalTex->texture)
                 .Finish();
 
             RDGTextureHandle emissionTex = builder.CreateTexture(GetName() + " G-Buffer Emission " + index)
-                .Import(volumeLight->GetTextres().emissionTex->texture, RESOURCE_STATE_UNDEFINED)
+                .Import(volumeLight->GetTextres().emissionTex->texture)
                 .Finish();
 
             RDGTextureHandle positionTex = builder.CreateTexture(GetName() + " G-Buffer Position " + index)
-                .Import(volumeLight->GetTextres().positionTex->texture, RESOURCE_STATE_UNDEFINED)
+                .Import(volumeLight->GetTextres().positionTex->texture)
                 .Finish();
 
             RDGTextureHandle radianceTex = builder.CreateTexture(GetName() + " Radiance " + index)
-                .Import(volumeLight->GetTextres().radianceTex->texture, RESOURCE_STATE_UNDEFINED)
+                .Import(volumeLight->GetTextres().radianceTex->texture)
                 .Finish();
 
-            RDGTextureHandle irradianceTex = builder.CreateTexture(GetName() + " Irradiance " + index)
-                .Import(volumeLight->GetTextres().irradianceTex->texture, RESOURCE_STATE_UNDEFINED)
+            // 名字与消费者严格一致（DDGI ProbeRelocate/DeferredLighting/SurfaceCache用单空格形式）：
+            // index自带前导空格，多拼一个空格=双名字双节点同物理图（物理守卫2026-10-26定罪）
+            RDGTextureHandle irradianceTex = builder.GetOrCreateTexture("Volume Light Irradiance" + index)
+                .Import(volumeLight->GetTextres().irradianceTex->texture)
                 .Finish();
 
-            RDGTextureHandle depthTex = builder.CreateTexture(GetName() + " Depth " + index)
-                .Import(volumeLight->GetTextres().depthTex->texture, RESOURCE_STATE_UNDEFINED)
+            RDGTextureHandle depthTex = builder.GetOrCreateTexture("Volume Light Depth" + index)
+                .Import(volumeLight->GetTextres().depthTex->texture)
                 .Finish();
 
             // 光追更新volumeLight的G-Buffer
 			if (volumeLight->Enable() &&
-				volumeLight->ShouldUpdate(0))
-			{		
+				volumeLight->ShouldUpdate(0))     
+			{
                 RDGRayTracingPassHandle pass = builder.CreateRayTracingPass(GetName() + " Trace Ray" + index)
                     .PassIndex(i)
                     .RootSignature(rootSignature)
-                    .ReadAccelerationStructure(builder.GetBuffer("TLAS Storage"))      // 依赖TLAS Update的产出（虚拟边，不绑定描述符；ray query读AS）
-                    .Read(builder.GetTexture("Directional Depth [0]"))
-                    .Read(builder.GetTexture("Directional Depth [1]"))
-                    .Read(builder.GetTexture("Directional Depth [2]"))
-                    .Read(builder.GetTexture("Directional Depth [3]"))
-                    .ReadWrite(1, 0, 0, diffuseTex)
-                    .ReadWrite(1, 1, 0, normalTex)
-                    .ReadWrite(1, 2, 0, emissionTex)
-                    .ReadWrite(1, 3, 0, positionTex)
-                    .ReadWrite(1, 4, 0, radianceTex)
-                    .ReadWrite(1, 5, 0, irradianceTex)
-                    .ReadWrite(1, 6, 0, depthTex)
-                    .Execute([&](RDGPassContext context) {       
-                        
+                    .Shaders({rayGenShader.shader, rayMissShader.shader, closestHitShader.shader})
+                    .ReadAccelerationStructure(builder.GetBuffer("TLAS Storage"))
+                    .ReadWrite(2, SET2_BINDING_DDGI_TRACE_ALBEDO_METALLIC, 0, diffuseTex)
+                    .ReadWrite(2, SET2_BINDING_DDGI_TRACE_NORMAL_ROUGHNESS, 0, normalTex)
+                    .ReadWrite(2, SET2_BINDING_DDGI_TRACE_EMISSION, 0, emissionTex)
+                    .ReadWrite(2, SET2_BINDING_DDGI_TRACE_POSITION, 0, positionTex)
+                    .Execute([&](RDGPassContext context) {
+
                         auto& volumeLight = volumeLights[EngineContext::ThreadPool()->ThreadFrameIndex()][context.passIndex[0]];
 
                         DDGIComputeSetting setting = {};
@@ -127,8 +118,9 @@ void DDGIPass::Build(RDGBuilder& builder)
 
                         RHICommandListRef command = context.command; 
                         command->SetRayTracingPipeline(rayTracingPipeline);
-                        command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);  
-                        command->BindDescriptorSet(context.descriptors[1], 1);
+                        command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);
+                        command->BindDescriptorSet(EngineContext::RenderResource()->GetPoolDescriptorSet(), 1);  
+                        command->BindDescriptorSet(context.descriptors[2], 2);
                         command->PushConstants(&setting, sizeof(DDGIComputeSetting), SHADER_FREQUENCY_ALL);
                         command->TraceRays( volumeLight->GetRaysPerProbe(), 
                                             volumeLight->GetProbeCounts().x() * volumeLight->GetProbeCounts().y() * volumeLight->GetProbeCounts().z(), 
@@ -141,17 +133,35 @@ void DDGIPass::Build(RDGBuilder& builder)
             if (volumeLight->Enable() &&
 				volumeLight->ShouldUpdate(1))
             {   
-                RDGComputePassHandle pass0 = builder.CreateComputePass(GetName() + " Radiance" + index)
+                auto pass0 = builder.CreateComputePass(GetName() + " Radiance" + index)
+                    .AddFlag(RDGPassFlags::ForceGraphicsQueue)
                     .PassIndex(i)
                     .RootSignature(rootSignature)
-                    .ReadWrite(1, 0, 0, diffuseTex)
-                    .ReadWrite(1, 1, 0, normalTex)
-                    .ReadWrite(1, 2, 0, emissionTex)
-                    .ReadWrite(1, 3, 0, positionTex)
-                    .ReadWrite(1, 4, 0, radianceTex)
-                    .ReadWrite(1, 5, 0, irradianceTex)
-                    .ReadWrite(1, 6, 0, depthTex)
-                    .Execute([&](RDGPassContext context) {       
+                    .Shaders({computeShader[0].shader})
+                    .ReadWrite(2, SET2_BINDING_DDGI_TRACE_ALBEDO_METALLIC, 0, diffuseTex)
+                    .ReadIfValid(2, SET2_BINDING_DIRECTIONAL_SHADOW, 0, "Directional Depth [0]", VIEW_TYPE_2D, { TEXTURE_ASPECT_DEPTH, 0, 1, 0, 1})
+                    .ReadIfValid(2, SET2_BINDING_DIRECTIONAL_SHADOW, 1, "Directional Depth [1]", VIEW_TYPE_2D, { TEXTURE_ASPECT_DEPTH, 0, 1, 0, 1})
+                    .ReadIfValid(2, SET2_BINDING_DIRECTIONAL_SHADOW, 2, "Directional Depth [2]", VIEW_TYPE_2D, { TEXTURE_ASPECT_DEPTH, 0, 1, 0, 1})
+                    .ReadIfValid(2, SET2_BINDING_DIRECTIONAL_SHADOW, 3, "Directional Depth [3]", VIEW_TYPE_2D, { TEXTURE_ASPECT_DEPTH, 0, 1, 0, 1})
+                    .ReadIfValid(2, SET2_BINDING_POINT_SHADOW, 0, "Point Shadow Filtered Color [0]", VIEW_TYPE_CUBE, { TEXTURE_ASPECT_COLOR, 0, 1, 0, 6})
+                    .ReadIfValid(2, SET2_BINDING_POINT_SHADOW, 1, "Point Shadow Filtered Color [1]", VIEW_TYPE_CUBE, { TEXTURE_ASPECT_COLOR, 0, 1, 0, 6})
+                    .ReadWrite(2, SET2_BINDING_DDGI_TRACE_NORMAL_ROUGHNESS, 0, normalTex)
+                    .ReadWrite(2, SET2_BINDING_DDGI_TRACE_EMISSION, 0, emissionTex)
+                    .ReadWrite(2, SET2_BINDING_DDGI_TRACE_POSITION, 0, positionTex)
+                    .ReadWrite(2, SET2_BINDING_DDGI_RADIANCE, 0, radianceTex);
+
+                for(auto& vl : EngineContext::Render()->GetLightManager()->GetVolumeLights())
+                {
+                    uint32_t vid = vl->GetVolumeLightID();
+                    RDGTextureHandle irr = builder.GetOrCreateTexture("Volume Light Irradiance [" + std::to_string(vid) + "]")
+                        .Import(vl->GetTextres().irradianceTex->texture).Finish();
+                    RDGTextureHandle dep = builder.GetOrCreateTexture("Volume Light Depth [" + std::to_string(vid) + "]")
+                        .Import(vl->GetTextres().depthTex->texture).Finish();
+                    pass0.Read(2, SET2_BINDING_VOLUME_LIGHT_IRRADIANCE, vid, irr, VIEW_TYPE_2D, {});
+                    pass0.Read(2, SET2_BINDING_VOLUME_LIGHT_DEPTH, vid, dep, VIEW_TYPE_2D, {});
+                }
+                pass0
+                    .Execute([&](RDGPassContext context) {
                         
                         auto& volumeLight = volumeLights[EngineContext::ThreadPool()->ThreadFrameIndex()][context.passIndex[0]];
 
@@ -160,27 +170,26 @@ void DDGIPass::Build(RDGBuilder& builder)
 
                         RHICommandListRef command = context.command; 
                         command->SetComputePipeline(computePipeline[0]);
-                        command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);  
-                        command->BindDescriptorSet(context.descriptors[1], 1);
+                        command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);
+                        command->BindDescriptorSet(EngineContext::RenderResource()->GetPoolDescriptorSet(), 1);  
+                        command->BindDescriptorSet(context.descriptors[2], 2);
                         command->PushConstants(&setting, sizeof(DDGIComputeSetting), SHADER_FREQUENCY_ALL);
                         command->Dispatch(volumeLight->GetRaysPerProbe() / 32,
                             std::ceil(volumeLight->GetProbeCounts().x() * volumeLight->GetProbeCounts().y() * volumeLight->GetProbeCounts().z() / 32),
                             1);
                     })
                     .Finish();
-
+                
 
                 RDGComputePassHandle pass1 = builder.CreateComputePass(GetName() + " Irradiance Probe Update" + index)
+                    .AddFlag(RDGPassFlags::ForceGraphicsQueue)
                     .PassIndex(i)
                     .RootSignature(rootSignature)
-                    .ReadWrite(1, 0, 0, diffuseTex)
-                    .ReadWrite(1, 1, 0, normalTex)
-                    .ReadWrite(1, 2, 0, emissionTex)
-                    .ReadWrite(1, 3, 0, positionTex)
-                    .ReadWrite(1, 4, 0, radianceTex)
-                    .ReadWrite(1, 5, 0, irradianceTex)
-                    .ReadWrite(1, 6, 0, depthTex)
-                    .Execute([&](RDGPassContext context) {       
+                    .Shaders({computeShader[1].shader})
+                    .ReadWrite(2, SET2_BINDING_DDGI_TRACE_POSITION, 0, positionTex)
+                    .ReadWrite(2, SET2_BINDING_DDGI_RADIANCE, 0, radianceTex)
+                    .ReadWrite(2, SET2_BINDING_DDGI_IRRADIANCE, 0, irradianceTex)
+                    .Execute([&](RDGPassContext context) {
                         
                         auto& volumeLight = volumeLights[EngineContext::ThreadPool()->ThreadFrameIndex()][context.passIndex[0]];
 
@@ -189,8 +198,9 @@ void DDGIPass::Build(RDGBuilder& builder)
 
                         RHICommandListRef command = context.command; 
                         command->SetComputePipeline(computePipeline[1]);
-                        command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);  
-                        command->BindDescriptorSet(context.descriptors[1], 1);
+                        command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);
+                        command->BindDescriptorSet(EngineContext::RenderResource()->GetPoolDescriptorSet(), 1);  
+                        command->BindDescriptorSet(context.descriptors[2], 2);
                         command->PushConstants(&setting, sizeof(DDGIComputeSetting), SHADER_FREQUENCY_ALL);
                         command->Dispatch(  volumeLight->GetProbeCounts().x() * volumeLight->GetProbeCounts().y(), 
                                             volumeLight->GetProbeCounts().z(), 
@@ -199,16 +209,13 @@ void DDGIPass::Build(RDGBuilder& builder)
                     .Finish();
 
                 RDGComputePassHandle pass2 = builder.CreateComputePass(GetName() + " Depth Probe Update" + index)
+                    .AddFlag(RDGPassFlags::ForceGraphicsQueue)
                     .PassIndex(i)
                     .RootSignature(rootSignature)
-                    .ReadWrite(1, 0, 0, diffuseTex)
-                    .ReadWrite(1, 1, 0, normalTex)
-                    .ReadWrite(1, 2, 0, emissionTex)
-                    .ReadWrite(1, 3, 0, positionTex)
-                    .ReadWrite(1, 4, 0, radianceTex)
-                    .ReadWrite(1, 5, 0, irradianceTex)
-                    .ReadWrite(1, 6, 0, depthTex)
-                    .Execute([&](RDGPassContext context) {       
+                    .Shaders({computeShader[2].shader})
+                    .ReadWrite(2, SET2_BINDING_DDGI_TRACE_POSITION, 0, positionTex)
+                    .ReadWrite(2, SET2_BINDING_DDGI_DEPTH, 0, depthTex)
+                    .Execute([&](RDGPassContext context) {
                         
                         auto& volumeLight = volumeLights[EngineContext::ThreadPool()->ThreadFrameIndex()][context.passIndex[0]];
 
@@ -217,8 +224,9 @@ void DDGIPass::Build(RDGBuilder& builder)
 
                         RHICommandListRef command = context.command; 
                         command->SetComputePipeline(computePipeline[2]);
-                        command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);  
-                        command->BindDescriptorSet(context.descriptors[1], 1);
+                        command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);
+                        command->BindDescriptorSet(EngineContext::RenderResource()->GetPoolDescriptorSet(), 1);  
+                        command->BindDescriptorSet(context.descriptors[2], 2);
                         command->PushConstants(&setting, sizeof(DDGIComputeSetting), SHADER_FREQUENCY_ALL);
                         command->Dispatch(  volumeLight->GetProbeCounts().x() * volumeLight->GetProbeCounts().y(), 
                                             volumeLight->GetProbeCounts().z(), 
@@ -227,15 +235,11 @@ void DDGIPass::Build(RDGBuilder& builder)
                     .Finish();
 
                 RDGComputePassHandle pass3 = builder.CreateComputePass(GetName() + " Irradiance Border Update" + index)
+                    .AddFlag(RDGPassFlags::ForceGraphicsQueue)
                     .PassIndex(i)
                     .RootSignature(rootSignature)
-                    .ReadWrite(1, 0, 0, diffuseTex)
-                    .ReadWrite(1, 1, 0, normalTex)
-                    .ReadWrite(1, 2, 0, emissionTex)
-                    .ReadWrite(1, 3, 0, positionTex)
-                    .ReadWrite(1, 4, 0, radianceTex)
-                    .ReadWrite(1, 5, 0, irradianceTex)
-                    .ReadWrite(1, 6, 0, depthTex)
+                    .Shaders({computeShader[3].shader})
+                    .ReadWrite(2, SET2_BINDING_DDGI_IRRADIANCE, 0, irradianceTex)
                     .Execute([&](RDGPassContext context) {       
                         
                         auto& volumeLight = volumeLights[EngineContext::ThreadPool()->ThreadFrameIndex()][context.passIndex[0]];
@@ -245,8 +249,9 @@ void DDGIPass::Build(RDGBuilder& builder)
 
                         RHICommandListRef command = context.command; 
                         command->SetComputePipeline(computePipeline[3]);
-                        command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);  
-                        command->BindDescriptorSet(context.descriptors[1], 1);
+                        command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);
+                        command->BindDescriptorSet(EngineContext::RenderResource()->GetPoolDescriptorSet(), 1);  
+                        command->BindDescriptorSet(context.descriptors[2], 2);
                         command->PushConstants(&setting, sizeof(DDGIComputeSetting), SHADER_FREQUENCY_ALL);
                         command->Dispatch(  volumeLight->GetProbeCounts().x() * volumeLight->GetProbeCounts().y(), 
                                             volumeLight->GetProbeCounts().z(), 
@@ -255,15 +260,11 @@ void DDGIPass::Build(RDGBuilder& builder)
                     .Finish();
 
                 RDGComputePassHandle pass4 = builder.CreateComputePass(GetName() + " Depth Border Update" + index)
+                    .AddFlag(RDGPassFlags::ForceGraphicsQueue)
                     .PassIndex(i)
                     .RootSignature(rootSignature)
-                    .ReadWrite(1, 0, 0, diffuseTex)
-                    .ReadWrite(1, 1, 0, normalTex)
-                    .ReadWrite(1, 2, 0, emissionTex)
-                    .ReadWrite(1, 3, 0, positionTex)
-                    .ReadWrite(1, 4, 0, radianceTex)
-                    .ReadWrite(1, 5, 0, irradianceTex)
-                    .ReadWrite(1, 6, 0, depthTex)
+                    .Shaders({computeShader[4].shader})
+                    .ReadWrite(2, SET2_BINDING_DDGI_DEPTH, 0, depthTex)
                     .Execute([&](RDGPassContext context) {       
                         
                         auto& volumeLight = volumeLights[EngineContext::ThreadPool()->ThreadFrameIndex()][context.passIndex[0]];
@@ -273,8 +274,9 @@ void DDGIPass::Build(RDGBuilder& builder)
 
                         RHICommandListRef command = context.command; 
                         command->SetComputePipeline(computePipeline[4]);
-                        command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);  
-                        command->BindDescriptorSet(context.descriptors[1], 1);
+                        command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);
+                        command->BindDescriptorSet(EngineContext::RenderResource()->GetPoolDescriptorSet(), 1);  
+                        command->BindDescriptorSet(context.descriptors[2], 2);
                         command->PushConstants(&setting, sizeof(DDGIComputeSetting), SHADER_FREQUENCY_ALL);
                         command->Dispatch(  volumeLight->GetProbeCounts().x() * volumeLight->GetProbeCounts().y(), 
                                             volumeLight->GetProbeCounts().z(), 
@@ -283,7 +285,7 @@ void DDGIPass::Build(RDGBuilder& builder)
                     .OutputRead(irradianceTex)
                     .OutputRead(depthTex)
                     .Finish();
-            }   
+            }
 		}
     }
 }

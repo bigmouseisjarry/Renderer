@@ -17,6 +17,7 @@ void PassInfoAnalysis::on_execute(RDGDependencyGraphRef graph, PerFrameCommonRes
     resource_infos.reserve(graph->ResourceNodeCount());
     for (RDGPassNodeRef pass : passes)
     {
+        // 对每一个pass做分析
         extract_pass_info(pass);
     }
 }
@@ -53,7 +54,9 @@ void PassInfoAnalysis::extract_pass_info(RDGPassNodeRef pass)
     info.pass = pass;
     info.pass_type = pass->NodeType();
 
+    // 获取pass的资源访问信息
     extract_resource_info(pass, info.resource_info);
+    // 获取pass的偏向
     extract_performance_info(pass, info.performance_info);
 
     pass_infos[pass] = info;
@@ -65,7 +68,7 @@ void PassInfoAnalysis::extract_resource_info(RDGPassNodeRef pass, PassResourceIn
 
     info.resource_accesses.reserve(pass->buffers_count() + pass->textures_count());
 
-    // Extract textures with detailed access info
+    // pass访问的每一条texture边
     pass->foreach_textures([&](RDGTextureNodeRef texture, RDGTextureEdgeRef edge) {
         ResourceAccessInfo access_info;
         access_info.pass = pass;
@@ -85,11 +88,11 @@ void PassInfoAnalysis::extract_resource_info(RDGPassNodeRef pass, PassResourceIn
         }
         else if (edge->asTransferDst)
             access_info.access_type = EResourceAccessType::Write;
-        else                               access_info.access_type = EResourceAccessType::Read;
+        else                               
+            access_info.access_type = EResourceAccessType::Read;
 
         // 子资源范围
-        access_info.aspect = edge->subresource.aspect;    // [sub]屏障按声明生效的钥匙：此前NONE→RHI全范围回退，
-                                                           // 逐mip屏障被静默放大成整图转移（09600风暴根因）
+        access_info.aspect = edge->subresource.aspect;    
         access_info.mip_base = edge->subresource.baseMipLevel;
         access_info.mip_count = edge->subresource.levelCount;
         access_info.array_base = edge->subresource.baseArrayLayer;
@@ -97,7 +100,7 @@ void PassInfoAnalysis::extract_resource_info(RDGPassNodeRef pass, PassResourceIn
         info.resource_accesses.push_back(access_info);
 
         // 更新全局资源信息
-        auto& global_resource_info = resource_infos[texture];
+        ResourceInfo& global_resource_info = resource_infos[texture];
         global_resource_info.used_states.insert(std::make_pair(pass, access_info.resource_state));
         global_resource_info.memory_size = texture->get_size();
 
@@ -114,7 +117,7 @@ void PassInfoAnalysis::extract_resource_info(RDGPassNodeRef pass, PassResourceIn
         return true;
         });
 
-    // Extract buffers with detailed access info
+    // pass访问的每一条buffer边
     pass->foreach_buffers([&](RDGBufferNodeRef buffer, RDGBufferEdgeRef edge) {
         ResourceAccessInfo access_info;
         access_info.pass = pass;
@@ -122,10 +125,6 @@ void PassInfoAnalysis::extract_resource_info(RDGPassNodeRef pass, PassResourceIn
         access_info.resource_state = edge->state;
         access_info.is_output = edge->IsOutput();
 
-        // buffer访问判定：间接输出边是写（2026-09-12修复——Gizmo Init的icon闪烁根因：
-        // asOutputIndirectDraw曾落Read分支，生产者被判纯读者→与消费者（Dependency读边）
-        // 在写者锚定下无边→pass对无序，旧classify靠级别序偶然排对，HEFT的tie-break翻转后
-        // 所有权链记反方向（Gizmo读上帧buffer）。GPU Culling链靠额外ReadWrite声明侥幸正确）
         if (edge->asShaderReadWrite || edge->asOutputReadWrite || edge->asOutputIndirectDraw)
             access_info.access_type = EResourceAccessType::ReadWrite;
         else
@@ -137,7 +136,7 @@ void PassInfoAnalysis::extract_resource_info(RDGPassNodeRef pass, PassResourceIn
         info.resource_accesses.push_back(access_info);
 
         // 更新全局资源信息
-        auto& global_resource_info = resource_infos[buffer];
+        ResourceInfo& global_resource_info = resource_infos[buffer];
         global_resource_info.resource = buffer;
         global_resource_info.used_states.insert(std::make_pair(pass, access_info.resource_state));
         global_resource_info.memory_size = buffer->get_size();
@@ -158,7 +157,6 @@ void PassInfoAnalysis::extract_resource_info(RDGPassNodeRef pass, PassResourceIn
 
 void PassInfoAnalysis::extract_performance_info(RDGPassNodeRef pass, PassPerformanceInfo& info)
 {
-    // Direct flag reading only
     info.is_compute_intensive = pass->has_flags(RDGPassFlags::ComputeIntensive);
     info.is_bandwidth_intensive = pass->has_flags(RDGPassFlags::BandwidthIntensive);
     info.is_vertex_bound = pass->has_flags(RDGPassFlags::VertexBoundIntensive);
@@ -171,10 +169,10 @@ void PassInfoAnalysis::extract_performance_info(RDGPassNodeRef pass, PassPerform
     info.separate_command_buffer = pass->has_flags(RDGPassFlags::SeparateFromCommandBuffer);
 }
 
-// For dependency analysis - avoid recomputation
+// 
 EResourceAccessType PassInfoAnalysis::get_resource_access_type(RDGPassNodeRef pass, RDGResourceNodeRef resource) const
 {
-    const auto* resource_info = get_resource_info(pass);
+    const PassResourceInfo* resource_info = get_resource_info(pass);
     if (!resource_info) return EResourceAccessType::Read;
 
     // Quick lookup in pre-computed access info

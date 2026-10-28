@@ -12,9 +12,8 @@ void DepthPyramidPass::Init()
     computeShader = Shader(EngineContext::File()->ShaderPath() + "depth/depth_pyramid.comp.spv", SHADER_FREQUENCY_COMPUTE);
 
     RHIRootSignatureInfo rootSignatureInfo = {};
-    rootSignatureInfo.AddEntry({0, 0, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE})
-                     .AddEntry({0, 1, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE})
-                     .AddEntry(EngineContext::RenderResource()->GetSamplerRootSignature()->GetInfo())
+    rootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetSet2RootSignature()->GetInfo())       
+                     .AddEntry(EngineContext::RenderResource()->GetBindlessRootSignature()->GetInfo())
                      .AddPushConstant({128, SHADER_FREQUENCY_COMPUTE});
     rootSignature = backend->CreateRootSignature(rootSignatureInfo);
 
@@ -27,11 +26,11 @@ void DepthPyramidPass::Init()
 void DepthPyramidPass::Build(RDGBuilder& builder)
 {
     RDGTextureHandle depthMin = builder.GetOrCreateTexture("Depth Min")
-        .Import(EngineContext::RenderResource()->GetDepthPyramidTexture(0), RESOURCE_STATE_SHADER_RESOURCE)
+        .Import(EngineContext::RenderResource()->GetDepthPyramidTexture(0))
         .Finish();
 
     RDGTextureHandle depthMax = builder.GetOrCreateTexture("Depth Max")
-        .Import(EngineContext::RenderResource()->GetDepthPyramidTexture(1), RESOURCE_STATE_SHADER_RESOURCE)
+        .Import(EngineContext::RenderResource()->GetDepthPyramidTexture(1))
         .Finish();
 
     Build(builder, 0, depthMin);
@@ -54,11 +53,9 @@ void DepthPyramidPass::Build(RDGBuilder& builder, uint32_t mode, RDGTextureHandl
             .PassIndex(i, mode)
             .AddFlag(RDGPassFlags::ForceGraphicsQueue)
             .RootSignature(rootSignature)
-            .Read(0, 0, 0, 
-                (i == 0) ? depth : depthMip, 
-                VIEW_TYPE_2D, 
-                { (i == 0) ? TEXTURE_ASPECT_DEPTH : TEXTURE_ASPECT_COLOR, (uint32_t)(std::max(i - 1, 0)), 1, 0, 1 })
-            .ReadWrite(0, 1, 0, depthMip, VIEW_TYPE_2D, { TEXTURE_ASPECT_COLOR, (uint32_t)i, 1, 0, 1 })
+            .Shaders({computeShader.shader})         
+            .Read(2, SET2_BINDING_DEPTH_PYRAMID_LAST_MIP, 0, (i == 0) ? depth : depthMip, VIEW_TYPE_2D, { (i == 0) ? TEXTURE_ASPECT_DEPTH : TEXTURE_ASPECT_COLOR, (uint32_t)(std::max(i - 1, 0)), 1, 0, 1 })
+            .ReadWrite(2, SET2_BINDING_DEPTH_PYRAMID_CURRENT_MIP, 0, depthMip, VIEW_TYPE_2D, { TEXTURE_ASPECT_COLOR, (uint32_t)i, 1, 0, 1})
             .Execute([&](RDGPassContext context) {       
 
                 Extent2D extent = EngineContext::Render()->GetWindowsExtent();
@@ -72,17 +69,14 @@ void DepthPyramidPass::Build(RDGBuilder& builder, uint32_t mode, RDGTextureHandl
 
                 RHICommandListRef command = context.command; 
                 command->SetComputePipeline(computePipeline);
-                command->BindDescriptorSet(context.descriptors[0], 0);
-                command->BindDescriptorSet(EngineContext::RenderResource()->GetSamplerDescriptorSet(), 1);
+                command->BindDescriptorSet(context.descriptors[2], 2);
+                command->BindDescriptorSet(EngineContext::RenderResource()->GetPoolDescriptorSet(), 1);
                 command->PushConstants(&passSetting, sizeof(DepthPyramidSetting), SHADER_FREQUENCY_COMPUTE);
                 command->Dispatch(  extent.width,   // 已经除过local_size了
                                     extent.height, 
                                     1);
             });
 
-        // 每级产出即收敛SRV：帧末全mip可采样（供下帧GPUCulling经per-frame set读旧内容——其虚拟
-        // Read边按SRV导入，保内容转移的前提）。屏障数与旧"仅末级"方案持平：本级UAV→SRV的
-        // OutputRead替代了下级pass读输入时的同款转移
         passBuilder.OutputRead(depthMip, { TEXTURE_ASPECT_COLOR, (uint32_t)i, 1, 0, 1 });
         passBuilder.Finish();
     }

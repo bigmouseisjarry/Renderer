@@ -9,31 +9,33 @@ enum class EResourceAccessType : uint32_t
     ReadWrite
 };
 
-// Resource access info - detailed for dependency analysis
+// 单条资源访问信息
 struct ResourceAccessInfo {
     RDGPassNodeRef pass = nullptr;
     RDGResourceNodeRef resource = nullptr;
     EResourceAccessType access_type;
     RHIResourceState resource_state = RESOURCE_STATE_UNDEFINED;
     bool is_output = false;    // 是否为output边（pass产出、后续pass消费）：其状态是pass之后的收敛状态，屏障需在pass之后发射
+    
     // Texture subresource range (optional)
     TextureAspectFlags aspect = TEXTURE_ASPECT_NONE;    // 边声明的aspect：NONE=整资源（RHI侧按格式回退默认aspect）
     uint32_t mip_base = 0;
     uint32_t mip_count = 0;
     uint32_t array_base = 0;
     uint32_t array_count = 0;
+    
     // Buffer range (optional)
     uint64_t buffer_from = 0;
     uint64_t buffer_to = 0;
 };
 
-// Resource info - direct extraction with detailed access info
+// pass的所有资源访问信息
 struct PassResourceInfo {
-    std::vector<ResourceAccessInfo> resource_accesses; // For dependency analysis
+    std::vector<ResourceAccessInfo> resource_accesses; 
     uint32_t total_resource_count = 0;
 };
 
-// Performance info - from hints only
+// pass标志
 struct PassPerformanceInfo {
     bool is_compute_intensive = false;    // ComputeIntensive flag
     bool is_bandwidth_intensive = false;  // BandwidthIntensive flag
@@ -47,7 +49,7 @@ struct PassPerformanceInfo {
     bool separate_command_buffer = false; // SeperateFromCommandBuffer flag
 };
 
-// Pass info container
+// pass信息
 struct PassInfo {
     RDGPassNodeRef pass = nullptr;
     RDGPassNodeType pass_type = RDGPassNodeType::RDG_PASS_NODE_TYPE_RENDER;
@@ -55,6 +57,7 @@ struct PassInfo {
     PassPerformanceInfo performance_info;
 };
 
+// 资源信息
 struct ResourceInfo {
     RDGResourceNodeRef resource = nullptr;
     uint64_t memory_size = 0;
@@ -76,7 +79,6 @@ public:
 
     void reset_for_frame() override;
 
-    // IRenderGraphPhase interface
     void on_execute(RDGDependencyGraphRef graph, PerFrameCommonResourceRef executor) override;
 
     // 查询接口
@@ -85,8 +87,9 @@ public:
     const PassResourceInfo* get_resource_info(RDGPassNodeRef pass) const;
     const PassPerformanceInfo* get_performance_info(RDGPassNodeRef pass) const;
 
-    // For dependency analysis - avoid recomputation
+    // 取到这个pass对这个资源的访问类型
     EResourceAccessType get_resource_access_type(RDGPassNodeRef pass, RDGResourceNodeRef resource) const;
+    // 取到这个资源在这个pass的状态
     RHIResourceState get_resource_state(RDGPassNodeRef pass, RDGResourceNodeRef resource) const;
 
     // 资源状态重路由查询接口

@@ -68,56 +68,188 @@ enum BindlessSlot
 
 enum PerFrameBindingID
 {
-	PER_FRAME_BINDING_GLOBAL_SETTING = 0,
+    // 刀7a（2026-10-20）：set0/set1重排连续化——shader侧镜像见 Asset/BuildIn/Shader/include/set0|set1/defines.glsl。
+    // 死宏（LIGHT_CLUSTER_GRID/INDEX、DIRECTIONAL/POINT_SHADOW、VOLUME_LIGHT×2、MESH_CARD_READBACK、
+    // SURFACE_CACHE、DEPTH、DEPTH_PYRAMID、VELOCITY、OBJECT_ID、GIZMO——已随刀3-5下放set2或废弃）本轮退役。
+    // set0 = 视图集（原GLOBAL_SETTING=0/CAMERA=2，TLAS迁set1后b1空位，本轮CAMERA收紧为1）
+    SET0_BINDING_GLOBAL_SETTING = 0,
+    SET0_BINDING_CAMERA,
 
-    PER_FRAME_BINDING_TLAS,
-	PER_FRAME_BINDING_CAMERA,
-	PER_FRAME_BINDING_OBJECT,
-    PER_FRAME_BINDING_MATERIAL,
-    PER_FRAME_BINDING_LIGHT,
-    PER_FRAME_BINDING_LIGHT_CLUSTER_GRID,
-    PER_FRAME_BINDING_LIGHT_CLUSTER_INDEX,
-    PER_FRAME_BINDING_DIRECTIONAL_SHADOW,
-    PER_FRAME_BINDING_POINT_SHADOW,
-    PER_FRAME_BINDING_VOLUME_LIGHT_IRRADIANCE,
-	PER_FRAME_BINDING_VOLUME_LIGHT_DEPTH,
-    PER_FRAME_BINDING_SKYBOX_IBL,
-    PER_FRAME_BINDING_MESH_CLUSTER,
-    PER_FRAME_BINDING_MESH_CLUSTER_GROUP,
-    PER_FRAME_BINDING_MESH_CLUSTER_DRAW_INFO,
-    PER_FRAME_BINDING_MESH_CARD,
-    PER_FRAME_BINDING_MESH_CARD_READBACK,
-    PER_FRAME_BINDING_SURFACE_CACHE,
-    PER_FRAME_BINDING_DEPTH,
-    PER_FRAME_BINDING_DEPTH_PYRAMID,
-    PER_FRAME_BINDING_VELOCITY,
-    PER_FRAME_BINDING_STBN,
-    PER_FRAME_BINDING_OBJECT_ID,
-    PER_FRAME_BINDING_VERTEX,
-    PER_FRAME_BINDING_GIZMO,
-    
-	PER_FRAME_BINDING_BINDLESS_POSITION,
-    PER_FRAME_BINDING_BINDLESS_NORMAL,
-    PER_FRAME_BINDING_BINDLESS_TANGENT,
-    PER_FRAME_BINDING_BINDLESS_TEXCOORD,
-    PER_FRAME_BINDING_BINDLESS_COLOR,
-    PER_FRAME_BINDING_BINDLESS_BONE_INDEX,
-    PER_FRAME_BINDING_BINDLESS_BONE_WEIGHT,
-    PER_FRAME_BINDING_BINDLESS_ANIMATION,
-    PER_FRAME_BINDING_BINDLESS_INDEX,
+    // set1 = bindless资源池集（原沿用set0旧号稀疏1,3,4,5,12-15,21,23,25-40，本轮重排连续0-25）
+    // 分组：数据表(0-7) / 静态资源(8-9) / 顶点流bindless池(10-18) / 采样器与纹理池(19-25)
+    SET1_BINDING_TLAS = 0,
+    SET1_BINDING_OBJECT,
+    SET1_BINDING_MATERIAL,
+    SET1_BINDING_LIGHT,
+    SET1_BINDING_VERTEX,
+    SET1_BINDING_MESH_CARD,
+    SET1_BINDING_MESH_CLUSTER,
+    SET1_BINDING_MESH_CLUSTER_GROUP,
+    SET1_BINDING_SKYBOX_IBL,
+    SET1_BINDING_STBN,
+    SET1_BINDING_BINDLESS_POSITION,
+    SET1_BINDING_BINDLESS_NORMAL,
+    SET1_BINDING_BINDLESS_TANGENT,
+    SET1_BINDING_BINDLESS_TEXCOORD,
+    SET1_BINDING_BINDLESS_COLOR,
+    SET1_BINDING_BINDLESS_BONE_INDEX,
+    SET1_BINDING_BINDLESS_BONE_WEIGHT,
+    SET1_BINDING_BINDLESS_ANIMATION,
+    SET1_BINDING_BINDLESS_INDEX,
+    SET1_BINDING_BINDLESS_SAMPLER,
+    SET1_BINDING_BINDLESS_TEXTURE_1D,
+    SET1_BINDING_BINDLESS_TEXTURE_1D_ARRAY,
+    SET1_BINDING_BINDLESS_TEXTURE_2D,
+    SET1_BINDING_BINDLESS_TEXTURE_2D_ARRAY,
+    SET1_BINDING_BINDLESS_TEXTURE_CUBE,
+    SET1_BINDING_BINDLESS_TEXTURE_3D,
 
-    PER_FRAME_BINDING_BINDLESS_SAMPLER,
-    PER_FRAME_BINDING_BINDLESS_TEXTURE_1D,
-    PER_FRAME_BINDING_BINDLESS_TEXTURE_1D_ARRAY,
-    PER_FRAME_BINDING_BINDLESS_TEXTURE_2D,
-    PER_FRAME_BINDING_BINDLESS_TEXTURE_2D_ARRAY,
-    PER_FRAME_BINDING_BINDLESS_TEXTURE_CUBE,
-    PER_FRAME_BINDING_BINDLESS_TEXTURE_3D,
-
-	PER_FRAME_BINDING_MAX_ENUM,//
+    SET1_BINDING_MAX_ENUM,//
 };
 
-static uint32_t BindlessSlotToPerFrameBinding(BindlessSlot slot) { return slot + (uint32_t)PER_FRAME_BINDING_BINDLESS_POSITION; }
+// 刀7b-1（2026-10-20）：set2=pass IO集全局统一槽位表（v3契约对账版，0-97共98槽）。
+// shader侧镜像=Asset/BuildIn/Shader/include/set2/defines.glsl；施工图/契约表=同目录PLANNING.md。
+// v3变更：拆POSTPROCESS_OUT(40,rgba8)、拆ReSTIR为DI/GI两域(47-50/51-54,block异构)、
+// FINAL_COLOR(28)="Noisy HDR Color"四号归一。
+// 数组槽count：2=HISTORY_DEPTH/PYRAMID/OBJECT_ID、4=DIRECTIONAL_SHADOW、5=SURFACE_CACHE、
+// 6=CLUSTER_DRAW_INFOS_READ/IN_TEX_ARRAY/OUT_TEX_ARRAY、8=POINT_SHADOW、100=VOLUME_LIGHT×2、
+// 1024=剔除域写侧、2=IN_COLOR/SVGF_CURRENT_COLOR_VARIANCE，其余=1
+enum Set2BindingID
+{
+    // 共享域 0-13（跨pass语义槽）
+    SET2_BINDING_LIGHT_CLUSTER_GRID = 0,
+    SET2_BINDING_LIGHT_CLUSTER_INDEX,               // =1
+    SET2_BINDING_HISTORY_DEPTH,                      // =2 x2
+    SET2_BINDING_HISTORY_DEPTH_PYRAMID,              // =3 x2
+    SET2_BINDING_HISTORY_VELOCITY,                   // =4
+    SET2_BINDING_HISTORY_OBJECT_ID,                  // =5 x2
+    SET2_BINDING_DIRECTIONAL_SHADOW,                 // =6 x4
+    SET2_BINDING_POINT_SHADOW,                       // =7 x8 TEXTURE_CUBE
+    SET2_BINDING_SURFACE_CACHE,                      // =8 x5
+    SET2_BINDING_VOLUME_LIGHT_IRRADIANCE,            // =9 xMAX_VOLUME_LIGHT_COUNT
+    SET2_BINDING_VOLUME_LIGHT_DEPTH,                 // =10 xMAX_VOLUME_LIGHT_COUNT
+    SET2_BINDING_MESH_CARD_READBACK,                 // =11 RW_BUFFER
+    SET2_BINDING_GIZMO_DRAW_DATA,                    // =12 RW_BUFFER
+    SET2_BINDING_CLUSTER_DRAW_INFOS_READ,            // =13 x6 读侧
+
+    // mesh剔除域 14-19（GPUCulling写侧，x1024）
+    SET2_BINDING_CLUSTER_DRAW_INFOS_WRITE,           // =14
+    SET2_BINDING_INDIRECT_MESH_DRAW_DATAS,           // =15
+    SET2_BINDING_INDIRECT_MESH_DRAW_COMMANDS,        // =16
+    SET2_BINDING_INDIRECT_CLUSTER_DRAW_DATAS,        // =17
+    SET2_BINDING_INDIRECT_CLUSTER_DRAW_COMMANDS,     // =18
+    SET2_BINDING_INDIRECT_CLUSTER_GROUP_DATAS,       // =19
+
+    // G-Buffer域 20-30（DI侧读法随7b-3统一texelFetch）
+    SET2_BINDING_GBUFFER_DIFFUSE_METALLIC,           // =20
+    SET2_BINDING_GBUFFER_NORMAL_ROUGHNESS,           // =21
+    SET2_BINDING_GBUFFER_EMISSION,                   // =22
+    SET2_BINDING_GBUFFER_SPECULAR_F0_ROUGHNESS,      // =23
+    SET2_BINDING_GBUFFER_GEOMETRIC_NORMAL_AO,        // =24
+    SET2_BINDING_GBUFFER_IOR,                        // =25
+    SET2_BINDING_DIRECTIONAL_DEPTH_HISTORY,          // =26 已退役（DDH特性2026-10-22删除，槽号保留防错位，勿删勿用）
+    SET2_BINDING_REPROJECTION_RESULT,                // =27
+    SET2_BINDING_FINAL_COLOR,                        // =28 RW rgba16f（"Noisy HDR Color"归一）
+    SET2_BINDING_DI_DIFFUSE_COLOR,                   // =29 RW
+    SET2_BINDING_DI_SPECULAR_COLOR,                  // =30 RW
+
+    // DDGI域 31-37（全RW_TEXTURE）
+    SET2_BINDING_DDGI_TRACE_ALBEDO_METALLIC,         // =31 rgba8
+    SET2_BINDING_DDGI_TRACE_NORMAL_ROUGHNESS,        // =32 rgba8_snorm
+    SET2_BINDING_DDGI_TRACE_EMISSION,                // =33 rgba16f
+    SET2_BINDING_DDGI_TRACE_POSITION,                // =34 rgba16f
+    SET2_BINDING_DDGI_RADIANCE,                      // =35 rgba16f
+    SET2_BINDING_DDGI_IRRADIANCE,                    // =36 rgba16f
+    SET2_BINDING_DDGI_DEPTH,                         // =37 rg16f
+
+    // 后处理通用域 38-44（通用IO=角色槽：槽共享、资源按边逐pass换绑）
+    SET2_BINDING_IN_COLOR,                           // =38 x2（count=1用户声明数组取[0]）
+    SET2_BINDING_OUT_COLOR,                          // =39 RW rgba16f
+    SET2_BINDING_POSTPROCESS_OUT,                    // =40 RW rgba8（v3拆1：LDR输出）
+    SET2_BINDING_EXPOSURE_DATA,                      // =41 RW_BUFFER
+    SET2_BINDING_IN_TEX_ARRAY,                       // =42 x6
+    SET2_BINDING_OUT_TEX_ARRAY,                      // =43 x6 RW rg32f
+    SET2_BINDING_BRDF_LUT,                           // =44
+
+    // 金字塔/深度域 45-46
+    SET2_BINDING_DEPTH_PYRAMID_LAST_MIP,             // =45
+    SET2_BINDING_DEPTH_PYRAMID_CURRENT_MIP,          // =46 RW r32f
+
+    // ReSTIR DI域 47-50（v3拆2：block=DIReservoir/RestirDISetting）
+    SET2_BINDING_RESTIR_DI_SETTING,                  // =47 RW_BUFFER
+    SET2_BINDING_RESTIR_DI_RESERVOIRS,               // =48 RW_BUFFER
+    SET2_BINDING_RESTIR_DI_PREV_RESERVOIRS,          // =49 RW_BUFFER
+    SET2_BINDING_RESTIR_DI_RESULT_RESERVOIRS,        // =50 RW_BUFFER
+
+    // ReSTIR GI域 51-56（v3拆2：block=GIReservoir/RestirGISetting）
+    SET2_BINDING_RESTIR_GI_SETTING,                  // =51 RW_BUFFER
+    SET2_BINDING_RESTIR_GI_RESERVOIRS,               // =52 RW_BUFFER
+    SET2_BINDING_RESTIR_GI_PREV_RESERVOIRS,          // =53 RW_BUFFER
+    SET2_BINDING_RESTIR_GI_RESULT_RESERVOIRS,        // =54 RW_BUFFER
+    SET2_BINDING_GI_DIFFUSE_COLOR,                   // =55 RW
+    SET2_BINDING_GI_SPECULAR_COLOR,                  // =56 RW
+
+    // SSSR域 57-63
+    SET2_BINDING_SSSR_HIT_RESULT,                    // =57 RW
+    SET2_BINDING_SSSR_HIT_COLOR,                     // =58 RW
+    SET2_BINDING_SSSR_PDF,                           // =59 RW
+    SET2_BINDING_SSSR_RESOLVE,                       // =60 RW
+    SET2_BINDING_SSSR_HISTORY,                       // =61 RW
+    SET2_BINDING_SSSR_IN_COLOR_PYRAMID,              // =62
+    SET2_BINDING_SSSR_REPROJECTION_RESULT,           // =63
+
+    // SVGF域 64-68（IN/OUT并入通用38/39，G-Buffer读并入20/21）
+    SET2_BINDING_SVGF_HISTORY_GBUFFER_NORMAL,        // =64
+    SET2_BINDING_SVGF_HISTORY_MOMENTS,               // =65
+    SET2_BINDING_SVGF_CURRENT_MOMENTS,               // =66 RW rgba32f
+    SET2_BINDING_SVGF_HISTORY_COLOR_VARIANCE,        // =67
+    SET2_BINDING_SVGF_CURRENT_COLOR_VARIANCE,        // =68 x2 RW rgba16f
+
+    // SurfaceCache域 69-74
+    SET2_BINDING_SC_CACHE_DIFFUSE,                   // =69
+    SET2_BINDING_SC_CACHE_NORMAL,                    // =70
+    SET2_BINDING_SC_CACHE_EMISSION,                  // =71
+    SET2_BINDING_SC_CACHE_DEPTH,                     // =72
+    SET2_BINDING_SC_CACHE_LIGHTING,                  // =73 RW rgba16f
+    SET2_BINDING_SC_DIRECT_LIGHTING_DISPATCH,        // =74 RW_BUFFER
+
+    // NRD wrapper域 75-78（引擎侧wrapper；NRD SDK内部布局不在此列）
+    SET2_BINDING_NRD_VIEW_Z,                         // =75 RW r32f
+    SET2_BINDING_NRD_NORMAL,                         // =76 RW rgba8_snorm
+    SET2_BINDING_NRD_OUT_DIFFUSE,                    // =77
+    SET2_BINDING_NRD_OUT_SPECULAR,                   // =78
+
+    // pass私有 79-97
+    SET2_BINDING_TAA_CURRENT_COLOR,                  // =79
+    SET2_BINDING_TAA_HISTORY_COLOR,                  // =80
+    SET2_BINDING_TAA_REPROJECTION_RESULT,            // =81
+    SET2_BINDING_TAA_OUT_COLOR,                      // =82 RW rgba16f
+    SET2_BINDING_TAA_HISTORY_OUT,                    // =83 RW rgba16f
+    SET2_BINDING_REPROJECTION_CURRENT_NORMAL,        // =84
+    SET2_BINDING_REPROJECTION_HISTORY_NORMAL,        // =85
+    SET2_BINDING_REPROJECTION_RESULT_OUT,            // =86 RW rgba32f
+    SET2_BINDING_FOG_VOXEL_CURRENT,                  // =87 RW rgba16f 3D
+    SET2_BINDING_FOG_VOXEL_HISTORY,                  // =88 RW rgba16f 3D
+    SET2_BINDING_FOG_VOXEL_INTEGRATED,               // =89 RW rgba16f 3D
+    SET2_BINDING_FOG_VOXEL_OUT,                      // =90 RW rgba16f 2D
+    SET2_BINDING_CLIPMAP_A,                          // =91 RW rgba16f 3D
+    SET2_BINDING_CLIPMAP_B,                          // =92 RW_BUFFER
+    SET2_BINDING_CLIPMAP_C,                          // =93 RW rgba16f 2D
+    SET2_BINDING_RTB_A,                              // =94 RW rgba8
+    SET2_BINDING_PT_A,                               // =95 RW rgba16f
+    SET2_BINDING_PT_B,                               // =96 RW rgba32f
+    SET2_BINDING_IBL_A,                              // =97 RW rgba16f
+
+    // ReSTIR DI G-Buffer RW读槽 98-101（v4拆分裁决：storage读法保留）
+    SET2_BINDING_RESTIR_DI_GBUFFER_DIFFUSE,        // =98 RW rgba8
+    SET2_BINDING_RESTIR_DI_GBUFFER_NORMAL,          // =99 RW rgba8
+    SET2_BINDING_RESTIR_DI_GBUFFER_EMISSION,        // =100 RW rgba8
+    SET2_BINDING_RESTIR_DI_GBUFFER_SPECF0,          // =101 RW rgba8
+
+    SET2_BINDING_MAX_ENUM,//
+};
+
+static uint32_t BindlessSlotToPerFrameBinding(BindlessSlot slot) { return slot + (uint32_t)SET1_BINDING_BINDLESS_POSITION; }
 
 
 // FRenderResource是对Render线程的资源抽象，对应的FRHIResource是对RHI线程的资源抽象，有一个封装的关系
@@ -133,6 +265,7 @@ public:
     ~RenderResourceManager() {};
 
     void Init();    
+
 
     void Destroy();
 
@@ -198,8 +331,7 @@ public:
     void SetGizmoDataCommand(void* data, int size);
     void GetMeshCardReadback(MeshCardReadBack& readback);
 
-    RHIShaderRef GetOrCreateRHIShader(const std::string& path, ShaderFrequency frequency, const std::string& entry = "main");  
-    RHIBufferRef GetGlobalClusterDrawInfoBuffer();
+    RHIShaderRef GetOrCreateRHIShader(const std::string& path, ShaderFrequency frequency, const std::string& entry = "main");
     RHIBufferRef GetLightClusterIndexBuffer();
     RHIBufferRef GetGizmoDataBuffer();
     RHIBufferRef GetCardUpdateBuffer()              { return multiFrameResource.cardUpdateBuffer.buffer; }
@@ -208,23 +340,25 @@ public:
 
     RHIRootSignatureRef GetPerFrameRootSignature()  { return perFrameRootSignature; }
     RHIDescriptorSetRef GetPerFrameDescriptorSet();
-    RHIRootSignatureRef GetSamplerRootSignature()   { return multiFrameResource.samplerRootSignature; }
-    RHIDescriptorSetRef GetSamplerDescriptorSet()   { return multiFrameResource.samplerDescriptorSet; }
+    RHIRootSignatureRef GetBindlessRootSignature()   { return bindlessRootSignature; }      // 刀2b：set1资源池集签名
+    RHIDescriptorSetRef GetPoolDescriptorSet();       
+    RHIRootSignatureRef GetSet2RootSignature()       { return set2RootSignature; }         // 刀7b-2：set2全局统一RS（pass IO集全量93槽）
 
 private:
     std::unordered_map<std::string, RHIShaderRef> shaderMap;    // 全局统一的着色器创建，假定文件路径唯一索引一个着色器
 
 private:
     // 每帧都单独需要的资源（持续更新）
-    struct PerFrameResource     
+    struct PerFrameResource
     {
         RHIDescriptorSetRef descriptorSet;
+        RHIDescriptorSetRef poolDescriptorSet;        // 刀2b：set1资源池集（数据表/bindless池/TLAS）
 
-        // 每帧都完全重构的buffer  
+        // 每帧都完全重构的buffer
         // 上一帧还在渲染时下一帧也可能在录制了，因此对每一帧有单独的buffer
-        
-        ArrayBuffer<LightClusterIndex, LIGHT_CLUSTER_NUM * MAX_LIGHTS_PER_CLUSTER> lightClusterIndexBuffer;                     // ClusterLightingPass (Compute写入)                                
-        ArrayBuffer<MeshClusterDrawInfo, MAX_PER_FRAME_CLUSTER_SIZE * MAX_SUPPORTED_MESH_PASS_COUNT> clusterDrawInfoBuffer;     // GPUCullingPass(Compute写入)
+
+        ArrayBuffer<LightClusterIndex, LIGHT_CLUSTER_NUM * MAX_LIGHTS_PER_CLUSTER> lightClusterIndexBuffer;                     // ClusterLightingPass (Compute写入)
+        // clusterDrawInfoBuffer已下放至MeshPassIndirectBuffers（per mesh pass自持，GPUCullingPass入图import）
     
         // 有固定槽位分配的buffer，且更新频率高
         Buffer<CameraInfo> cameraBuffer;                                    
@@ -236,10 +370,8 @@ private:
     std::array<PerFrameResource, FRAMES_IN_FLIGHT> perFrameResources;
 
     // TODO 哪些资源需要创建多份，做cpu数据传输和gpu计算的并行处理？
-    struct MultiFrameResource   
-    {  
-        RHIRootSignatureRef samplerRootSignature;
-        RHIDescriptorSetRef samplerDescriptorSet;
+    struct MultiFrameResource
+    {
 
         // 有固定槽位分配的buffer，且更新频率低
         Buffer<RenderGlobalSetting> globalSettingBuffer;                    
@@ -276,6 +408,8 @@ private:
 
     // 逐帧资源的根签名
     RHIRootSignatureRef perFrameRootSignature;
+    RHIRootSignatureRef bindlessRootSignature;       // 刀2b：set1资源池集（数据表+bindless池+SAMPLER+TLAS）
+    RHIRootSignatureRef set2RootSignature;           // 刀7b-2：set2全局统一RS（pass IO集，7b-3起各pass拼装进自己的RS）
 
     // 图标纹理
     std::vector<TextureRef> icons;

@@ -3,14 +3,8 @@
 #extension GL_ARB_separate_shader_objects : enable
 #extension GL_GOOGLE_include_directive : enable
 
-#include "../common/common.glsl"
+#include "include/common.glsl"
 #include "clipmap.glsl"
-
-layout(set = 1, binding = 0, rgba16f) uniform readonly image3D VXGI_CLIPMAP;
-layout(set = 1, binding = 1) buffer VXGI_CLIPMAP_BUFFER {
-	ClipmapInfo clipmapInfo;
-};
-layout(set = 1, binding = 2, rgba16f) uniform image2D OUT_COLOR;
 
 layout(location = 0) rayPayloadInEXT vec3 HIT_VALUE;
 hitAttributeEXT vec2 HIT_ATTRIBS;
@@ -18,8 +12,8 @@ hitAttributeEXT vec2 HIT_ATTRIBS;
 
 vec4 SampleVoxel(vec4 worldPos)
 {
-    int mipLevel = FetchClipmapMipLevel(clipmapInfo, worldPos.xyz);
-	ClipmapLevel clipmapLevel = clipmapInfo.levels[mipLevel];
+    int mipLevel = FetchClipmapMipLevel(VXGI_CLIPMAP_BUFFER.clipmapInfo, worldPos.xyz);
+	ClipmapLevel clipmapLevel = VXGI_CLIPMAP_BUFFER.clipmapInfo.levels[mipLevel];
 
     // 采样体素
     vec3 direction = normalize(gl_WorldRayDirectionEXT);

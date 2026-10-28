@@ -1,11 +1,11 @@
 #version 460
 #extension GL_GOOGLE_include_directive : enable
 
-#include "../common/common.glsl"
+#include "include/common.glsl"
 
 layout(location = 0) out vec4 OUT_POSITION;
 layout(location = 1) out vec4 OUT_PREV_POSITION;
-layout(location = 2) out vec3 OUT_COLOR;
+layout(location = 2) out vec3 OUT_VERTEX_COLOR;
 layout(location = 3) out vec2 OUT_TEXCOORD;
 layout(location = 4) out vec3 OUT_NORMAL;
 layout(location = 5) out vec4 OUT_TANGENT;
@@ -23,8 +23,8 @@ const vec3 inspectColors[7] = {
 
 void main() 
 {
-    uint clusterID      = MESH_CLUSTER_DRAW_INFOS.slot[gl_InstanceIndex].clusterID;
-    uint objectID       = MESH_CLUSTER_DRAW_INFOS.slot[gl_InstanceIndex].objectID;
+    uint clusterID      = MESH_CLUSTER_DRAW_INFOS_READ[0].slot[gl_InstanceIndex].clusterID;
+    uint objectID       = MESH_CLUSTER_DRAW_INFOS_READ[0].slot[gl_InstanceIndex].objectID;
     uint indexOffset    = gl_VertexIndex + MESH_CLUSTERS.slot[clusterID].indexOffset;
 
     mat4 model          = FetchModel(objectID);
@@ -38,16 +38,16 @@ void main()
 
     OUT_POSITION        = model * pos;
     OUT_PREV_POSITION   = prevModel * pos;
-    // OUT_COLOR           = color;
+    // OUT_VERTEX_COLOR           = color;
     OUT_TEXCOORD        = texCoord;
     OUT_NORMAL          = worldNormal;
     OUT_TANGENT         = worldTangent;
     OUT_ID              = objectID;
 
-    if(GLOBAL_SETTING.clusterInspectMode == 0)  OUT_COLOR = color;
-    if(GLOBAL_SETTING.clusterInspectMode == 1)  OUT_COLOR = inspectColors[clusterID % 7];           // cluster索引
-    if(GLOBAL_SETTING.clusterInspectMode == 2)  OUT_COLOR = inspectColors[(indexOffset / 3) % 7];   // 三角面索引
-    if(GLOBAL_SETTING.clusterInspectMode == 3)  OUT_COLOR = inspectColors[clusterID % 7] * vec3(((indexOffset / 3) % 7) / 7.0f * 0.8f + 0.2f);   // 三角面索引
+    if(GLOBAL_SETTING.clusterInspectMode == 0)  OUT_VERTEX_COLOR = color;
+    if(GLOBAL_SETTING.clusterInspectMode == 1)  OUT_VERTEX_COLOR = inspectColors[clusterID % 7];           // cluster索引
+    if(GLOBAL_SETTING.clusterInspectMode == 2)  OUT_VERTEX_COLOR = inspectColors[(indexOffset / 3) % 7];   // 三角面索引
+    if(GLOBAL_SETTING.clusterInspectMode == 3)  OUT_VERTEX_COLOR = inspectColors[clusterID % 7] * vec3(((indexOffset / 3) % 7) / 7.0f * 0.8f + 0.2f);   // 三角面索引
     
     gl_Position = CAMERA.viewProj * model * pos;
 }

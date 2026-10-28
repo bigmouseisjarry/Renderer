@@ -1,35 +1,6 @@
 #ifndef CLIPMAP_GLSL
 #define CLIPMAP_GLSL
 
-struct ClipmapLevel
-{
-    vec3 center;
-    float _padding1;
-
-    int level;
-    int extent;
-    float voxelSize;
-    float _padding2;
-};
-
-struct ClipmapInfo
-{
-    int totalMipLevel;
-    int _padding[3];
-
-    ClipmapLevel levels[32];    // 32级再怎么也应该够了
-};
-
-struct ClipmapRegion
-{
-    ivec3 min;
-    int _padding1;
-    ivec3 extent;
-    int _padding2;
-
-    int mipLevel;
-};
-
 // Y轴 延伸mipLevel倍
 // Z轴 延伸6倍（6个表面, 按下标顺序为前，后，上，下，右，左）（+X, -X, +Y, -Y, +Z, -Z）
 

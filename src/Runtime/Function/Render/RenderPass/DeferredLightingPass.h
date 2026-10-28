@@ -25,8 +25,6 @@ private:
 	};
 	DeferredLightingSetting setting = {};
 
-	TextureRef directionalDepthHistoryTex;
-
     Shader computeShader;
 
     RHIRootSignatureRef rootSignature;

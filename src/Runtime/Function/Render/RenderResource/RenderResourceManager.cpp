@@ -29,10 +29,10 @@ uint32_t RenderResourceManager::AllocateBindlessID(const BindlessResourceInfo& r
     // 全局Bindless分配id
     uint32_t index = bindlessIDAlloctor[slot].Allocate();
 
-    // 更新所有帧（e.g.当前的全部两个帧）的对应描述符绑定信息
+    // 更新所有帧（e.g.当前的全部两个帧）的对应描述符绑定信息（刀2b：bindless池在set1池集）
     for(auto& resource : perFrameResources)
     {
-        resource.descriptorSet->UpdateDescriptor({
+        resource.poolDescriptorSet->UpdateDescriptor({
             .binding = BindlessSlotToPerFrameBinding(slot),
             .index = index,
             .resourceType = resoruceInfo.resourceType,
@@ -62,8 +62,8 @@ void RenderResourceManager::SetTLAS(const RHITopLevelAccelerationStructureRef& t
 {
     for(auto& resource : perFrameResources)
     {
-        resource.descriptorSet->UpdateDescriptor({
-            .binding = PER_FRAME_BINDING_TLAS,
+        resource.poolDescriptorSet->UpdateDescriptor({
+            .binding = SET1_BINDING_TLAS,
             .index = 0,
             .resourceType = RESOURCE_TYPE_RAY_TRACING,
             .tlas = tlas});
@@ -111,20 +111,7 @@ void RenderResourceManager::SetVolumeLightInfo(const VolumeLightInfo& volumeLigh
 
 void RenderResourceManager::SetVolumeLightTextures(const VolumeLightTextures& volumeLightTextures, uint32_t volumeLightID)
 {
-    for(auto& resource : perFrameResources)
-    {
-        resource.descriptorSet->UpdateDescriptor({
-            .binding = PER_FRAME_BINDING_VOLUME_LIGHT_IRRADIANCE,
-            .index = volumeLightID,
-            .resourceType = RESOURCE_TYPE_TEXTURE,
-            .textureView = volumeLightTextures.irradianceTex->textureView});
-
-        resource.descriptorSet->UpdateDescriptor({
-            .binding = PER_FRAME_BINDING_VOLUME_LIGHT_DEPTH,
-            .index = volumeLightID,
-            .resourceType = RESOURCE_TYPE_TEXTURE,
-            .textureView = volumeLightTextures.depthTex->textureView});
-    }
+    // 刀5：烘焙纹理改经RDG入图（DDGI以"Volume Light Irradiance/Depth [id]"导入，消费者走set2 b25/b26 typed边）——set0描述符写入退役
 }
 
 void RenderResourceManager::SetLightSetting(const LightSetting& lightSetting)
@@ -202,12 +189,7 @@ RHIShaderRef RenderResourceManager::GetOrCreateRHIShader(const std::string& path
     return shader;
 }
 
-RHIBufferRef RenderResourceManager::GetGlobalClusterDrawInfoBuffer()           
-{ 
-    return perFrameResources[EngineContext::ThreadPool()->ThreadFrameIndex()].clusterDrawInfoBuffer.buffer; 
-} 
-
-RHIBufferRef RenderResourceManager::GetLightClusterIndexBuffer()               
+RHIBufferRef RenderResourceManager::GetLightClusterIndexBuffer()
 { 
     return perFrameResources[EngineContext::ThreadPool()->ThreadFrameIndex()].lightClusterIndexBuffer.buffer;
 } 
@@ -222,6 +204,11 @@ RHIDescriptorSetRef RenderResourceManager::GetPerFrameDescriptorSet()
     return perFrameResources[EngineContext::ThreadPool()->ThreadFrameIndex()].descriptorSet;
 }
 
+RHIDescriptorSetRef RenderResourceManager::GetPoolDescriptorSet()
+{
+    return perFrameResources[EngineContext::ThreadPool()->ThreadFrameIndex()].poolDescriptorSet;
+}
+
 RHITextureRef RenderResourceManager::GetStableHDRColorTexture(uint32_t slot)
 {
     // 语义槽(0=本帧,1=上一帧) → 物理槽：本帧TAA直写physical[parity]，上帧残留physical[parity^1]
@@ -232,97 +219,224 @@ void RenderResourceManager::InitGlobalResources()
 {
     Extent2D windowExtent = EngineContext::Render()->GetWindowsExtent();
 
+    // 刀2b：set0瘦身——数据表/bindless池/TLAS迁往set1资源池集（BindlessRS），set0只留视图常量+反馈+阴影+历史帧
     RHIRootSignatureInfo info = {};
-    info.AddEntry({0, PER_FRAME_BINDING_GLOBAL_SETTING, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})
-        //.AddEntry({0, PER_FRAME_BINDING_TLAS, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RAY_TRACING})
-        .AddEntry({0, PER_FRAME_BINDING_CAMERA, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_UNIFORM_BUFFER})
-        .AddEntry({0, PER_FRAME_BINDING_OBJECT, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})
-        .AddEntry({0, PER_FRAME_BINDING_MATERIAL, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})
-        .AddEntry({0, PER_FRAME_BINDING_LIGHT, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})
-        .AddEntry({0, PER_FRAME_BINDING_LIGHT_CLUSTER_GRID, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})
-        .AddEntry({0, PER_FRAME_BINDING_LIGHT_CLUSTER_INDEX, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})
-        .AddEntry({0, PER_FRAME_BINDING_DIRECTIONAL_SHADOW, DIRECTIONAL_SHADOW_CASCADE_LEVEL, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})
-        .AddEntry({0, PER_FRAME_BINDING_POINT_SHADOW, MAX_POINT_SHADOW_COUNT * 2, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE_CUBE})
-        .AddEntry({0, PER_FRAME_BINDING_VOLUME_LIGHT_IRRADIANCE, MAX_VOLUME_LIGHT_COUNT, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})
-        .AddEntry({0, PER_FRAME_BINDING_VOLUME_LIGHT_DEPTH, MAX_VOLUME_LIGHT_COUNT, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})
-        .AddEntry({0, PER_FRAME_BINDING_SKYBOX_IBL, 2, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE_CUBE})
-        .AddEntry({0, PER_FRAME_BINDING_MESH_CLUSTER, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})
-        .AddEntry({0, PER_FRAME_BINDING_MESH_CLUSTER_GROUP, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})
-        .AddEntry({0, PER_FRAME_BINDING_MESH_CLUSTER_DRAW_INFO, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})
-        .AddEntry({0, PER_FRAME_BINDING_MESH_CARD, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})
-        .AddEntry({0, PER_FRAME_BINDING_MESH_CARD_READBACK, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})
-        .AddEntry({0, PER_FRAME_BINDING_SURFACE_CACHE, 5, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})
-        .AddEntry({0, PER_FRAME_BINDING_DEPTH, 2, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})
-        .AddEntry({0, PER_FRAME_BINDING_DEPTH_PYRAMID, 2, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})
-        .AddEntry({0, PER_FRAME_BINDING_VELOCITY, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})    
-        .AddEntry({0, PER_FRAME_BINDING_STBN, 64, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})
-        .AddEntry({0, PER_FRAME_BINDING_OBJECT_ID, 2, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})   
-        .AddEntry({0, PER_FRAME_BINDING_VERTEX, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})
-        .AddEntry({0, PER_FRAME_BINDING_GIZMO, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})  
-        .AddEntry({0, PER_FRAME_BINDING_BINDLESS_POSITION, MAX_BINDLESS_RESOURCE_SIZE, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})
-        .AddEntry({0, PER_FRAME_BINDING_BINDLESS_NORMAL, MAX_BINDLESS_RESOURCE_SIZE, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})
-        .AddEntry({0, PER_FRAME_BINDING_BINDLESS_TANGENT, MAX_BINDLESS_RESOURCE_SIZE, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})
-        .AddEntry({0, PER_FRAME_BINDING_BINDLESS_TEXCOORD, MAX_BINDLESS_RESOURCE_SIZE, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})
-        .AddEntry({0, PER_FRAME_BINDING_BINDLESS_COLOR, MAX_BINDLESS_RESOURCE_SIZE, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})
-        .AddEntry({0, PER_FRAME_BINDING_BINDLESS_BONE_INDEX, MAX_BINDLESS_RESOURCE_SIZE, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})
-        .AddEntry({0, PER_FRAME_BINDING_BINDLESS_BONE_WEIGHT, MAX_BINDLESS_RESOURCE_SIZE, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})
-        .AddEntry({0, PER_FRAME_BINDING_BINDLESS_ANIMATION, MAX_BINDLESS_RESOURCE_SIZE, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})
-        .AddEntry({0, PER_FRAME_BINDING_BINDLESS_INDEX, MAX_BINDLESS_RESOURCE_SIZE, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})
-        .AddEntry({0, PER_FRAME_BINDING_BINDLESS_SAMPLER, MAX_BINDLESS_RESOURCE_SIZE, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_SAMPLER})
-        .AddEntry({0, PER_FRAME_BINDING_BINDLESS_TEXTURE_1D, MAX_BINDLESS_RESOURCE_SIZE, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})
-        .AddEntry({0, PER_FRAME_BINDING_BINDLESS_TEXTURE_1D_ARRAY, MAX_BINDLESS_RESOURCE_SIZE, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})
-        .AddEntry({0, PER_FRAME_BINDING_BINDLESS_TEXTURE_2D, MAX_BINDLESS_RESOURCE_SIZE, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})
-        .AddEntry({0, PER_FRAME_BINDING_BINDLESS_TEXTURE_2D_ARRAY, MAX_BINDLESS_RESOURCE_SIZE, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})
-        .AddEntry({0, PER_FRAME_BINDING_BINDLESS_TEXTURE_CUBE, MAX_BINDLESS_RESOURCE_SIZE, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})
-        .AddEntry({0, PER_FRAME_BINDING_BINDLESS_TEXTURE_3D, MAX_BINDLESS_RESOURCE_SIZE, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE});
+    info.AddEntry({0, SET0_BINDING_GLOBAL_SETTING, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})
+        //.AddEntry({0, SET1_BINDING_TLAS, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RAY_TRACING})
+        .AddEntry({0, SET0_BINDING_CAMERA, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_UNIFORM_BUFFER});     // 刀5：set0定型=视图集双槽（GLOBAL_SETTING+CAMERA）；volume light→set2 b25/26，readback→SC域b27
 
-#if ENABLE_RAY_TRACING
-        info.AddEntry({0, PER_FRAME_BINDING_TLAS, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RAY_TRACING});
-#endif
 
     perFrameRootSignature = EngineContext::RHI()->CreateRootSignature(info);
     for(auto& resource : perFrameResources) resource.descriptorSet = perFrameRootSignature->CreateDescriptorSet(0);
 
+    // 全局采样器上提创建：bindless RS的静态采样器声明需要句柄（set1创建期播种，见下）；
+    // 原建于multiFrameResource块内、晚于RS构建，声明即绑定后须先于此处存在
+    multiFrameResource.samplers.push_back(std::make_shared<Sampler>(
+        ADDRESS_MODE_CLAMP_TO_EDGE,
+        FILTER_TYPE_LINEAR,
+        MIPMAP_MODE_LINEAR,
+        0.0f));
+
+    multiFrameResource.samplers.push_back(std::make_shared<Sampler>(
+        ADDRESS_MODE_REPEAT,
+        FILTER_TYPE_LINEAR,
+        MIPMAP_MODE_LINEAR,
+        0.0f));
+
+    multiFrameResource.samplers.push_back(std::make_shared<Sampler>(
+        ADDRESS_MODE_CLAMP_TO_EDGE,
+        FILTER_TYPE_LINEAR,
+        MIPMAP_MODE_NEAREST,
+        0.0f,
+        SAMPLER_REDUCTION_MODE_MIN));
+
+    multiFrameResource.samplers.push_back(std::make_shared<Sampler>(
+        ADDRESS_MODE_CLAMP_TO_EDGE,
+        FILTER_TYPE_LINEAR,
+        MIPMAP_MODE_NEAREST,
+        0.0f,
+        SAMPLER_REDUCTION_MODE_MAX));
+
+    multiFrameResource.samplers.push_back(std::make_shared<Sampler>(
+        ADDRESS_MODE_REPEAT,
+        FILTER_TYPE_NEAREST,
+        MIPMAP_MODE_NEAREST,
+        0.0f));
+
+    multiFrameResource.samplers.push_back(std::make_shared<Sampler>(
+        ADDRESS_MODE_CLAMP_TO_EDGE,
+        FILTER_TYPE_NEAREST,
+        MIPMAP_MODE_NEAREST,
+        0.0f));
+
+    // 刀2b：set1资源池集——数据表+顶点/纹理bindless池+SAMPLER+TLAS（槽位号沿用旧set0编号，仅set号0→1）
+    RHIRootSignatureInfo bindlessInfo = {};
+    bindlessInfo.AddEntry({1, SET1_BINDING_OBJECT, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})
+                .AddEntry({1, SET1_BINDING_MESH_CLUSTER, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})
+                .AddEntry({1, SET1_BINDING_MESH_CLUSTER_GROUP, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})
+                .AddEntry({1, SET1_BINDING_SKYBOX_IBL, 2, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE_CUBE})
+                .AddEntry({1, SET1_BINDING_STBN, 64, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})
+                .AddEntry({1, SET1_BINDING_MATERIAL, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})
+                .AddEntry({1, SET1_BINDING_LIGHT, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})
+                .AddEntry({1, SET1_BINDING_MESH_CARD, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})
+                .AddEntry({1, SET1_BINDING_VERTEX, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})
+                .AddEntry({1, SET1_BINDING_BINDLESS_POSITION, MAX_BINDLESS_RESOURCE_SIZE, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})
+                .AddEntry({1, SET1_BINDING_BINDLESS_NORMAL, MAX_BINDLESS_RESOURCE_SIZE, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})
+                .AddEntry({1, SET1_BINDING_BINDLESS_TANGENT, MAX_BINDLESS_RESOURCE_SIZE, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})
+                .AddEntry({1, SET1_BINDING_BINDLESS_TEXCOORD, MAX_BINDLESS_RESOURCE_SIZE, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})
+                .AddEntry({1, SET1_BINDING_BINDLESS_COLOR, MAX_BINDLESS_RESOURCE_SIZE, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})
+                .AddEntry({1, SET1_BINDING_BINDLESS_BONE_INDEX, MAX_BINDLESS_RESOURCE_SIZE, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})
+                .AddEntry({1, SET1_BINDING_BINDLESS_BONE_WEIGHT, MAX_BINDLESS_RESOURCE_SIZE, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})
+                .AddEntry({1, SET1_BINDING_BINDLESS_ANIMATION, MAX_BINDLESS_RESOURCE_SIZE, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})
+                .AddEntry({1, SET1_BINDING_BINDLESS_INDEX, MAX_BINDLESS_RESOURCE_SIZE, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})
+                .AddEntry({1, SET1_BINDING_BINDLESS_SAMPLER, MAX_BINDLESS_RESOURCE_SIZE, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_SAMPLER})
+                .AddEntry({1, SET1_BINDING_BINDLESS_TEXTURE_1D, MAX_BINDLESS_RESOURCE_SIZE, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})
+                .AddEntry({1, SET1_BINDING_BINDLESS_TEXTURE_1D_ARRAY, MAX_BINDLESS_RESOURCE_SIZE, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})
+                .AddEntry({1, SET1_BINDING_BINDLESS_TEXTURE_2D, MAX_BINDLESS_RESOURCE_SIZE, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})
+                .AddEntry({1, SET1_BINDING_BINDLESS_TEXTURE_2D_ARRAY, MAX_BINDLESS_RESOURCE_SIZE, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})
+                .AddEntry({1, SET1_BINDING_BINDLESS_TEXTURE_CUBE, MAX_BINDLESS_RESOURCE_SIZE, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})
+                .AddEntry({1, SET1_BINDING_BINDLESS_TEXTURE_3D, MAX_BINDLESS_RESOURCE_SIZE, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE});
+
+    // 静态采样器声明即绑定：六个全局采样器在set1创建期自动播种（每帧槽的poolDescriptorSet同享），
+    // 原UpdatePoolDescriptorSet里的手动sampler写入循环已删
+    for (uint32_t i = 0; i < multiFrameResource.samplers.size(); i++)
+        bindlessInfo.AddStaticSampler({1, SET1_BINDING_BINDLESS_SAMPLER, i, multiFrameResource.samplers[i]->sampler});
+
+#if ENABLE_RAY_TRACING
+    bindlessInfo.AddEntry({1, SET1_BINDING_TLAS, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RAY_TRACING});
+#endif
+
+    bindlessRootSignature = EngineContext::RHI()->CreateRootSignature(bindlessInfo);
+    for(auto& resource : perFrameResources) resource.poolDescriptorSet = bindlessRootSignature->CreateDescriptorSet(1);
+
+    // 刀7b-2：set2全局统一RS——pass IO集全量槽位（终态v2表0-92共93槽，规划见Asset/BuildIn/Shader/include/set2/PLANNING.md）。
+    // 7b-3起各pass的Init收敛为三行拼装：AddEntry(set0)+AddEntry(set1)+AddEntry(set2本RS)，
+    // RDG按边逐pass填槽（虚拟边不填槽铁律），槽号一律用Set2BindingID宏。
+    // 本RS不常驻CreateDescriptorSet——set2描述符集由RDG描述符池按{RS info, set}逐pass池化分配
+    RHIRootSignatureInfo set2Info = {};
+    set2Info
+        // 共享域 0-13（跨pass语义槽）
+        .AddEntry({2, SET2_BINDING_LIGHT_CLUSTER_GRID,          1,     SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})     // 原b10
+        .AddEntry({2, SET2_BINDING_LIGHT_CLUSTER_INDEX,         1,     SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})      // 原b11
+        .AddEntry({2, SET2_BINDING_HISTORY_DEPTH,               2,     SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})       // 原b12
+        .AddEntry({2, SET2_BINDING_HISTORY_DEPTH_PYRAMID,       2,     SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})       // 原b13
+        .AddEntry({2, SET2_BINDING_HISTORY_VELOCITY,            1,     SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})       // 原b14
+        .AddEntry({2, SET2_BINDING_HISTORY_OBJECT_ID,           2,     SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})       // 原b15
+        .AddEntry({2, SET2_BINDING_DIRECTIONAL_SHADOW,          4,     SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})       // 原b22（=DIRECTIONAL_SHADOW_CASCADE_LEVEL）
+        .AddEntry({2, SET2_BINDING_POINT_SHADOW,                8,     SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE_CUBE})  // 原b23（filtered0-3+depth4-7）
+        .AddEntry({2, SET2_BINDING_SURFACE_CACHE,               5,     SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})       // 原b24
+        .AddEntry({2, SET2_BINDING_VOLUME_LIGHT_IRRADIANCE,     MAX_VOLUME_LIGHT_COUNT, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})   // 原b25
+        .AddEntry({2, SET2_BINDING_VOLUME_LIGHT_DEPTH,          MAX_VOLUME_LIGHT_COUNT, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})   // 原b26
+        .AddEntry({2, SET2_BINDING_MESH_CARD_READBACK,          1,     SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})     // 原b27
+        .AddEntry({2, SET2_BINDING_GIZMO_DRAW_DATA,             1,     SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})     // 原gizmo b32
+        .AddEntry({2, SET2_BINDING_CLUSTER_DRAW_INFOS_READ,     6,     SHADER_FREQUENCY_ALL, RESOURCE_TYPE_BUFFER})        // 原b21读侧（PointShadow一面一槽）
+        // mesh剔除域 14-19（GPUCulling写侧，原MESH_PASS_BINDING 16-21写侧）
+        .AddEntry({2, SET2_BINDING_CLUSTER_DRAW_INFOS_WRITE,    1024,  SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})
+        .AddEntry({2, SET2_BINDING_INDIRECT_MESH_DRAW_DATAS,    1024,  SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})
+        .AddEntry({2, SET2_BINDING_INDIRECT_MESH_DRAW_COMMANDS, 1024,  SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})
+        .AddEntry({2, SET2_BINDING_INDIRECT_CLUSTER_DRAW_DATAS, 1024,  SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})
+        .AddEntry({2, SET2_BINDING_INDIRECT_CLUSTER_DRAW_COMMANDS, 1024, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})
+        .AddEntry({2, SET2_BINDING_INDIRECT_CLUSTER_GROUP_DATAS, 1024, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})
+        // G-Buffer域 20-30（DI侧RW声明随7b-3统一TEXTURE+texelFetch）
+        .AddEntry({2, SET2_BINDING_GBUFFER_DIFFUSE_METALLIC,      1,   SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})       // 原b0(ReSTIR)/b32(DL,NRD)
+        .AddEntry({2, SET2_BINDING_GBUFFER_NORMAL_ROUGHNESS,      1,   SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})       // 原b1/b33/b32(SVGF)
+        .AddEntry({2, SET2_BINDING_GBUFFER_EMISSION,              1,   SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})       // 原b2/b34(DL)
+        .AddEntry({2, SET2_BINDING_GBUFFER_SPECULAR_F0_ROUGHNESS, 1,   SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})       // 原b7/b38(DL)/b39(NRD)/b3(SSSR)
+        .AddEntry({2, SET2_BINDING_GBUFFER_GEOMETRIC_NORMAL_AO,   1,   SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})       // 原DL b37
+        .AddEntry({2, SET2_BINDING_GBUFFER_IOR,                   1,   SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})       // 原DL b39
+        .AddEntry({2, SET2_BINDING_REPROJECTION_RESULT,           1,   SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})       // 原ReSTIR b3
+        .AddEntry({2, SET2_BINDING_FINAL_COLOR,                   1,   SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})    // 原b4（ReSTIR DI/GI共享）
+        .AddEntry({2, SET2_BINDING_DI_DIFFUSE_COLOR,              1,   SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})    // 原b5(DI)/b35(NRD viewZ)
+        .AddEntry({2, SET2_BINDING_DI_SPECULAR_COLOR,             1,   SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})    // 原b6(DI)/b36(NRD viewZ)/b33(NRD copySssr)
+        // DDGI域 31-37（原DDGI b32-38）
+        .AddEntry({2, SET2_BINDING_DDGI_TRACE_ALBEDO_METALLIC,    1,   SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})
+        .AddEntry({2, SET2_BINDING_DDGI_TRACE_NORMAL_ROUGHNESS,   1,   SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})
+        .AddEntry({2, SET2_BINDING_DDGI_TRACE_EMISSION,           1,   SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})
+        .AddEntry({2, SET2_BINDING_DDGI_TRACE_POSITION,           1,   SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})
+        .AddEntry({2, SET2_BINDING_DDGI_RADIANCE,                 1,   SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})
+        .AddEntry({2, SET2_BINDING_DDGI_IRRADIANCE,               1,   SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})
+        .AddEntry({2, SET2_BINDING_DDGI_DEPTH,                    1,   SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})
+        // 后处理通用域 38-44（通用IO=角色槽：槽共享、资源按边逐pass换绑）
+        .AddEntry({2, SET2_BINDING_IN_COLOR,                 2,     SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})       // 原b32（bloom双输入取最大；count=1用户取[0]）
+        .AddEntry({2, SET2_BINDING_OUT_COLOR,                1,     SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})    // 原b33（bloom/fxaa/SVGF/SSSR等HDR中间色，rgba16f契约）
+        .AddEntry({2, SET2_BINDING_POSTPROCESS_OUT,          1,     SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})    // v3拆1：post_process的LDR输出(rgba8)
+        .AddEntry({2, SET2_BINDING_EXPOSURE_DATA,            1,     SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})     // 原exposure b33/postprocess b34（三处同构）
+        .AddEntry({2, SET2_BINDING_IN_TEX_ARRAY,             6,     SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})       // 原PointShadow b32
+        .AddEntry({2, SET2_BINDING_OUT_TEX_ARRAY,            6,     SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})    // 原PointShadow b33（rg32f）
+        .AddEntry({2, SET2_BINDING_BRDF_LUT,                 1,     SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})       // 原SSSR b39
+        // 金字塔/深度域 45-46
+        .AddEntry({2, SET2_BINDING_DEPTH_PYRAMID_LAST_MIP,   1,     SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})       // 原DepthPyramid b32
+        .AddEntry({2, SET2_BINDING_DEPTH_PYRAMID_CURRENT_MIP, 1,    SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})    // 原DepthPyramid b33（r32f）
+        // ReSTIR DI域 47-50（v3拆2：block=DIReservoir/RestirDISetting，物理buffer与GI分离）
+        .AddEntry({2, SET2_BINDING_RESTIR_DI_SETTING,        1,     SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})     // 原DI b32
+        .AddEntry({2, SET2_BINDING_RESTIR_DI_RESERVOIRS,     1,     SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})     // 原DI b33
+        .AddEntry({2, SET2_BINDING_RESTIR_DI_PREV_RESERVOIRS, 1,    SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})     // 原DI b34
+        .AddEntry({2, SET2_BINDING_RESTIR_DI_RESULT_RESERVOIRS, 1,  SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})     // 原DI b35
+        // ReSTIR GI域 51-56（v3拆2：block=GIReservoir/RestirGISetting）
+        .AddEntry({2, SET2_BINDING_RESTIR_GI_SETTING,        1,     SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})     // 原GI b32
+        .AddEntry({2, SET2_BINDING_RESTIR_GI_RESERVOIRS,     1,     SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})     // 原GI b33
+        .AddEntry({2, SET2_BINDING_RESTIR_GI_PREV_RESERVOIRS, 1,    SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})     // 原GI b34
+        .AddEntry({2, SET2_BINDING_RESTIR_GI_RESULT_RESERVOIRS, 1,  SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})     // 原GI b35
+        .AddEntry({2, SET2_BINDING_GI_DIFFUSE_COLOR,         1,     SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})    // 原GI b5
+        .AddEntry({2, SET2_BINDING_GI_SPECULAR_COLOR,        1,     SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})    // 原GI b6
+        // SSSR域 57-63（原SSSR b32-40）
+        .AddEntry({2, SET2_BINDING_SSSR_HIT_RESULT,          1,     SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})
+        .AddEntry({2, SET2_BINDING_SSSR_HIT_COLOR,           1,     SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})
+        .AddEntry({2, SET2_BINDING_SSSR_PDF,                 1,     SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})
+        .AddEntry({2, SET2_BINDING_SSSR_RESOLVE,             1,     SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})
+        .AddEntry({2, SET2_BINDING_SSSR_HISTORY,             1,     SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})    // v2修正：RW非TEXTURE
+        .AddEntry({2, SET2_BINDING_SSSR_IN_COLOR_PYRAMID,    1,     SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})
+        .AddEntry({2, SET2_BINDING_SSSR_REPROJECTION_RESULT, 1,     SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})
+        // SVGF域 64-68（IN/OUT并入通用38/39，G-Buffer读并入20/21）
+        .AddEntry({2, SET2_BINDING_SVGF_HISTORY_GBUFFER_NORMAL,  1,  SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})
+        .AddEntry({2, SET2_BINDING_SVGF_HISTORY_MOMENTS,         1,  SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})
+        .AddEntry({2, SET2_BINDING_SVGF_CURRENT_MOMENTS,         1,  SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})
+        .AddEntry({2, SET2_BINDING_SVGF_HISTORY_COLOR_VARIANCE,  1,  SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})
+        .AddEntry({2, SET2_BINDING_SVGF_CURRENT_COLOR_VARIANCE,  2,  SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})
+        // SurfaceCache域 69-74（原SurfaceCachePass b32-37）
+        .AddEntry({2, SET2_BINDING_SC_CACHE_DIFFUSE,             1,  SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})
+        .AddEntry({2, SET2_BINDING_SC_CACHE_NORMAL,              1,  SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})
+        .AddEntry({2, SET2_BINDING_SC_CACHE_EMISSION,            1,  SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})
+        .AddEntry({2, SET2_BINDING_SC_CACHE_DEPTH,               1,  SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})
+        .AddEntry({2, SET2_BINDING_SC_CACHE_LIGHTING,            1,  SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})
+        .AddEntry({2, SET2_BINDING_SC_DIRECT_LIGHTING_DISPATCH,  1,  SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})
+        // NRD wrapper域 75-78（引擎侧wrapper；NRD SDK内部走NRDIntegration私有布局不在此列）
+        .AddEntry({2, SET2_BINDING_NRD_VIEW_Z,                    1,  SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})
+        .AddEntry({2, SET2_BINDING_NRD_NORMAL,                    1,  SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})
+        .AddEntry({2, SET2_BINDING_NRD_OUT_DIFFUSE,               1,  SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})
+        .AddEntry({2, SET2_BINDING_NRD_OUT_SPECULAR,              1,  SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})
+        // pass私有 79-97
+        .AddEntry({2, SET2_BINDING_TAA_CURRENT_COLOR,             1,  SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})       // 原taa b32
+        .AddEntry({2, SET2_BINDING_TAA_HISTORY_COLOR,             1,  SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})       // 原taa b33
+        .AddEntry({2, SET2_BINDING_TAA_REPROJECTION_RESULT,       1,  SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})       // 原taa b34
+        .AddEntry({2, SET2_BINDING_TAA_OUT_COLOR,                 1,  SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})    // 原taa b35
+        .AddEntry({2, SET2_BINDING_TAA_HISTORY_OUT,               1,  SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})    // 原taa b36（kernel直写下帧history）
+        .AddEntry({2, SET2_BINDING_REPROJECTION_CURRENT_NORMAL,   1,  SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})       // 原reproj b32
+        .AddEntry({2, SET2_BINDING_REPROJECTION_HISTORY_NORMAL,   1,  SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})       // 原reproj b33
+        .AddEntry({2, SET2_BINDING_REPROJECTION_RESULT_OUT,       1,  SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})    // 原reproj b34
+        .AddEntry({2, SET2_BINDING_FOG_VOXEL_CURRENT,             1,  SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})    // 原fog b32（未积分体素,3D）
+        .AddEntry({2, SET2_BINDING_FOG_VOXEL_HISTORY,             1,  SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})    // 原fog b33（3D）
+        .AddEntry({2, SET2_BINDING_FOG_VOXEL_INTEGRATED,          1,  SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})    // 原fog b34（3D）
+        .AddEntry({2, SET2_BINDING_FOG_VOXEL_OUT,                 1,  SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})    // 原fog b35（2D）
+        .AddEntry({2, SET2_BINDING_CLIPMAP_A,                     1,  SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})    // 原clipmap b32（3D）
+        .AddEntry({2, SET2_BINDING_CLIPMAP_B,                     1,  SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})     // 原clipmap b33
+        .AddEntry({2, SET2_BINDING_CLIPMAP_C,                     1,  SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})    // 原clipmap visualize b34（2D）
+        .AddEntry({2, SET2_BINDING_RTB_A,                         1,  SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})    // 原RTBase b32（rgba8）
+        .AddEntry({2, SET2_BINDING_PT_A,                          1,  SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})    // 原PathTracing b32
+        .AddEntry({2, SET2_BINDING_PT_B,                          1,  SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})    // 原PathTracing b33（rgba32f）
+        .AddEntry({2, SET2_BINDING_IBL_A,                         1,  SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})
+        // ReSTIR DI G-Buffer RW读槽 98-101（v4：storage读法保留，不融合TEXTURE域）
+        .AddEntry({2, SET2_BINDING_RESTIR_DI_GBUFFER_DIFFUSE,   1,  SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})
+        .AddEntry({2, SET2_BINDING_RESTIR_DI_GBUFFER_NORMAL,     1,  SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})
+        .AddEntry({2, SET2_BINDING_RESTIR_DI_GBUFFER_EMISSION,   1,  SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})
+        .AddEntry({2, SET2_BINDING_RESTIR_DI_GBUFFER_SPECF0,     1,  SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE});  // 原ReSTIR b0-2/b7
+
+    set2RootSignature = EngineContext::RHI()->CreateRootSignature(set2Info);
+
     // 初始化全局资源，部分直接在声明时就默认创建了
     // multiFrameResource
     {
-        multiFrameResource.samplers.push_back(std::make_shared<Sampler>(
-            ADDRESS_MODE_CLAMP_TO_EDGE,   
-            FILTER_TYPE_LINEAR, 
-            MIPMAP_MODE_LINEAR,
-            0.0f));
-
-        multiFrameResource.samplers.push_back(std::make_shared<Sampler>(
-            ADDRESS_MODE_REPEAT,   
-            FILTER_TYPE_LINEAR, 
-            MIPMAP_MODE_LINEAR,
-            0.0f));
-
-        multiFrameResource.samplers.push_back(std::make_shared<Sampler>(
-            ADDRESS_MODE_CLAMP_TO_EDGE,   
-            FILTER_TYPE_LINEAR, 
-            MIPMAP_MODE_NEAREST,
-            0.0f,
-            SAMPLER_REDUCTION_MODE_MIN));
-
-        multiFrameResource.samplers.push_back(std::make_shared<Sampler>(
-            ADDRESS_MODE_CLAMP_TO_EDGE,   
-            FILTER_TYPE_LINEAR, 
-            MIPMAP_MODE_NEAREST,
-            0.0f,
-            SAMPLER_REDUCTION_MODE_MAX));
-
-        multiFrameResource.samplers.push_back(std::make_shared<Sampler>(
-            ADDRESS_MODE_REPEAT,
-            FILTER_TYPE_NEAREST,
-            MIPMAP_MODE_NEAREST,
-            0.0f));
-
-        multiFrameResource.samplers.push_back(std::make_shared<Sampler>(
-            ADDRESS_MODE_CLAMP_TO_EDGE,
-            FILTER_TYPE_NEAREST,
-            MIPMAP_MODE_NEAREST,
-            0.0f));
+        // 六个全局采样器已上提至bindless RS构建前（静态采样器声明需要句柄）
 
         multiFrameResource.lightClusterGridTexture = std::make_shared<Texture>(
             TEXTURE_TYPE_3D,
@@ -478,237 +592,103 @@ void RenderResourceManager::InitGlobalResources()
             1, 1);
     }
 
-    // 为sampler单独创建一个描述符，方便pass使用
-    {
-        RHIRootSignatureInfo info = {};
-        info.AddEntry({1, 0, MAX_BINDLESS_RESOURCE_SIZE, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_SAMPLER});
-        multiFrameResource.samplerRootSignature = EngineContext::RHI()->CreateRootSignature(info);
-        
-        multiFrameResource.samplerDescriptorSet = multiFrameResource.samplerRootSignature->CreateDescriptorSet(1);
-        for (uint32_t i = 0; i < multiFrameResource.samplers.size(); i++) 
-        {
-            multiFrameResource.samplerDescriptorSet->UpdateDescriptor({
-                .binding = 0,
-                .index = i,
-                .resourceType = RESOURCE_TYPE_SAMPLER,
-                .sampler = multiFrameResource.samplers[i]->sampler});
-        }
-    }
+    // 刀2b：SamplerRS已删除（双sampler池合一）。内置sampler对池集SAMPLER槽的写入在下方
+    // init循环内（原set0 b34写入随bindless槽一并迁池）
 
     for(auto& resource : perFrameResources)
     {
         resource.descriptorSet->UpdateDescriptor({
-            .binding = PER_FRAME_BINDING_GLOBAL_SETTING,
+            .binding = SET0_BINDING_GLOBAL_SETTING,
             .index = 0,
             .resourceType = RESOURCE_TYPE_RW_BUFFER,
             .buffer = multiFrameResource.globalSettingBuffer.buffer});
 
         resource.descriptorSet->UpdateDescriptor({
-            .binding = PER_FRAME_BINDING_CAMERA,
+            .binding = SET0_BINDING_CAMERA,
             .index = 0,
             .resourceType = RESOURCE_TYPE_UNIFORM_BUFFER,
             .buffer = resource.cameraBuffer.buffer});
 
-        resource.descriptorSet->UpdateDescriptor({
-            .binding = PER_FRAME_BINDING_OBJECT,
+        resource.poolDescriptorSet->UpdateDescriptor({
+            .binding = SET1_BINDING_OBJECT,
             .index = 0,
             .resourceType = RESOURCE_TYPE_RW_BUFFER,
             .buffer = resource.objectBuffer.buffer});
 
-        resource.descriptorSet->UpdateDescriptor({
-            .binding = PER_FRAME_BINDING_MESH_CARD,
+        resource.poolDescriptorSet->UpdateDescriptor({
+            .binding = SET1_BINDING_MESH_CARD,
             .index = 0,
             .resourceType = RESOURCE_TYPE_RW_BUFFER,
             .buffer = resource.meshCardBuffer.buffer});
 
-        resource.descriptorSet->UpdateDescriptor({
-            .binding = PER_FRAME_BINDING_MESH_CARD_READBACK,
-            .index = 0,
-            .resourceType = RESOURCE_TYPE_RW_BUFFER,
-            .buffer = multiFrameResource.cardUpdateBuffer.buffer});
-
-        resource.descriptorSet->UpdateDescriptor({
-            .binding = PER_FRAME_BINDING_MATERIAL,
+        resource.poolDescriptorSet->UpdateDescriptor({
+            .binding = SET1_BINDING_MATERIAL,
             .index = 0,
             .resourceType = RESOURCE_TYPE_RW_BUFFER,
             .buffer = multiFrameResource.materialBuffer.buffer});
 
-        resource.descriptorSet->UpdateDescriptor({
-            .binding = PER_FRAME_BINDING_LIGHT,
+        resource.poolDescriptorSet->UpdateDescriptor({
+            .binding = SET1_BINDING_LIGHT,
             .index = 0,
             .resourceType = RESOURCE_TYPE_RW_BUFFER,
             .buffer = resource.lightBuffer.buffer});
 
-        resource.descriptorSet->UpdateDescriptor({
-            .binding = PER_FRAME_BINDING_GIZMO,
-            .index = 0,
-            .resourceType = RESOURCE_TYPE_RW_BUFFER,
-            .buffer = resource.gizmoBuffer.buffer});
 
-        resource.descriptorSet->UpdateDescriptor({
-            .binding = PER_FRAME_BINDING_LIGHT_CLUSTER_GRID,
-            .index = 0,
-            .resourceType = RESOURCE_TYPE_RW_TEXTURE,
-            .textureView = multiFrameResource.lightClusterGridTexture->textureView});
 
-        resource.descriptorSet->UpdateDescriptor({
-            .binding = PER_FRAME_BINDING_LIGHT_CLUSTER_INDEX,
-            .index = 0,
-            .resourceType = RESOURCE_TYPE_RW_BUFFER,
-            .buffer = resource.lightClusterIndexBuffer.buffer});
 
-        resource.descriptorSet->UpdateDescriptor({
-            .binding = PER_FRAME_BINDING_SKYBOX_IBL,
+        resource.poolDescriptorSet->UpdateDescriptor({
+            .binding = SET1_BINDING_SKYBOX_IBL,
             .index = 0,
             .resourceType = RESOURCE_TYPE_TEXTURE,
             .textureView = multiFrameResource.skyboxIBLTexuture[0]->textureView});
 
-        resource.descriptorSet->UpdateDescriptor({
-            .binding = PER_FRAME_BINDING_SKYBOX_IBL,
+        resource.poolDescriptorSet->UpdateDescriptor({
+            .binding = SET1_BINDING_SKYBOX_IBL,
             .index = 1,
             .resourceType = RESOURCE_TYPE_TEXTURE,
             .textureView = multiFrameResource.skyboxIBLTexuture[1]->textureView});
 
-        resource.descriptorSet->UpdateDescriptor({
-            .binding = PER_FRAME_BINDING_MESH_CLUSTER,
+        resource.poolDescriptorSet->UpdateDescriptor({
+            .binding = SET1_BINDING_MESH_CLUSTER,
             .index = 0,
             .resourceType = RESOURCE_TYPE_RW_BUFFER,
             .buffer = multiFrameResource.meshClusterBuffer.buffer});
 
-        resource.descriptorSet->UpdateDescriptor({
-            .binding = PER_FRAME_BINDING_MESH_CLUSTER_GROUP,
+        resource.poolDescriptorSet->UpdateDescriptor({
+            .binding = SET1_BINDING_MESH_CLUSTER_GROUP,
             .index = 0,
             .resourceType = RESOURCE_TYPE_RW_BUFFER,
             .buffer = multiFrameResource.meshClusterGroupBuffer.buffer});
 
-        resource.descriptorSet->UpdateDescriptor({
-            .binding = PER_FRAME_BINDING_MESH_CLUSTER_DRAW_INFO,
-            .index = 0,
-            .resourceType = RESOURCE_TYPE_RW_BUFFER,
-            .buffer = resource.clusterDrawInfoBuffer.buffer});
 
-        resource.descriptorSet->UpdateDescriptor({
-            .binding = PER_FRAME_BINDING_SURFACE_CACHE,
-            .index = 0,
-            .resourceType = RESOURCE_TYPE_TEXTURE,
-            .textureView = multiFrameResource.surfaceCacheTexture[0]->textureView});  
 
-        resource.descriptorSet->UpdateDescriptor({
-            .binding = PER_FRAME_BINDING_SURFACE_CACHE,
-            .index = 1,
-            .resourceType = RESOURCE_TYPE_TEXTURE,
-            .textureView = multiFrameResource.surfaceCacheTexture[1]->textureView});  
 
-        resource.descriptorSet->UpdateDescriptor({
-            .binding = PER_FRAME_BINDING_SURFACE_CACHE,
-            .index = 2,
-            .resourceType = RESOURCE_TYPE_TEXTURE,
-            .textureView = multiFrameResource.surfaceCacheTexture[2]->textureView}); 
 
-        resource.descriptorSet->UpdateDescriptor({
-            .binding = PER_FRAME_BINDING_SURFACE_CACHE,
-            .index = 3,
-            .resourceType = RESOURCE_TYPE_TEXTURE,
-            .textureView = multiFrameResource.surfaceCacheTexture[3]->textureView}); 
 
-        resource.descriptorSet->UpdateDescriptor({
-            .binding = PER_FRAME_BINDING_SURFACE_CACHE,
-            .index = 4,
-            .resourceType = RESOURCE_TYPE_TEXTURE,
-            .textureView = multiFrameResource.surfaceCacheTexture[4]->textureView}); 
 
-        resource.descriptorSet->UpdateDescriptor({
-            .binding = PER_FRAME_BINDING_DEPTH,
-            .index = 0,
-            .resourceType = RESOURCE_TYPE_TEXTURE,
-            .textureView = multiFrameResource.depthTexture[0]->textureView});
 
-        resource.descriptorSet->UpdateDescriptor({
-            .binding = PER_FRAME_BINDING_DEPTH,
-            .index = 1,
-            .resourceType = RESOURCE_TYPE_TEXTURE,
-            .textureView = multiFrameResource.depthTexture[1]->textureView});
 
-        resource.descriptorSet->UpdateDescriptor({
-            .binding = PER_FRAME_BINDING_DEPTH_PYRAMID,
-            .index = 0,
-            .resourceType = RESOURCE_TYPE_TEXTURE,
-            .textureView = multiFrameResource.depthPyramidTexture[0]->textureView});
 
-        resource.descriptorSet->UpdateDescriptor({
-            .binding = PER_FRAME_BINDING_DEPTH_PYRAMID,
-            .index = 1,
-            .resourceType = RESOURCE_TYPE_TEXTURE,
-            .textureView = multiFrameResource.depthPyramidTexture[1]->textureView});
-
-        resource.descriptorSet->UpdateDescriptor({
-            .binding = PER_FRAME_BINDING_VELOCITY,
-            .index = 0,
-            .resourceType = RESOURCE_TYPE_TEXTURE,
-            .textureView = multiFrameResource.velocityTexture->textureView});
 
         for (uint32_t i = 0; i < 64; i++)
         {
-            resource.descriptorSet->UpdateDescriptor({
-                .binding = PER_FRAME_BINDING_STBN,
+            resource.poolDescriptorSet->UpdateDescriptor({
+                .binding = SET1_BINDING_STBN,
                 .index = i,
                 .resourceType = RESOURCE_TYPE_TEXTURE,
                 .textureView = multiFrameResource.stbnTexture[i]->textureView });
         }
 
-        resource.descriptorSet->UpdateDescriptor({
-            .binding = PER_FRAME_BINDING_OBJECT_ID,
-            .index = 0,
-            .resourceType = RESOURCE_TYPE_TEXTURE,
-            .textureView = multiFrameResource.objectIDTexture[0]->textureView});    
 
-        resource.descriptorSet->UpdateDescriptor({
-            .binding = PER_FRAME_BINDING_OBJECT_ID,
-            .index = 1,
-            .resourceType = RESOURCE_TYPE_TEXTURE,
-            .textureView = multiFrameResource.objectIDTexture[1]->textureView});  
               
-        resource.descriptorSet->UpdateDescriptor({
-            .binding = PER_FRAME_BINDING_VERTEX,
+        resource.poolDescriptorSet->UpdateDescriptor({
+            .binding = SET1_BINDING_VERTEX,
             .index = 0,
             .resourceType = RESOURCE_TYPE_RW_BUFFER,
             .buffer = multiFrameResource.vertexBuffer.buffer});
 
-        for (uint32_t i = 0; i < multiFrameResource.dirShadowTextures.size(); i++) 
-        {
-            resource.descriptorSet->UpdateDescriptor({
-                .binding = PER_FRAME_BINDING_DIRECTIONAL_SHADOW,
-                .index = i,
-                .resourceType = RESOURCE_TYPE_TEXTURE,
-                .textureView = multiFrameResource.dirShadowTextures[i]->textureView});
-        }       
-
-        for (uint32_t i = 0; i < multiFrameResource.pointShadowTextures.size(); i++) 
-        {
-            resource.descriptorSet->UpdateDescriptor({
-                .binding = PER_FRAME_BINDING_POINT_SHADOW,
-                .index = i,
-                .resourceType = RESOURCE_TYPE_TEXTURE_CUBE,
-                .textureView = multiFrameResource.pointShadowTextures[i]->textureView});
-        }   
-
-        for (uint32_t i = 0; i < multiFrameResource.pointShadowDepthTextures.size(); i++) 
-        {
-            resource.descriptorSet->UpdateDescriptor({
-                .binding = PER_FRAME_BINDING_POINT_SHADOW,
-                .index = i + MAX_POINT_SHADOW_COUNT,        // 放在和阴影同一个描述符
-                .resourceType = RESOURCE_TYPE_TEXTURE_CUBE,
-                .textureView = multiFrameResource.pointShadowDepthTextures[i]->textureView});
-        } 
-
-        for (uint32_t i = 0; i < multiFrameResource.samplers.size(); i++) 
-        {
-            resource.descriptorSet->UpdateDescriptor({
-                .binding = PER_FRAME_BINDING_BINDLESS_SAMPLER,
-                .index = i,
-                .resourceType = RESOURCE_TYPE_SAMPLER,
-                .sampler = multiFrameResource.samplers[i]->sampler});
-        }
+        // 刀3：方向/点光源阴影描述符写入已删——阴影纹理经RDG边绑至消费者set2阴影域（shadows.glsl b0/b1）
+        // 全局采样器：已迁bindless RS静态采样器声明（set1创建期播种），手动写入循环已删
     }
 }
 

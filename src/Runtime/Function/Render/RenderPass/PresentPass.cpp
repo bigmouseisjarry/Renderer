@@ -13,7 +13,7 @@ void PresentPass::Build(RDGBuilder& builder)
     RDGTextureHandle outColor = builder.GetTexture("Final LDR Color");
 
     RDGTextureHandle present = builder.CreateTexture("Present")
-        .Import(swapchainTexture, RESOURCE_STATE_PRESENT)
+        .Import(swapchainTexture)   // 帧首UNDEFINED兜底/记录稳态PREVENT与手工屏障环自洽（pass内PRESENT↔TRANSFER_DST手工循环）
         .Finish();
 
     RDGPresentPassHandle pass = builder.CreatePresentPass(GetName())

@@ -3,14 +3,8 @@
 #extension GL_ARB_separate_shader_objects : enable
 #extension GL_GOOGLE_include_directive : enable
 
-#include "../common/common.glsl"
+#include "include/common.glsl"
 #include "clipmap.glsl"
-
-layout(set = 1, binding = 0, rgba16f) uniform readonly image3D VXGI_CLIPMAP;
-layout(set = 1, binding = 1) buffer VXGI_CLIPMAP_BUFFER {
-	ClipmapInfo clipmapInfo;
-};
-layout(set = 1, binding = 2, rgba16f) uniform image2D OUT_COLOR;
 
 layout(location = 0) rayPayloadEXT vec3 HIT_VALUE;
 
@@ -42,5 +36,5 @@ void main()
 		0               				// payload (location = 0)
   	);
 
-	imageStore(OUT_COLOR, ivec2(gl_LaunchIDEXT.xy), vec4(HIT_VALUE, 0.0));
+	imageStore(CLIPMAP_VISUALIZE_OUT, ivec2(gl_LaunchIDEXT.xy), vec4(HIT_VALUE, 0.0));
 }

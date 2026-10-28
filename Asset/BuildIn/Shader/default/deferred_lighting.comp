@@ -1,16 +1,8 @@
 #version 460
 #extension GL_GOOGLE_include_directive : enable
 #extension GL_EXT_samplerless_texture_functions : enable
-#include "../common/common.glsl"
+#include "include/common.glsl"
 
-layout(set = 1, binding = 0)            uniform texture2D   G_BUFFER_DIFFUSE_TRANSPARENT;	
-layout(set = 1, binding = 1)            uniform texture2D   G_BUFFER_NORMAL_SPECF;	
-layout(set = 1, binding = 2)            uniform texture2D   G_BUFFER_EMISSION;
-layout(set = 1, binding = 3)            uniform texture2D   DIRECTIONAL_DEPTH_HISTORY;
-layout(set = 1, binding = 4, rgba16f)   uniform image2D     FINAL_COLOR;		
-layout(set = 1, binding = 5)            uniform texture2D   G_BUFFER_GEOMETRIC_NORMAL_AO;
-layout(set = 1, binding = 6)            uniform texture2D   G_BUFFER_SPECULAR_F0_ROUGHNESS;
-layout(set = 1, binding = 7)            uniform texture2D   G_BUFFER_IOR;
 
 layout(push_constant) uniform DeferredLightSetting {
     uint mode;
@@ -97,7 +89,6 @@ void main()
 
     int cascadeLevel        = CascadeLevel(worldPos);
     float directionalShadow = DirectionalShadow(worldPos, pixel, SETTING.maxRadius);
-    float directionalShadowContrast = DirectionalShadowContrast(worldPos, DIRECTIONAL_DEPTH_HISTORY, 0);
 
     ivec3 clusterGrid       = FetchLightClusterGrid(WorldToNDC(worldPos).xyz);
     uvec2 clusterIndex      = FetchLightClusterIndex(clusterGrid);  //读取对应cluster的索引信息 
@@ -114,22 +105,21 @@ void main()
     if(SETTING.mode == 2)   finalColor = vec4(roughness, RGBtoLuminance(F0), 0.0f, 1.0f);
     if(SETTING.mode == 3)   finalColor = worldPos;
     if(SETTING.mode == 4)   finalColor = vec4(vec3(directionalShadow), 1.0f);
-    if(SETTING.mode == 5)   finalColor = vec4(vec3(directionalShadowContrast),1.0f);
-    if(SETTING.mode == 6)   finalColor = vec4(vec3(Linear01Depth(FetchDepth(uv), CAMERA.near, CAMERA.far)), 1.0f);
-    if(SETTING.mode == 7)   finalColor = CascadeColors[cascadeLevel];
-    if(SETTING.mode == 8)   finalColor = vec4(vec3(clusterIndex.y / float(MAX_LIGHTS_PER_CLUSTER)), 1.0f);
-    if(SETTING.mode == 9)   finalColor = vec4(clusterGrid.xy / vec2(LIGHT_CLUSTER_WIDTH, LIGHT_CLUSTER_HEIGHT), 0.0f, 1.0f);
-    if(SETTING.mode == 10)  finalColor = vec4(vec3(clusterGrid.z / float(LIGHT_CLUSTER_DEPTH)), 1.0f);
-    if(SETTING.mode == 11)  finalColor = vec4(indirectLightColor, 1.0f);
-    if(SETTING.mode == 12)  finalColor = vec4(IndirectIrradiance(worldPos, N, V), 1.0f);
-    if(SETTING.mode == 13)  finalColor = vec4(vec3(ao), 1.0f);                    
-    if(SETTING.mode == 14)  finalColor = vec4(gnormal * 0.5f + 0.5f, 1.0f);       
-    if(SETTING.mode == 15)  finalColor = vec4(F0, 1.0f);                           
-    if(SETTING.mode == 16)  finalColor = vec4(vec3(transparent), 1.0f);            
-    if(SETTING.mode == 17)  finalColor = vec4(emission, 1.0f);                     
-    if(SETTING.mode == 18)  finalColor = vec4(directLightColor, 1.0f);            
-    if(SETTING.mode == 19)  finalColor = vec4(probeBRDF.specular * probeRadiance * probeNoL, 1.0f);   
-    if(SETTING.mode == 20)  finalColor = vec4(probeBRDF.diffuse * probeRadiance * probeNoL, 1.0f);   
+    if(SETTING.mode == 5)   finalColor = vec4(vec3(Linear01Depth(FetchDepth(uv), CAMERA.near, CAMERA.far)), 1.0f);
+    if(SETTING.mode == 6)   finalColor = CascadeColors[cascadeLevel];
+    if(SETTING.mode == 7)   finalColor = vec4(vec3(clusterIndex.y / float(MAX_LIGHTS_PER_CLUSTER)), 1.0f);
+    if(SETTING.mode == 8)   finalColor = vec4(clusterGrid.xy / vec2(LIGHT_CLUSTER_WIDTH, LIGHT_CLUSTER_HEIGHT), 0.0f, 1.0f);
+    if(SETTING.mode == 9)   finalColor = vec4(vec3(clusterGrid.z / float(LIGHT_CLUSTER_DEPTH)), 1.0f);
+    if(SETTING.mode == 10)  finalColor = vec4(indirectLightColor, 1.0f);
+    if(SETTING.mode == 11)  finalColor = vec4(IndirectIrradiance(worldPos, N, V), 1.0f);
+    if(SETTING.mode == 12)  finalColor = vec4(vec3(ao), 1.0f);
+    if(SETTING.mode == 13)  finalColor = vec4(gnormal * 0.5f + 0.5f, 1.0f);
+    if(SETTING.mode == 14)  finalColor = vec4(F0, 1.0f);
+    if(SETTING.mode == 15)  finalColor = vec4(vec3(transparent), 1.0f);
+    if(SETTING.mode == 16)  finalColor = vec4(emission, 1.0f);
+    if(SETTING.mode == 17)  finalColor = vec4(directLightColor, 1.0f);
+    if(SETTING.mode == 18)  finalColor = vec4(probeBRDF.specular * probeRadiance * probeNoL, 1.0f);
+    if(SETTING.mode == 19)  finalColor = vec4(probeBRDF.diffuse * probeRadiance * probeNoL, 1.0f);
 
     if(GLOBAL_SETTING.clusterInspectMode != 0) finalColor = vec4(diffuse.xyz, 1.0f);
 

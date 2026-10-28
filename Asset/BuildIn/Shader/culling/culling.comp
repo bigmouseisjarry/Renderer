@@ -1,8 +1,21 @@
 #version 460
 #extension GL_GOOGLE_include_directive : enable
 
-#include "../common/common.glsl"
-#include "common.glsl"
+#include "include/common.glsl"
+
+layout(push_constant) uniform CullingLodSetting {
+
+	uint passType;	// 当前处理的meshpass种类
+	uint passCount;	// pass数量
+
+    float lodErrorRate;
+	float lodErrorOffset;
+	uint disableVirtualMeshCulling;
+	uint disableOcclusionCulling;
+	uint disableFrustrumCulling;
+	uint showBoundingBox;
+	uint enableStatistics;
+} SETTING;
 
 #define THREAD_SIZE_X 64
 #define THREAD_SIZE_Y 1

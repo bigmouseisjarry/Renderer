@@ -1,24 +1,4 @@
 
-struct HitSample 
-{
-	vec3 hitPos;
-	float _padding0;
-	vec3 hitNormal;
-	float _padding1;
-	vec3 outRadiance;
-	float _padding2;
-};
-
-struct GIReservoir 
-{
-	HitSample sampl;
-
-	float pHat;					// 当前命中点的重要性采样权重，也就是targetPdf	（outRadiance的luminance）
-	float sumWeights;			// 已处理的(pHat / proposalPdf)权重和
-	float w;					// 被积函数在当前采样点对应的权重，同时也就是重采样重要性采样的realPdf(SIR PDF)的倒数
-	uint numStreamSamples;		// 已处理的采样总数，M 
-};
-
 bool IsFiniteVec3(vec3 v)
 {
 	return all(lessThan(abs(v), vec3(1e30f)));

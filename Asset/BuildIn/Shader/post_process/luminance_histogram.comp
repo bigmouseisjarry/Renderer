@@ -1,4 +1,5 @@
 #version 460
+#extension GL_GOOGLE_include_directive : enable
 #extension GL_EXT_samplerless_texture_functions : enable
 
 #define EPSILON 0.005
@@ -6,26 +7,7 @@
 
 // https://bruop.github.io/exposure/
 
-layout(set = 0, binding = 0) uniform texture2D IN_COLOR;
-
-struct ExposureSetting
-{             
-    float minLog2Luminance;             //最小亮度，对数
-    float inverseLuminanceRange;        //亮度范围，对数倒数
-    float luminanceRange;               //亮度范围，对数
-    float numPixels;                    //总像素数
-    float timeCoeff;                    //时间加权
-    float _padding[3];
-};
-layout(set = 0, binding = 1) buffer EXPOSURE_DATA
-{
-    ExposureSetting setting;     
-    float luminance;                     // 计算得到的平均亮度
-    float adaptedLuminance;              // 多帧渐进的亮度
-    float _padding[2];   
-    uint histogramBuffer[256];           // 直方图数组 
-    uint readBackHistogramBuffer[256];   // 回读用的数组 
-};
+#include "include/common.glsl"
 
 shared uint HistogramShared[256];
 
@@ -67,13 +49,13 @@ void main()
     HistogramShared[gl_LocalInvocationIndex] = 0;
     barrier();
 
-    uvec2 dim = textureSize(IN_COLOR, 0);
+    uvec2 dim = textureSize(IN_COLOR[0], 0);
 
     // Ignore threads that map to areas beyond the bounds of our HDR image
     if (pixel.x < dim.x && pixel.y < dim.y) 
     {
-        vec3 hdrColor = texelFetch(IN_COLOR, pixel, 0).xyz;
-        uint binIndex = colorToBin(hdrColor, setting.minLog2Luminance, setting.inverseLuminanceRange);
+        vec3 hdrColor = texelFetch(IN_COLOR[0], pixel, 0).xyz;
+        uint binIndex = colorToBin(hdrColor, EXPOSURE_DATA.setting.minLog2Luminance, EXPOSURE_DATA.setting.inverseLuminanceRange);
         // We use an atomic add to ensure we don't write to the same bin in our
         // histogram from two different threads at the same time.
         atomicAdd(HistogramShared[binIndex], 1);
@@ -85,7 +67,7 @@ void main()
 
     // Technically there's no chance that two threads write to the same bin here,
     // but different work groups might! So we still need the atomic add.
-    atomicAdd(histogramBuffer[gl_LocalInvocationIndex], HistogramShared[gl_LocalInvocationIndex]);
+    atomicAdd(EXPOSURE_DATA.histogramBuffer[gl_LocalInvocationIndex], HistogramShared[gl_LocalInvocationIndex]);
 
-    //atomicAdd(histogramBuffer[gl_LocalInvocationIndex], dim.x);
+    //atomicAdd(EXPOSURE_DATA.histogramBuffer[gl_LocalInvocationIndex], dim.x);
 }

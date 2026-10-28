@@ -12,10 +12,8 @@ void VolumetricFogPass::Init()
 
     RHIRootSignatureInfo rootSignatureInfo = {};
     rootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetPerFrameRootSignature()->GetInfo())
-                     .AddEntry({1, 0, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE})   //未计算积分时的体素纹理
-                     .AddEntry({1, 1, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE})   //未计算积分时的历史帧
-                     .AddEntry({1, 2, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE})   //积分体素纹理
-                     .AddEntry({1, 3, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE})   //输出纹理
+                     .AddEntry(EngineContext::RenderResource()->GetBindlessRootSignature()->GetInfo())
+                     .AddEntry(EngineContext::RenderResource()->GetSet2RootSignature()->GetInfo())       // 刀7b-3：set2全局统一RS（98槽）
                      .AddPushConstant({128, SHADER_FREQUENCY_COMPUTE});
     rootSignature = backend->CreateRootSignature(rootSignatureInfo);
 
@@ -46,7 +44,7 @@ void VolumetricFogPass::Build(RDGBuilder& builder)
         !EngineContext::Render()->IsPassEnabled(PATH_TRACING_PASS))
     {
 
-        RDGTextureHandle voxelRaw = builder.CreateTexture("Volumetric Fog Voxel Raw") 
+    RDGTextureHandle voxelRaw = builder.CreateTexture("Volumetric Fog Voxel Raw")
             .Exetent({ VOLUMETRIC_FOG_SIZE_X, VOLUMETRIC_FOG_SIZE_Y, VOLUMETRIC_FOG_SIZE_Z })
             .Format(EngineContext::Render()->GetHdrColorFormat())
             .ArrayLayers(1)
@@ -55,9 +53,10 @@ void VolumetricFogPass::Build(RDGBuilder& builder)
             .AllowReadWrite()
             .Finish();  
 
+        // 稳态=UAV：末位触碰者是Combine的ReadWrite（本pass当前禁用，重启用时此声明已就位）
         RDGTextureHandle voxelRawHistory = builder.CreateTexture("Volumetric Fog Voxel Raw History")
-            .Import(historyColorTex->texture, RESOURCE_STATE_UNDEFINED)
-            .Finish(); 
+            .Import(historyColorTex->texture)
+            .Finish();
 
         RDGTextureHandle voxelIntegral = builder.CreateTexture("Volumetric Fog Voxel Integral") 
             .Exetent({ VOLUMETRIC_FOG_SIZE_X, VOLUMETRIC_FOG_SIZE_Y, VOLUMETRIC_FOG_SIZE_Z })
@@ -72,24 +71,23 @@ void VolumetricFogPass::Build(RDGBuilder& builder)
 
         RDGComputePassHandle pass0 = builder.CreateComputePass(GetName() + " Light Injection")
             .RootSignature(rootSignature)
-            .ReadWrite(1, 0, 0, voxelRaw, VIEW_TYPE_3D)
-            .ReadWrite(1, 1, 0, voxelRawHistory, VIEW_TYPE_3D)
-            .ReadWrite(1, 2, 0, voxelIntegral, VIEW_TYPE_3D)
-            .ReadWrite(1, 3, 0, outColor)
-            .Read(builder.GetTexture("Directional Depth [0]"))
-            .Read(builder.GetTexture("Directional Depth [1]"))
-            .Read(builder.GetTexture("Directional Depth [2]"))
-            .Read(builder.GetTexture("Directional Depth [3]"))
-            .Read(builder.GetTexture("Point Shadow Filtered Color [0]"))
-            .Read(builder.GetTexture("Point Shadow Filtered Color [1]"))
-            .Read(builder.GetTexture("Light Cluster Grid"))
-            .Read(builder.GetBuffer("Light Cluster Index"))
+            .Shaders({computeShader[0].shader})          // 刀7b-3：严格边校验
+            .ReadWrite(2, SET2_BINDING_LIGHT_CLUSTER_GRID, 0, builder.GetTexture("Light Cluster Grid"), VIEW_TYPE_3D)
+            .ReadWrite(2, SET2_BINDING_LIGHT_CLUSTER_INDEX, 0, builder.GetBuffer("Light Cluster Index"))
+            .ReadWrite(2, SET2_BINDING_FOG_VOXEL_CURRENT, 0, voxelRaw, VIEW_TYPE_3D)
+            .ReadIfValid(2, SET2_BINDING_DIRECTIONAL_SHADOW, 0, "Directional Depth [0]", VIEW_TYPE_2D, { TEXTURE_ASPECT_DEPTH, 0, 1, 0, 1})
+            .ReadIfValid(2, SET2_BINDING_DIRECTIONAL_SHADOW, 1, "Directional Depth [1]", VIEW_TYPE_2D, { TEXTURE_ASPECT_DEPTH, 0, 1, 0, 1 })
+            .ReadIfValid(2, SET2_BINDING_DIRECTIONAL_SHADOW, 2, "Directional Depth [2]", VIEW_TYPE_2D, { TEXTURE_ASPECT_DEPTH, 0, 1, 0, 1 })
+            .ReadIfValid(2, SET2_BINDING_DIRECTIONAL_SHADOW, 3, "Directional Depth [3]", VIEW_TYPE_2D, { TEXTURE_ASPECT_DEPTH, 0, 1, 0, 1 })
+            .ReadIfValid(2, SET2_BINDING_POINT_SHADOW, 0, "Point Shadow Filtered Color [0]", VIEW_TYPE_CUBE, { TEXTURE_ASPECT_COLOR, 0, 1, 0, 6 })
+            .ReadIfValid(2, SET2_BINDING_POINT_SHADOW, 1, "Point Shadow Filtered Color [1]", VIEW_TYPE_CUBE, { TEXTURE_ASPECT_COLOR, 0, 1, 0, 6 })
             .Execute([&](RDGPassContext context) {       
 
                 RHICommandListRef command = context.command; 
                 command->SetComputePipeline(computePipeline[0]);
                 command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);
-                command->BindDescriptorSet(context.descriptors[1], 1);
+                command->BindDescriptorSet(EngineContext::RenderResource()->GetPoolDescriptorSet(), 1);
+                command->BindDescriptorSet(context.descriptors[2], 2);
                 command->PushConstants(&setting, sizeof(VolumetricFogSetting), SHADER_FREQUENCY_COMPUTE);
                 command->Dispatch(  groupCountX, 
                                     groupCountY, 
@@ -99,16 +97,17 @@ void VolumetricFogPass::Build(RDGBuilder& builder)
 
         RDGComputePassHandle pass1 = builder.CreateComputePass(GetName() + " Integral")
             .RootSignature(rootSignature)
-            .ReadWrite(1, 0, 0, voxelRaw, VIEW_TYPE_3D)
-            .ReadWrite(1, 1, 0, voxelRawHistory, VIEW_TYPE_3D)
-            .ReadWrite(1, 2, 0, voxelIntegral, VIEW_TYPE_3D)
-            .ReadWrite(1, 3, 0, outColor)
+            .Shaders({computeShader[1].shader})          // 刀7b-3：严格边校验
+            .ReadWrite(2, SET2_BINDING_FOG_VOXEL_CURRENT, 0, voxelRaw, VIEW_TYPE_3D)
+            .ReadWrite(2, SET2_BINDING_FOG_VOXEL_HISTORY, 0, voxelRawHistory, VIEW_TYPE_3D)
+            .ReadWrite(2, SET2_BINDING_FOG_VOXEL_INTEGRATED, 0, voxelIntegral, VIEW_TYPE_3D)
             .Execute([&](RDGPassContext context) {       
 
                 RHICommandListRef command = context.command; 
                 command->SetComputePipeline(computePipeline[1]);
                 command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);
-                command->BindDescriptorSet(context.descriptors[1], 1);
+                command->BindDescriptorSet(EngineContext::RenderResource()->GetPoolDescriptorSet(), 1);
+                command->BindDescriptorSet(context.descriptors[2], 2);
                 command->PushConstants(&setting, sizeof(VolumetricFogSetting), SHADER_FREQUENCY_COMPUTE);
                 command->Dispatch(  groupCountX, 
                                     groupCountY, 
@@ -118,16 +117,17 @@ void VolumetricFogPass::Build(RDGBuilder& builder)
 
         RDGComputePassHandle pass2 = builder.CreateComputePass(GetName() + " Combine")
             .RootSignature(rootSignature)
-            .ReadWrite(1, 0, 0, voxelRaw, VIEW_TYPE_3D)
-            .ReadWrite(1, 1, 0, voxelRawHistory, VIEW_TYPE_3D)
-            .ReadWrite(1, 2, 0, voxelIntegral, VIEW_TYPE_3D)
-            .ReadWrite(1, 3, 0, outColor)
+            .Shaders({computeShader[2].shader})          // 刀7b-3：严格边校验
+            .Read(2, SET2_BINDING_HISTORY_DEPTH, 0, builder.GetTexture("Depth"))
+            .ReadWrite(2, SET2_BINDING_FOG_VOXEL_INTEGRATED, 0, voxelIntegral, VIEW_TYPE_3D)
+            .ReadWrite(2, SET2_BINDING_FOG_VOXEL_OUT, 0, outColor)
             .Execute([&](RDGPassContext context) {       
 
                 RHICommandListRef command = context.command; 
                 command->SetComputePipeline(computePipeline[2]);
                 command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);
-                command->BindDescriptorSet(context.descriptors[1], 1);
+                command->BindDescriptorSet(EngineContext::RenderResource()->GetPoolDescriptorSet(), 1);
+                command->BindDescriptorSet(context.descriptors[2], 2);
                 command->PushConstants(&setting, sizeof(VolumetricFogSetting), SHADER_FREQUENCY_COMPUTE);
                 command->Dispatch(  Math::CeilDivide(EngineContext::Render()->GetWindowsExtent().width, 16), 
                                     Math::CeilDivide(EngineContext::Render()->GetWindowsExtent().height, 16), 

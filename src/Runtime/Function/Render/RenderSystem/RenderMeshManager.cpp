@@ -45,7 +45,6 @@ void RenderMeshManager::PrepareMeshPass()
     if(skybox) skybox->CollectDrawBatch(batches);
 
     // 交给各个meshpass的processor处理
-    MeshPassProcessor::ResetGlobalClusterOffset();
     for(auto& pass : EngineContext::Render()->GetMeshPasses())
     {
         if(!pass) continue;

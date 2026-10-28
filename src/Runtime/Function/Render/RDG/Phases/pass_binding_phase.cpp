@@ -4,14 +4,16 @@
 #include "Function/Render/RDG/RDGPool.h"
 
 #include <algorithm>
+#include <cassert>
+#include <utility>
 
 PassBindingPhase::PassBindingPhase(
     const PassInfoAnalysis& pass_info_analysis,
-    const CrossQueueSyncAnalysis& sync_analysis,
+    const QueueSchedule& queue_schedule,
     const PassBindingConfig& config)
     : config_(config)
     , pass_info_analysis_(pass_info_analysis)
-    , sync_analysis_(sync_analysis)
+    , queue_schedule_(queue_schedule)
 {
 }
 
@@ -126,7 +128,6 @@ void PassBindingPhase::allocate_resources(RDGDependencyGraphRef graph)
         if (!lifecycle_.last_use.contains(textureNode))
         {
             // 孤儿节点：声明了但没有任何pass连边使用。不分配（对齐旧路径的惰性Resolve）——
-            // 若分配了将没有任何pass触发last-use释放，纹理池每帧净漏一张直到超限
             if (config_.enable_debug_output)
                 ENGINE_LOG_INFO("[PassBinding] orphan texture '{}' skipped (no using pass)", textureNode->Name().c_str());
             return;
@@ -136,9 +137,7 @@ void PassBindingPhase::allocate_resources(RDGDependencyGraphRef graph)
         textureNode->texture = pooledTexture.texture;
         textureNode->initState = pooledTexture.state;
         textureNode->initFamily = pooledTexture.queueFamily;    // 池化跨帧归属族（阶段7帧首acquire判定）
-        // 同步解析后的info：节点声明里 mipLevels=0 表示自动推导，池内创建时被解析为实际值
-        // （如 extent.MipSize()），必须回写节点，否则下游（如屏障生成的subresource跟踪器）会维度错配
-        textureNode->info = pooledTexture.texture->GetInfo();
+        assert(textureNode->info == pooledTexture.texture->GetInfo());
     });
 
     graph->ForEachBufferNode([&](RDGBufferNodeRef bufferNode) {
@@ -153,7 +152,8 @@ void PassBindingPhase::allocate_resources(RDGDependencyGraphRef graph)
         auto pooledBuffer = RDGBufferPool::Get(EngineContext::ThreadPool()->ThreadFrameIndex())->Allocate(bufferNode->info);
         bufferNode->buffer = pooledBuffer.buffer;
         bufferNode->initState = pooledBuffer.state;
-        // 同理：池可能返回size更大的buffer，同步为物理资源实际的info
+        // 池Key仅{usage,type,flag}，size够大即复用，物理size可能大于声明——
+        // 与纹理路径（精确匹配仅断言）不同，此处回写是承重的，勿删
         bufferNode->info = pooledBuffer.buffer->GetInfo();
     });
 }
@@ -162,9 +162,9 @@ void PassBindingPhase::allocate_resources(RDGDependencyGraphRef graph)
 
 void PassBindingPhase::analyze_resource_lifetime(RDGDependencyGraphRef graph)
 {
-    // 以 Phase 2 的逻辑拓扑序作为全局执行序（依赖保序，跨队列调度/重排都不会违反它），
-    // 每个资源的 last_use = 其所有使用pass中拓扑位置最大者。
-    const std::vector<RDGPassNodeRef>& topo_order = sync_analysis_.get_dependency_analysis().get_topological_order();
+    // 以 HEFT 全局调度序作为全局执行序（调度序=执行序；与 Phase 3.5 回写进依赖分析的
+    // 权威拓扑同源），每个资源的 last_use = 其所有使用pass中调度位置最大者。
+    const std::vector<RDGPassNodeRef>& topo_order = queue_schedule_.get_schedule_result().schedule_order;
 
     std::unordered_map<RDGPassNodeRef, uint32_t> topo_position;
     topo_position.reserve(topo_order.size());
@@ -180,7 +180,7 @@ void PassBindingPhase::analyze_resource_lifetime(RDGDependencyGraphRef graph)
             auto found = topo_position.find(pass);
             if (found == topo_position.end()) return;   // 不在拓扑序中，理论上不会发生
 
-            // 第一次记录last_use或者这个pass的拓扑序位置大于前面记录的最大拓扑序位置
+            // 第一次记录last_use或者这个pass的执行序位置大于前面记录的最大执行序位置
             if (last_use.pass == nullptr || found->second > best_position)
             {
                 best_position = found->second;
@@ -229,6 +229,7 @@ void PassBindingPhase::prepare_descriptor_sets(RDGDependencyGraphRef graph)
     std::vector<RDGPassNodeRef>& passes = get_passes(graph);
     pass_bind_infos_.reserve(passes.size());
 
+    // 遍历每一个pass
     for (RDGPassNodeRef pass : passes)
     {
         if (!pass || pass->isCulled) continue;
@@ -256,19 +257,26 @@ void PassBindingPhase::prepare_descriptor_sets(RDGDependencyGraphRef graph)
             if (pass->rootSignature == nullptr)
                 return nullptr;
 
+            // set2=足迹键(used entities分桶,S4定案);set0/1=旧键(★set1巨型bindless必须单桶,见RDGPool.h)
+            // 10-27晚消融已毕:两种键均与Xid概率崩无关(案件转环境假说)
             RHIDescriptorSetRef descriptor = RDGDescriptorSetPool::Get(EngineContext::ThreadPool()->ThreadFrameIndex())
-                                  ->Allocate(pass->rootSignature, set).descriptor;
+                ->Allocate(set == 2 ? RDGDescriptorSetPool::Key::MakeKey(pass->set2Entries, set)
+                                    : RDGDescriptorSetPool::Key::MakeLegacyKey(pass->rootSignature->GetInfo(), set),
+                           pass->rootSignature).descriptor;
             bind_info.descriptor_sets[set] = descriptor;
             bind_info.pooled_descriptor_sets.push_back({descriptor, set});
             return descriptor;
         };
 
+        // ——悬空槽自查器（2026-10-28悬空槽案产物，常驻哨兵勿删）——
+        // set2声明槽 vs 实际写入元素对账（数组元素粒度）：Finish补齐门只查"条目有边"（一条即
+        // done），元素粒度是VVL/校验器/GPU-AV全盲区（本案两现行犯=culling HiZ与ReSTIR深度的
+        // 索引错位，噪声+设备死）。新pass/新shader回归时此处当场报缺失。纯日志零行为改动
+        std::unordered_map<uint32_t, std::unordered_set<uint32_t>> set2Written;
+
         graph->ForEachTexture(pass, [&](RDGTextureEdgeRef edge, RDGTextureNodeRef texture) {
 
             if (edge->IsOutput()) return;    // 作为output声明时不需要view
-
-            // 虚拟依赖边（Dependency()声明，set==NO_DESCRIPTOR_SET且非附件）：只表达排序/屏障，不绑定描述符也非渲染目标——
-            // 不建view。曾在下方无条件Allocate，给多层纹理（点光阴影cube的[0]/[1]被三处依赖）建出"2D+全6层"非法view（VUID-04973）
             if (edge->set == NO_DESCRIPTOR_SET && !edge->asColor && !edge->asDepthStencil) return;
 
             RHITextureViewRef view = RDGTextureViewPool::Get(EngineContext::ThreadPool()->ThreadFrameIndex())->Allocate({
@@ -278,17 +286,10 @@ void PassBindingPhase::prepare_descriptor_sets(RDGDependencyGraphRef graph)
             .subresource = edge->subresource }).textureView;
             bind_info.pooled_views.push_back(view);
 
-            // rendering target：view与RHIRenderingInfo在主线程预构建（原执行期PrepareRenderingTarget），
+            // rendering target：view与RHIRenderingInfo在主线程预构建，
             // 并行录制期worker不碰无锁的视图池；view随pooled_views由释放sweep统一归还
             if (edge->asColor || edge->asDepthStencil)
             {
-
-                //RHITextureViewRef view = RDGTextureViewPool::Get(EngineContext::ThreadPool()->ThreadFrameIndex())->Allocate({
-                //.texture = texture->texture,
-                //.format = texture->info.format,
-                //.viewType = edge->viewType,
-                //.subresource = edge->subresource }).textureView;
-                //bind_info.pooled_views.push_back(view);
 
                 RHIRenderingInfo& renderingInfo = bind_info.rendering_info;
                 renderingInfo.multiviewCount = static_cast<RDGRenderPassNodeRef>(pass)->multiviewCount;
@@ -320,8 +321,6 @@ void PassBindingPhase::prepare_descriptor_sets(RDGDependencyGraphRef graph)
                 return;
             }
 
-            if (edge->set == NO_DESCRIPTOR_SET) return;    // 虚拟依赖边：只表达排序/屏障，不绑定描述符
-
             RHIDescriptorSetRef descriptor = ensure_descriptor_set(edge->set);
 
             if((edge->asShaderRead || edge->asShaderReadWrite) && descriptor != nullptr)
@@ -334,6 +333,7 @@ void PassBindingPhase::prepare_descriptor_sets(RDGDependencyGraphRef graph)
                     .state = edge->state      // 声明布局与屏障同源（边的访问状态）：消除描述符/屏障双真值分叉
                 };
                 descriptor->UpdateDescriptor(updateInfo);
+                if (edge->set == 2) set2Written[edge->binding].insert(edge->index);
             }
         });
 
@@ -355,24 +355,37 @@ void PassBindingPhase::prepare_descriptor_sets(RDGDependencyGraphRef graph)
                 };
 
                 descriptor->UpdateDescriptor(updateInfo);
+                if (edge->set == 2) set2Written[edge->binding].insert(edge->index);
             }
         });
 
-        for(auto& sampler : pass->samplers)
+        // 悬空槽自查器·判定段：声明count(size)内每个未写元素报一次（进程内去重，双帧槽编译并发下
+        // 最坏重复一条日志，无害）。healthy常见路径（全写/单元素）在首判早退零开销
+        if (!pass->set2Entries.empty())
         {
-            RHIDescriptorSetRef descriptor = ensure_descriptor_set(sampler.set);
-
-            if(descriptor != nullptr)
+            static std::unordered_set<std::string> reported;
+            static const std::unordered_set<uint32_t> noIndices;
+            for (const ShaderResourceEntry& e : pass->set2Entries)
             {
-                RHIDescriptorUpdateInfo updateInfo = {
-                    .binding = sampler.binding,
-                    .index = sampler.index,
-                    .resourceType = RESOURCE_TYPE_SAMPLER,
-                    .sampler = sampler.sampler
-                };
-
-                descriptor->UpdateDescriptor(updateInfo);
+                const auto it = set2Written.find(e.binding);
+                const std::unordered_set<uint32_t>& indices = it != set2Written.end() ? it->second : noIndices;
+                if (indices.size() >= e.size) continue;
+                for (uint32_t i = 0; i < e.size; i++)
+                    if (!indices.count(i))
+                    {
+                        std::string key = pass->Name() + ":" + std::to_string(e.binding) + ":" + std::to_string(i);
+                        if (reported.insert(std::move(key)).second)
+                            ENGINE_LOG_WARN("[DanglingSlot] pass[{}] set2 b{}[{}]: 声明count={} 未写入（池化陈旧/悬空元素）",
+                                pass->Name().c_str(), e.binding, i, e.size);
+                    }
             }
         }
+        // 静态采样器声明的set无条件领用（声明即绑定）：边的存在不再是领用条件——
+        // NRD等constantBufferDataSize==0的dispatch不声明任何set1边，但shader仍访问set1采样器，
+        // RS声明表本身就是"该set被使用"的证据（原pass->samplers旁路的隐式保证，勿再依赖边触发）。
+        // 采样器值由CreateDescriptorSet/池Allocate播种写入，此处只保证set被领用
+        if (pass->rootSignature != nullptr)
+            for (const RHIStaticSampler& staticSampler : pass->rootSignature->GetInfo().GetStaticSamplers())
+                ensure_descriptor_set(staticSampler.set);
     }
 }

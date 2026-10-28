@@ -10,9 +10,8 @@ void FXAAPass::Init()
     computeShader = Shader(EngineContext::File()->ShaderPath() + "post_process/fxaa.comp.spv", SHADER_FREQUENCY_COMPUTE);
 
     RHIRootSignatureInfo rootSignatureInfo = {};
-    rootSignatureInfo.AddEntry({0, 0, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE})
-                     .AddEntry({0, 1, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE})
-                     .AddEntry(EngineContext::RenderResource()->GetSamplerRootSignature()->GetInfo())
+    rootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetBindlessRootSignature()->GetInfo())   
+                     .AddEntry(EngineContext::RenderResource()->GetSet2RootSignature()->GetInfo())       
                      .AddPushConstant({128, SHADER_FREQUENCY_COMPUTE});
     rootSignature = backend->CreateRootSignature(rootSignatureInfo);
 
@@ -43,14 +42,15 @@ void FXAAPass::Build(RDGBuilder& builder)
     RDGComputePassHandle pass = builder.CreateComputePass(GetName())
         .AddFlag(RDGPassFlags::ForceGraphicsQueue)
         .RootSignature(rootSignature)
-        .Read(0, 0, 0, inColor)
-        .ReadWrite(0, 1, 0, outColor)
+        .Shaders({computeShader.shader})             
+        .Read(2, SET2_BINDING_IN_COLOR, 0, inColor)
+        .ReadWrite(2, SET2_BINDING_OUT_COLOR, 0, outColor)
         .Execute([&](RDGPassContext context) {       
 
             RHICommandListRef command = context.command; 
             command->SetComputePipeline(computePipeline);
-            command->BindDescriptorSet(context.descriptors[0], 0);
-            command->BindDescriptorSet(EngineContext::RenderResource()->GetSamplerDescriptorSet(), 1);
+            command->BindDescriptorSet(context.descriptors[2], 2);
+            command->BindDescriptorSet(EngineContext::RenderResource()->GetPoolDescriptorSet(), 1);
             command->PushConstants(&enable, sizeof(uint32_t), SHADER_FREQUENCY_COMPUTE);
             command->Dispatch(  Math::CeilDivide(EngineContext::Render()->GetWindowsExtent().width, 16), 
                                 Math::CeilDivide(EngineContext::Render()->GetWindowsExtent().height, 16), 

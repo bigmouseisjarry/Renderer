@@ -55,7 +55,6 @@ private:
     Shader computeShader[3];
 
     RHIRootSignatureRef rootSignature;
-    RHIDescriptorSetRef descriptorSet[2];
     RHIComputePipelineRef computePipeline[3];
 
     uint32_t currentIndex = 0;

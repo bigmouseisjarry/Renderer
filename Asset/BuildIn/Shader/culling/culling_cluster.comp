@@ -1,8 +1,21 @@
 #version 460
 #extension GL_GOOGLE_include_directive : enable
 
-#include "../common/common.glsl"
-#include "common.glsl"
+#include "include/common.glsl"
+
+layout(push_constant) uniform CullingLodSetting {
+
+	uint passType;	// 当前处理的meshpass种类
+	uint passCount;	// pass数量
+
+    float lodErrorRate;
+	float lodErrorOffset;
+	uint disableVirtualMeshCulling;
+	uint disableOcclusionCulling;
+	uint disableFrustrumCulling;
+	uint showBoundingBox;
+	uint enableStatistics;
+} SETTING;
 
 #define THREAD_SIZE_X 64
 #define THREAD_SIZE_Y 1
@@ -85,12 +98,12 @@ void main()
 				// 一个管线状态的cluster共用一个command
 				uint offset = atomicAdd(CLUSTER_DRAW_COMMANDS[passIndex].command[clusterInfo.commandID].instanceCount, 1);	// 更新command和缓冲
 
-				MeshClusterDrawInfo drawInfo; 
+				MeshClusterDrawInfo drawInfo;
 				drawInfo.objectID = clusterInfo.objectID;
-				drawInfo.clusterID = clusterInfo.clusterID;		
+				drawInfo.clusterID = clusterInfo.clusterID;
 
-				// 在全局缓冲区的firstInstance已经按照最大cluster数量分配好了
-				MESH_CLUSTER_DRAW_INFOS.slot[
+				// firstInstance为该子遍自己那块buffer内的本地偏移（已按该遍最大cluster数预分配）
+				MESH_CLUSTER_DRAW_INFOS[passIndex].slot[
 					CLUSTER_DRAW_COMMANDS[passIndex].command[
 						clusterInfo.commandID].firstInstance + offset] = drawInfo;
 

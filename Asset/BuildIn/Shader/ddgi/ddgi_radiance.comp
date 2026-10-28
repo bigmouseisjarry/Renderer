@@ -2,8 +2,7 @@
 #extension GL_ARB_separate_shader_objects : enable
 #extension GL_GOOGLE_include_directive : enable
 
-#include "../common/common.glsl"
-#include "ddgi_layout.glsl"
+#include "include/common.glsl"
 
 layout(push_constant) uniform DDGIComputeSetting {
 	int volumeLightID;
@@ -16,8 +15,9 @@ layout(push_constant) uniform DDGIComputeSetting {
 layout (local_size_x = THREAD_SIZE_X, 
         local_size_y = THREAD_SIZE_Y, 
         local_size_z = THREAD_SIZE_Z) in;
-void main() 
+void main()
 {
+    // 刀6f已毕（短路写零→绿10000帧）：毒在U0计算内容。现6g-A三件依赖二分
     // 第一轮 计算辐射率
     VolumeLight volumeLight = LIGHTS.volumeLights[SETTING.volumeLightID];
     
@@ -55,9 +55,20 @@ void main()
 
         // 直接光照计算，仅漫反射 //////////////////////////////////
 
+        // 刀6h（2026-10-20终修复）：DDGI点光改全表遍历，不走屏幕空间cluster。定案依据：
+        // ①6g-D短路cluster查询→10000帧零噪零崩（6f/6g-A梯度夹逼）；②git考古=同一计算在
+        // 7de3be2（cluster住set0常驻集，视图结构性有效，视锥外越界imageLoad返0=count0天然无害）
+        // 长跑无事；③刀5把cluster搬进set2池化集后视图靠逐帧轮转（GPU-AV实锤"never been updated"
+        // 悬空），DDGI是全引擎唯一喂世界空间坐标进此链的调用者→UB源。cluster剔除为屏幕空间
+        // 设计，世界空间查询属错配；光源数小全表遍历代价可忽略（lightID从1起，0为哨兵无效ID）
+        vec3 pointDiffuse = vec3(0.0f);
+        for(uint lightID = 1; lightID <= LIGHTS.lightSetting.pointLightCnt; lightID++)
+            pointDiffuse += PointDiffuseLighting(albedo, roughness, metallic, worldPos, N, V, lightID) *
+                            PointShadow(lightID, worldPos);
+
         vec3 directLightColor =
             DirectionalDiffuseLighting(albedo, roughness, metallic, worldPos, N, V) * DirectionalShadow(worldPos, pixel,2.0) +
-            PointDiffuseLighting(albedo, roughness, metallic, worldPos, N, V);
+            pointDiffuse;
 
         // 间接光照计算 //////////////////////////////////
 

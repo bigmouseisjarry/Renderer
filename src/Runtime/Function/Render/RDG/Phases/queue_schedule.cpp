@@ -2,13 +2,13 @@
 #include "pass_dependency_analysis.h"
 
 #include "Function/Global/EngineContext.h"
-#include "lemon/list_graph.h"
 
+#include <cassert>
 #include <cfloat>
 #include <string>
 #include <unordered_map>
 
-QueueSchedule::QueueSchedule(const PassDependencyAnalysis& dependency_analysis,
+QueueSchedule::QueueSchedule(PassDependencyAnalysis& dependency_analysis,
     const PassInfoAnalysis& pass_info_analysis,
     const QueueScheduleConfig& cfg,
     RHIRenderQueryRef timingQuery)
@@ -27,23 +27,45 @@ void QueueSchedule::reset_for_frame()
     schedule_result.pass_queue_assignments.clear();
     schedule_result.schedule_order.clear();
     ownership_edges_.clear();
-    // 注：schedule_result.all_queues 是指向成员 all_queues 的 span，本帧由
-    // assign_passes_to_queues 重新赋值，reset 后悬空属预期（下游都在 Phase 3 完成后读取）
 }
 
 void QueueSchedule::on_execute(RDGDependencyGraphRef graph, PerFrameCommonResourceRef executor) 
 {
     ENGINE_TIME_SCOPE(QueueSchedule::on_execute);
-    // 查询队列
+    // 查询队列能力
     query_queue_capabilities(graph);
 
     // 分配 Pass
     assign_passes_to_queues(graph);
 
+    // 原Phase 3.5（HEFT协调步，自RDGCompiler并入）：所有权链序边回写Phase2 + 按调度序
+    // 重建拓扑——回写边是QFO所有权链的执行序载体与SSIS同步点来源；拓扑序以调度序为唯一
+    // 权威（下游生命期/tracker假设"拓扑序=执行序"）。判空仅防御空图/零队列早退（常态非空）
+    if (!schedule_result.schedule_order.empty())
+    {
+        dependency_analysis.add_scheduling_order_edges(ownership_edges_);
+        dependency_analysis.apply_schedule_order(schedule_result.schedule_order);
+    }
+
     // 可选：输出调试信息
     if (config.enable_debug_output) {
         dump_timeline_result("Timeline Schedule", schedule_result);
     }
+}
+
+uint32_t QueueSchedule::get_pass_queue_index(RDGPassNodeRef pass) const
+{
+    // 调度宇宙含culled伪占位——全量pass必有分配，未命中=真bug。
+    // assert+0兜底（原转发实现是end迭代器解引用UB，收编时一并修正）
+    const auto found = schedule_result.pass_queue_assignments.find(pass);
+    assert(found != schedule_result.pass_queue_assignments.end());
+    return found != schedule_result.pass_queue_assignments.end() ? found->second : 0;
+}
+
+uint32_t QueueSchedule::get_queue_family_index(uint32_t queue_index) const
+{
+    if (queue_index >= all_queues.size()) return RHI_QUEUE_FAMILY_IGNORED;
+    return all_queues[queue_index].family_index;
 }
 
 std::vector<RHIQueueRef> QueueSchedule::QueryConfiguredQueues(const QueueScheduleConfig& config)
@@ -71,7 +93,7 @@ std::vector<RHIQueueRef> QueueSchedule::QueryConfiguredQueues(const QueueSchedul
 
 void QueueSchedule::query_queue_capabilities(RDGDependencyGraphRef graph)
 {
-    // 清空队列信息（简化为单一数组），队列集合由 QueryConfiguredQueues 统一决定
+    // 清空队列信息，队列集合由 QueryConfiguredQueues 统一决定
     all_queues.clear();
     const std::vector<RHIQueueRef> configured = QueryConfiguredQueues(config);
 
@@ -112,49 +134,15 @@ void QueueSchedule::query_queue_capabilities(RDGDependencyGraphRef graph)
 }
 
 // 给定一个 Pass，决定它希望在哪种类型的队列上执行。
-ERenderGraphQueueType QueueSchedule::classify_pass(RDGPassNodeRef pass)
-{
-    // 1. Present Pass必须在Graphics队列
-    if (pass->NodeType() == RDGPassNodeType::RDG_PASS_NODE_TYPE_PRESENT) {
-        return ERenderGraphQueueType::Graphics;
-    }
-
-    // 2. Render Pass必须在Graphics队列
-    if (pass->NodeType() == RDGPassNodeType::RDG_PASS_NODE_TYPE_RENDER) {
-        return ERenderGraphQueueType::Graphics;
-    }
-
-    // 3. Copy Pass优先Copy队列（如果标记为可独立执行）
-    if (pass->NodeType() == RDGPassNodeType::RDG_PASS_NODE_TYPE_COPY && config.enable_copy_queues) {
-        auto* copy_pass = static_cast<RDGCopyPassNodeRef>(pass);
-        if (!copy_pass->IsGenerateMip()) {        // 非 mipmap 拷贝才能去 Copy 队列
-            return ERenderGraphQueueType::Copy;
-        }
-    }
-
-    // 4. Compute Pass仅基于手动标记
-    if (pass->NodeType() == RDGPassNodeType::RDG_PASS_NODE_TYPE_COMPUTE && config.enable_async_compute_queues)
-    {
-        if (!pass->has_flags(RDGPassFlags::ForceGraphicsQueue)) {
-            return ERenderGraphQueueType::AsyncCompute;   // 现行为：全部compute pass上async队列
-        }
-    }
-
-    // 默认分配到Graphics队列
-    return ERenderGraphQueueType::Graphics;
-}
-
 void QueueSchedule::assign_passes_to_queues(RDGDependencyGraphRef graph)
 {
     // 拷贝队列信息到结果
     schedule_result.all_queues = all_queues;
     // 每个队列一个 pass 列表
     schedule_result.queue_schedules.resize(all_queues.size());
+ 
+    schedule_with_heft(graph);
 
-    if (config.use_heft)
-        schedule_with_heft(graph);
-    else
-        assign_passes_using_topology();
 }
 
 // HEFT调度 /////////////////////////////////////////////////////////////////////////
@@ -174,36 +162,21 @@ void QueueSchedule::schedule_with_heft(RDGDependencyGraphRef graph)
     const uint32_t queueCount = static_cast<uint32_t>(all_queues.size());
     if (queueCount == 0 || passes.empty()) return;
 
-    // ---- 调度图（lemon）：节点=pass，边=pass级依赖（Phase2静态边：RAW/WAW/WAR）----
-    lemon::ListDigraph dag;
-    lemon::ListDigraph::NodeMap<RDGPassNodeRef> passOf(dag, nullptr);
-    std::unordered_map<RDGPassNodeRef, lemon::ListDigraph::Node> nodeOf;
-    nodeOf.reserve(passes.size() * 2);
+    // ---- 调度数据：后继表（原lemon图遗迹已删——dag/passOf建成后零消费，算法全程手搓）----
+    // successors=Phase2反向依赖表（dependent_by_passes）逐pass拷贝：ranku DP与就绪集解锁用。
+    // 调度宇宙=本帧全量pass（含culled伪占位——isCulled对QueueSchedule不可见，Step A过滤；
+    // Phase2依赖边只引用本帧pass，入度直接取dependent_passes.size()无须成员过滤）
+    std::unordered_map<RDGPassNodeRef, std::vector<RDGPassNodeRef>> successors; // pass到后继pass
     for (RDGPassNodeRef pass : passes)
-    {
-        const lemon::ListDigraph::Node n = dag.addNode();
-        passOf[n] = pass;
-        nodeOf.emplace(pass, n);
-    }
-    std::unordered_map<RDGPassNodeRef, std::vector<RDGPassNodeRef>> successors;
-    for (RDGPassNodeRef pass : passes)
-    {
-        const PassDependencies* deps = dependency_analysis.get_pass_dependencies(pass);
-        if (!deps) continue;
-        for (RDGPassNodeRef pred : deps->dependent_passes)
-        {
-            auto found = nodeOf.find(pred);
-            if (found == nodeOf.end()) continue;      // 前驱不在本帧pass集（防御）
-            dag.addArc(found->second, nodeOf[pass]);
-            successors[pred].push_back(pass);
-        }
-    }
+        successors[pass] = dependency_analysis.get_dependent_by_passes(pass);
 
     // ---- 权重（快照化的历史耗时）----
-    // 快照法保证帧间决策稳定：EMA逐帧波动→EFT决策帧间翻转→池化(created)纹理跨帧复用同
-    // 物理内存且细链只回看一帧，跨帧跨队列WAR靠"分配帧间稳定"隐式兜底，翻转即触发竞态
-    // （画面闪烁，帧内视角裁判均不可见）。同图+同权重⇒ranku序/EFT/tie-break全确定性⇒同调度。
-    // 快照每300帧刷新一次（刷新帧存在一次性迁移窗口，1/300概率vs每帧闪）
+    // 快照法保证帧间决策确定——工程品质而非正确性必需：跨帧正确性已由结构保证（created=分槽
+    // 池只在N↔N+2复用+Tick帧栅栏挡住+帧末归巢回graphics族；imported=跨帧注册表细链wait上帧
+    // per-queue末触点+归巢点prologue承接），队列分配翻转不再有正确性后果。2026-09-12定案
+    // "分配无关，罪在隐形依赖边"，旧的"分配稳定性兜底跨帧WAR"叙事已推翻。
+    // 同图+同权重⇒ranku序/EFT/tie-break全确定性⇒同调度：可复现调试、QFO链/SSIS点不逐帧抖。
+    // 快照每300帧刷新一次（刷新帧存在一次性重排迁移开销）
     static std::unordered_map<std::string, double> s_weightSnapshot;
     static uint32_t s_snapshotAge = 0;
     if (s_snapshotAge == 0)
@@ -211,9 +184,7 @@ void QueueSchedule::schedule_with_heft(RDGDependencyGraphRef graph)
         for (RDGPassNodeRef pass : passes)
         {
             const std::string name(pass->Name());
-            const double live = timingQuery
-                ? timingQuery->GetPassDurationMs(name, config.heft_fallback_duration_ms)
-                : config.heft_fallback_duration_ms;
+            const double live = timingQuery ? timingQuery->GetPassDurationMs(name, config.heft_fallback_duration_ms) : config.heft_fallback_duration_ms;
             s_weightSnapshot[name] = live;
         }
     }
@@ -227,7 +198,8 @@ void QueueSchedule::schedule_with_heft(RDGDependencyGraphRef graph)
     }
 
     // ---- ranku（向上权重，逆拓扑DP）：关键链前驱优先调度 ----
-    const auto& topoOrder = dependency_analysis.get_logical_topology_result().logical_topological_order;
+    // 这个 pass 到图终点的最长链有多长
+    const std::vector<RDGPassNodeRef>& topoOrder = dependency_analysis.get_logical_topology_result().logical_topological_order;
     std::unordered_map<RDGPassNodeRef, double> ranku;
     for (size_t i = topoOrder.size(); i-- > 0;)
     {
@@ -245,9 +217,9 @@ void QueueSchedule::schedule_with_heft(RDGDependencyGraphRef graph)
     // ---- 调度态 ----
     std::vector<double> queueReady(queueCount, 0.0);                  // 各队列就绪时间（append式，第一版不回填空隙）
     std::unordered_map<RDGPassNodeRef, double> aft;                   // 各pass完成时间
-    std::unordered_map<RDGPassNodeRef, uint32_t> assigned;
-    std::unordered_map<RDGPassNodeRef, uint32_t> remainingPreds;
-    std::vector<RDGPassNodeRef> ready;
+    std::unordered_map<RDGPassNodeRef, uint32_t> assigned;            // 分配好pass的集合，pass到队列
+    std::unordered_map<RDGPassNodeRef, uint32_t> remainingPreds;      // pass的入度数
+    std::vector<RDGPassNodeRef> ready;                                // 入度为0的pass，就绪集
     schedule_result.schedule_order.clear();
     schedule_result.schedule_order.reserve(passes.size());
 
@@ -263,10 +235,10 @@ void QueueSchedule::schedule_with_heft(RDGDependencyGraphRef graph)
 
     for (RDGPassNodeRef pass : passes)
     {
+        // 入度=前驱数（依赖表已去重、边只引用本帧pass——直接取size）
         uint32_t cnt = 0;
         if (const PassDependencies* deps = dependency_analysis.get_pass_dependencies(pass))
-            for (RDGPassNodeRef pred : deps->dependent_passes)
-                if (nodeOf.count(pred) > 0) cnt++;
+            cnt = static_cast<uint32_t>(deps->dependent_passes.size());
         remainingPreds[pass] = cnt;
         if (cnt == 0) ready.push_back(pass);
     }
@@ -282,11 +254,12 @@ void QueueSchedule::schedule_with_heft(RDGDependencyGraphRef graph)
         }
 
         auto bestIt = ready.begin();
+        // 从就绪集中取出到完成链条最长的pass
         for (auto it = ready.begin(); it != ready.end(); ++it)
         {
             const double rNew = ranku[*it], rBest = ranku[*bestIt];
-            if (rNew > rBest + 1e-9 ||
-                (rNew > rBest - 1e-9 && std::string_view((*it)->Name()) < std::string_view((*bestIt)->Name())))
+            // 容差 + 名字字典序
+            if (rNew > rBest + 1e-9 || (rNew > rBest - 1e-9 && std::string_view((*it)->Name()) < std::string_view((*bestIt)->Name())))
                 bestIt = it;
         }
         RDGPassNodeRef v = *bestIt;
@@ -296,18 +269,18 @@ void QueueSchedule::schedule_with_heft(RDGDependencyGraphRef graph)
         std::vector<std::pair<RDGResourceNodeRef, EResourceAccessType>> accesses;
         if (const PassResourceInfo* info = pass_info_analysis.get_resource_info(v))
         {
-            std::unordered_map<RDGResourceNodeRef, EResourceAccessType> merged;
-            for (const auto& acc : info->resource_accesses)
+            std::unordered_map<RDGResourceNodeRef, EResourceAccessType> merged;     // 资源到资源的访问类型
+            // 遍历该pass访问的所有资源
+            for (const ResourceAccessInfo& acc : info->resource_accesses)
             {
                 if (!acc.resource) continue;
                 // CONCURRENT纹理不进所有权表：无QFO往返即无跨族互斥/所有权链——
                 // 跳过后下方互斥等待(:335)、所有权迁移(:388)、链回写边(:401)对本资源全部失效
                 if (acc.resource->NodeType() == RDG_RESOURCE_NODE_TYPE_TEXTURE &&
-                    static_cast<RDGTextureNodeRef>(acc.resource)->GetInfo().sharingMode == RESOURCE_SHARING_TYPE_CONCURRENT)
-                    continue;
+                    static_cast<RDGTextureNodeRef>(acc.resource)->GetInfo().sharingMode == RESOURCE_SHARING_TYPE_CONCURRENT) continue;
+
                 EResourceAccessType& slot = merged[acc.resource];
-                const bool anyWrite = slot == EResourceAccessType::ReadWrite ||
-                                      acc.access_type != EResourceAccessType::Read;
+                const bool anyWrite = slot == EResourceAccessType::ReadWrite || acc.access_type != EResourceAccessType::Read;
                 slot = anyWrite ? EResourceAccessType::ReadWrite : EResourceAccessType::Read;
             }
             accesses.reserve(merged.size());
@@ -316,28 +289,29 @@ void QueueSchedule::schedule_with_heft(RDGDependencyGraphRef graph)
         }
 
         const PassDependencies* vDeps = dependency_analysis.get_pass_dependencies(v);
-        double bestEft = DBL_MAX;
-        uint32_t bestQ = 0;
+        double bestEft = DBL_MAX;       // pass最早的截至时间
+        uint32_t bestQ = 0;             // pass最早截至时间对应的队列
         std::string eftTrace;   // debug决策日志
         std::vector<double> eftOf(queueCount, DBL_MAX);   // 各合格队列候选（滞后判断用）
 
+        // 遍历每一个队列
         for (uint32_t q = 0; q < queueCount; q++)
         {
             if (!is_queue_eligible(v, q)) continue;
 
-            double est = queueReady[q];
+            double est = queueReady[q];     // 安排在该队列上的开始时间
             if (vDeps)
             {
+                // 遍历该pass的每一个依赖
                 for (RDGPassNodeRef pred : vDeps->dependent_passes)
                 {
                     const auto fa = assigned.find(pred);
                     if (fa == assigned.end()) continue;          // 未调度前驱（防御——就绪集保证不存在）
-                    if (nodeOf.count(pred) == 0) continue;
-                    const double c = (fa->second != q) ? config.heft_comm_cost_ms : 0.0;
+                    const double c = (fa->second != q) ? config.heft_comm_cost_ms : 0.0;    // 依赖的pass在另一个队列上
                     est = std::max(est, aft[pred] + c);
                 }
             }
-            // 所有权约束：访问的资源被异族持有 → 等持有者完成（EXCLUSIVE跨族互斥的排队）
+            // 所有权约束：访问的资源被异族持有 → 等持有者完成（EXCLUSIVE跨族互斥的排队）RAR
             const uint32_t vFamily = all_queues[q].family_index;
             double ownershipWait = 0.0;
             for (const auto& [res, acc] : accesses)
@@ -350,7 +324,7 @@ void QueueSchedule::schedule_with_heft(RDGDependencyGraphRef graph)
             }
             est = std::max(est, ownershipWait);
 
-            const double eft = est + weight[v];
+            const double eft = est + weight[v]; // 安排在该队列的截至时间
             eftOf[q] = eft;
             if (config.enable_debug_output)
                 eftTrace += std::format(" q{}:est={:.2f}/own={:.2f}/eft={:.2f}", q, est, ownershipWait, eft);
@@ -363,15 +337,16 @@ void QueueSchedule::schedule_with_heft(RDGDependencyGraphRef graph)
         }
 
         // 分配滞后（跨帧槽共享的上帧分配表，主线程串行访问）：EFT差在阈值内保持上帧队列——
-        // 池化(created)纹理跨帧复用同物理内存且细链只回看一帧，跨帧跨队列WAR靠"分配帧间
-        // 稳定"隐式兜底（旧classify天然满足）；EMA波动使EFT翻转即触发该竞态（画面闪烁，
-        // 帧内视角的裁判均不可见——2026-09-12定案）
+        // 抑制EMA波动导致的分配逐帧翻转churn。纯稳定性选择，与正确性无关（created=槽池+
+        // 帧栅栏+帧末归巢、imported=注册表细链，分配翻转无正确性后果——2026-09-12
+        // "分配无关"定案的延伸）
         static std::unordered_map<std::string, uint32_t> s_lastAssignment;
         const std::string passName(v->Name());
         const auto lastIt = s_lastAssignment.find(passName);
-        if (lastIt != s_lastAssignment.end() && lastIt->second != bestQ &&
+        if (lastIt != s_lastAssignment.end() && lastIt->second != bestQ && 
             lastIt->second < queueCount && eftOf[lastIt->second] < bestEft + config.heft_hysteresis_ms)
         {
+            // 若无明显优化不改分配队列
             bestEft = eftOf[lastIt->second];
             bestQ = lastIt->second;
             if (config.enable_debug_output) eftTrace += std::format(" [hyst->q{}]", bestQ);
@@ -405,8 +380,10 @@ void QueueSchedule::schedule_with_heft(RDGDependencyGraphRef graph)
 
     // ---- 所有权链相邻异族对 → 回写边（同族对靠拓扑传递性，不建边）----
     ownership_edges_.clear();
+    // 遍历每一份资源
     for (const auto& [res, st] : ownership)
     {
+        // 该资源的每一次访问
         for (size_t i = 1; i < st.chain.size(); i++)
         {
             const auto& prev = st.chain[i - 1];
@@ -438,128 +415,17 @@ bool QueueSchedule::is_queue_eligible(RDGPassNodeRef pass, uint32_t queueIndex)
     case RDGPassNodeType::RDG_PASS_NODE_TYPE_COPY:
     {
         // mipmap拷贝须graphics（generateMip的mip链屏障），其余可copy队列
-        auto* copy_pass = static_cast<RDGCopyPassNodeRef>(pass);
-        // [二分]锁定classify分配时copy也钉graphics——classify在copy队列关闭时非mip copy全落
-        // graphics（classify_pass默认分支），而supports_copy在graphics/compute队列上都为true，
-        // 不钉则Bloom Copy等pass的EFT自由度污染"等分配"前提
-        if (config.heft_lock_classify_assignment)
-            return q.supports_graphics;
-        return copy_pass->IsGenerateMip() ? q.supports_graphics : q.supports_copy;
+        return static_cast<RDGCopyPassNodeRef>(pass)->IsGenerateMip() ? q.supports_graphics : q.supports_copy;
     }
     case RDGPassNodeType::RDG_PASS_NODE_TYPE_COMPUTE:
-        // ForceGraphicsQueue钉graphics（与classify白名单语义一致——Present/UI/手工钉位的既有知识）；
-        // 无flag的compute pass在graphics与async compute上都合格（EFT权衡取代"全去async"）。
-        // [二分诊断]锁定classify分配时仅AsyncCompute合格（隔离分配自由度面）
+    {
         if (pass->has_flags(RDGPassFlags::ForceGraphicsQueue))
             return q.supports_graphics;
-        if (config.heft_lock_classify_assignment)
-            return q.type == ERenderGraphQueueType::AsyncCompute;
         return q.supports_compute;
+    }
     default:
         return q.supports_graphics;
     }
-}
-
-// 利用 PassDependencyAnalysis 的依赖级别信息，按级别顺序遍历所有 Pass，将每个 Pass 分配到合适的队列
-void QueueSchedule::assign_passes_using_topology()
-{
-    // 获取逻辑拓扑排序结果
-    const auto& topology_result = dependency_analysis.get_logical_topology_result();
-
-    //ENGINE_LOG_INFO("QueueSchedule: Using topology-based scheduling with {} dependency levels",
-    //    topology_result.max_logical_dependency_depth + 1);
-
-    // 按依赖级别顺序调度Pass，确保依赖正确性
-    for (const auto& level : topology_result.logical_levels)
-    {
-        //ENGINE_LOG_INFO("  Processing dependency level {} with {} passes",
-        //    level.level, static_cast<uint32_t>(level.passes.size()));
-
-        // 在同一依赖级别内，按照拓扑顺序分配Pass到队列
-        for (auto* pass : level.passes)
-        {
-            // 分类Pass并找到合适的队列
-            ERenderGraphQueueType preferred_queue_type = classify_pass(pass);
-            uint32_t target_queue_index;
-
-            // 根据队列类型找到实际的队列索引
-            switch (preferred_queue_type)
-            {
-            case ERenderGraphQueueType::Graphics:
-                target_queue_index = find_graphics_queue();
-                break;
-            case ERenderGraphQueueType::AsyncCompute:
-                target_queue_index = find_least_loaded_compute_queue();
-                break;
-            case ERenderGraphQueueType::Copy:
-                target_queue_index = find_copy_queue();
-                break;
-            default:
-                target_queue_index = find_graphics_queue();
-                break;
-            }
-
-            // 将Pass添加到选定的队列
-            if (target_queue_index < schedule_result.queue_schedules.size())
-            {
-                schedule_result.queue_schedules[target_queue_index].push_back(pass);
-                schedule_result.pass_queue_assignments[pass] = target_queue_index;
-
-                //ENGINE_LOG_INFO("    Assigned pass '{}' to {} queue (index {})",
-                //    pass->Name(),
-                //    get_queue_type_name(all_queues[target_queue_index].type),
-                //    target_queue_index);
-            }
-            else
-            {
-                //SPDLOG_ERROR("QueueSchedule: Invalid queue index {} for pass '{}'",
-                //    target_queue_index, pass->Name());
-            }
-        }
-    }
-
-    //ENGINE_LOG_INFO("QueueSchedule: Topology-based scheduling completed");
-}
-
-uint32_t QueueSchedule::find_graphics_queue() const
-{
-    for (uint32_t i = 0; i < all_queues.size(); ++i) {
-        if (all_queues[i].type == ERenderGraphQueueType::Graphics) {
-            return i;
-        }
-    }
-    return 0; // 应该总是有Graphics队列
-}
-
-uint32_t QueueSchedule::find_least_loaded_compute_queue() const
-{
-    // 简化轮询：找到第一个计算队列即可，避免复杂的负载计算
-    static uint32_t next_compute_index = 0;
-
-    std::vector<uint32_t> compute_queues;
-    for (uint32_t i = 0; i < all_queues.size(); ++i) {
-        if (all_queues[i].type == ERenderGraphQueueType::AsyncCompute) {
-            compute_queues.push_back(i);
-        }
-    }
-
-    if (compute_queues.empty()) {
-        return find_graphics_queue(); // 回退
-    }
-
-    uint32_t queue_idx = compute_queues[next_compute_index % compute_queues.size()];
-    next_compute_index++;
-    return queue_idx;
-}
-
-uint32_t QueueSchedule::find_copy_queue() const
-{
-    for (uint32_t i = 0; i < all_queues.size(); ++i) {
-        if (all_queues[i].type == ERenderGraphQueueType::Copy) {
-            return i;
-        }
-    }
-    return find_graphics_queue(); // 回退
 }
 
 void QueueSchedule::dump_timeline_result(const char* title, const TimelineScheduleResult& R) const

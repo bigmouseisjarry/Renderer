@@ -1,8 +1,9 @@
 #version 460
 #extension GL_GOOGLE_include_directive : enable
 
-#include "../common/common.glsl"	
+	
 #include "include/common.glsl"	
+
 
 #define THREAD_SIZE_X 16
 #define THREAD_SIZE_Y 16
@@ -15,10 +16,10 @@ void main()
     ivec2 pixel     = ivec2(gl_GlobalInvocationID.xy);
     vec2 uv         = ScreenPixToUV(pixel); 
 
-    vec4 gbffer0    = imageLoad(G_BUFFER_DIFFUSE_TRANSPARENT, pixel);
-    vec4 gbffer1    = imageLoad(G_BUFFER_NORMAL_SPECF, pixel);
-    vec4 gbffer2    = imageLoad(G_BUFFER_EMISSION, pixel);
-    vec4 gbffer6    = imageLoad(G_BUFFER_SPECULAR_F0_ROUGHNESS, pixel);
+    vec4 gbffer0    = imageLoad(RESTIR_DI_GBUFFER_DIFFUSE, pixel);
+    vec4 gbffer1    = imageLoad(RESTIR_DI_GBUFFER_NORMAL, pixel);
+    vec4 gbffer2    = imageLoad(RESTIR_DI_GBUFFER_EMISSION, pixel);
+    vec4 gbffer6    = imageLoad(RESTIR_DI_GBUFFER_SPECF0, pixel);
     vec3 diffuse    = gbffer0.xyz;
     float specF     = gbffer1.a;    // 虹彩标志：F直用烘焙F0跳过Schlick
     vec3 normal     = DecodeGBufferNormal(gbffer1.xyz);
@@ -31,7 +32,7 @@ void main()
     /////////////////////////////////////////////////////////
 
     uint reservoirIndex = pixel.y * WINDOW_WIDTH + pixel.x;
-	DIReservoir res = RESULT_RESERVOIRS[reservoirIndex];
+	DIReservoir res = RESTIR_DI_RESULT_RESERVOIRS[reservoirIndex];
 
     vec4 finalColor = vec4(0.0f);
     if(depth != 1.0f)
@@ -94,7 +95,7 @@ void main()
     }
     else //if(RESTIR_DI_SETTING.combineMode == 1)   // 后续降噪
     {
-        imageStore(DI_DIFFUSE_LIGHT, pixel, finalColor);
+        imageStore(DI_DIFFUSE_COLOR, pixel, finalColor);
     }
 
     // for (int i = 0; i < RESERVOIR_SIZE; ++i) 

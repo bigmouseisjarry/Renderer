@@ -2,11 +2,8 @@
 #extension GL_GOOGLE_include_directive : enable
 #extension GL_EXT_samplerless_texture_functions : enable
 
-#include "../common/screen.glsl"
+#include "include/common.glsl"
 
-layout(set = 0, binding = 0)            uniform texture2D IN_COLOR;	    // texture2D 是SRV
-layout(set = 0, binding = 1, rgba16f)   uniform image2D OUT_COLOR;      // image2D   是UAV
-layout(set = 1, binding = 0)            uniform sampler SAMPLER[];
 
 layout(push_constant) uniform FXAASetting {
     uint enable;
@@ -72,7 +69,7 @@ layout (local_size_x = THREAD_SIZE_X,
 void main()
 {
     ivec2 pixel         = ivec2(gl_GlobalInvocationID.xy);
-    ivec2 screenSize    = textureSize(IN_COLOR, 0);
+    ivec2 screenSize    = textureSize(IN_COLOR[0], 0);
     vec2 stepUV         = vec2(1.0f / float(screenSize.x), 1.0f / float(screenSize.y));
     vec2 inUV           = ScreenPixToUV(pixel, screenSize);
 
@@ -80,7 +77,7 @@ void main()
     {
         float lumaMat[9];
         for (int i = 0; i < 9; i++) {
-            lumaMat[i] = RGB2LUMA(texture(sampler2D(IN_COLOR, SAMPLER[0]), inUV + stepUV * KERNEL_STEP_MAT[i]).xyz);
+            lumaMat[i] = RGB2LUMA(texture(sampler2D(IN_COLOR[0], SAMPLER[0]), inUV + stepUV * KERNEL_STEP_MAT[i]).xyz);
         }
 
         // 用四像素的亮度做阈值检测，低于阈值的直接返回
@@ -89,7 +86,7 @@ void main()
         float lumaMax = max(lumaMat[CENTER], max(max(lumaMat[UP], lumaMat[DOWN]), max(lumaMat[LEFT], lumaMat[RIGHT])));
         float lumaRange = lumaMax - lumaMin;
         if(lumaRange < max(EDGE_THRESHOLD_MIN, lumaMax * EDGE_THRESHOLD_MAX)) {
-            vec4 outColor = texture(sampler2D(IN_COLOR, SAMPLER[0]), inUV);
+            vec4 outColor = texture(sampler2D(IN_COLOR[0], SAMPLER[0]), inUV);
             imageStore(OUT_COLOR, pixel, outColor);
             return;
         }
@@ -133,8 +130,8 @@ void main()
         vec2 posUV = startUV + tangentStep;
         vec2 negUV = startUV - tangentStep;
 
-        float deltaLumaPos = RGB2LUMA(texture(sampler2D(IN_COLOR, SAMPLER[0]), posUV).xyz) - lumaAverageStart;
-        float deltaLumaNeg = RGB2LUMA(texture(sampler2D(IN_COLOR, SAMPLER[0]), negUV).xyz) - lumaAverageStart;
+        float deltaLumaPos = RGB2LUMA(texture(sampler2D(IN_COLOR[0], SAMPLER[0]), posUV).xyz) - lumaAverageStart;
+        float deltaLumaNeg = RGB2LUMA(texture(sampler2D(IN_COLOR[0], SAMPLER[0]), negUV).xyz) - lumaAverageStart;
 
         bool reachedPos = abs(deltaLumaPos) > GRADIENT_SCALE * abs(gradient);
         bool reachedNeg = abs(deltaLumaNeg) > GRADIENT_SCALE * abs(gradient);
@@ -145,8 +142,8 @@ void main()
 
         if (!reachedBoth) {
             for(int i = 2; i < STEP_COUNT_MAX; i++){
-                if(!reachedPos) deltaLumaPos = RGB2LUMA(texture(sampler2D(IN_COLOR, SAMPLER[0]), posUV).xyz) - lumaAverageStart;
-                if(!reachedNeg) deltaLumaNeg = RGB2LUMA(texture(sampler2D(IN_COLOR, SAMPLER[0]), negUV).xyz) - lumaAverageStart;
+                if(!reachedPos) deltaLumaPos = RGB2LUMA(texture(sampler2D(IN_COLOR[0], SAMPLER[0]), posUV).xyz) - lumaAverageStart;
+                if(!reachedNeg) deltaLumaNeg = RGB2LUMA(texture(sampler2D(IN_COLOR[0], SAMPLER[0]), negUV).xyz) - lumaAverageStart;
 
                 bool reachedPos = abs(deltaLumaPos) > GRADIENT_SCALE * abs(gradient);
                 bool reachedNeg = abs(deltaLumaNeg) > GRADIENT_SCALE * abs(gradient);
@@ -190,12 +187,12 @@ void main()
         pixelOffset = max(pixelOffset, subpixelOffset);
 
         // 沿垂直边缘方向做偏移混合
-        vec4 outColor = texture(sampler2D(IN_COLOR, SAMPLER[0]), inUV + pixelOffset * normalStep);
+        vec4 outColor = texture(sampler2D(IN_COLOR[0], SAMPLER[0]), inUV + pixelOffset * normalStep);
         imageStore(OUT_COLOR, pixel, outColor);
     }
     else
     {
-        vec4 outColor = texture(sampler2D(IN_COLOR, SAMPLER[0]), inUV);
+        vec4 outColor = texture(sampler2D(IN_COLOR[0], SAMPLER[0]), inUV);
         imageStore(OUT_COLOR, pixel, outColor);
     }
 }

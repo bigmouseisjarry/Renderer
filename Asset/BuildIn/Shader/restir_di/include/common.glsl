@@ -1,61 +1,21 @@
+#include "../../include/rand.glsl"
+#include "../../include/set2/set2.glsl"
+#include "../../include/set0/set0.glsl"
+#include "../../include/sky.glsl"
+#include "../../include/coordinate.glsl"
+#include "../../include/screen.glsl"
+#include "../../include/ray_query.glsl"
+#include "../../include/ddgi.glsl"
+#include "../../include/brdf.glsl"
+#include "../../include/samples.glsl"
+#include "../../include/noise.glsl"
+#include "../../include/light.glsl"
+#include "../../include/reprojection.glsl"
+#include "../../include/gizmo.glsl"
+#include "../../include/surface_cache.glsl"
 #define NUM_NEIGHBORS 4
-
 #include "reservoir.glsl"
 
-struct RestirDISetting
-{
-	int initialSampleCount;
-
-	int temporalSampleCountMultiplier;
-	float temporalPosThreshold;
-
-	float spatialPosThreshold;
-	float spatialNormalThreshold;
-	float spatialRadius;
-
-	uint combineMode;
-    uint visibilityReuse;
-    uint temporalReuse;
-    uint spatialReuse;
-	uint unbias;
-	uint bruteLighting;
-	uint showWeight;
-	uint showLightID;
-};
-
-//////////////////////////////////////////////////////////////////////////
-
-layout (set = 1, binding = 0) buffer setting
-{
-	RestirDISetting RESTIR_DI_SETTING;
-};
-
-layout (set = 1, binding = 1) buffer Reservoirs 
-{
-	DIReservoir RESERVOIRS[];                         // 本帧新生成的Reservoir(以及时域合并的结果)
-};
-
-layout (set = 1, binding = 2) buffer PrevFrameReservoirs 
-{
-	DIReservoir PREV_RESERVOIRS[];                    // 前一帧的Reservoir结果
-};
-
-layout (set = 1, binding = 3) buffer ResultReservoirs 
-{
-	DIReservoir RESULT_RESERVOIRS[];                  // 本帧Reservoir空域合并的结果
-};
-
-layout(set = 2, binding = 0, rgba8)         uniform image2D G_BUFFER_DIFFUSE_TRANSPARENT;	        // 本帧G-Buffer
-layout(set = 2, binding = 1, rgba8)         uniform image2D G_BUFFER_NORMAL_SPECF;   // 八面体2×12位拼（位模式用UNORM），A=specF
-layout(set = 2, binding = 2, rgba8)         uniform image2D G_BUFFER_EMISSION;    // RGBM编码
-layout(set = 2, binding = 3)   				uniform texture2D REPROJECTION_RESULT;				// 重投影结果	
-
-layout(set = 2, binding = 4, rgba16f)       uniform image2D FINAL_COLOR;	                    // lighting的输出，无降噪
-layout(set = 2, binding = 5, rgba16f)       uniform image2D DI_DIFFUSE_LIGHT;	       			// lighting的输出，有降噪
-layout(set = 2, binding = 6, rgba16f)       uniform image2D DI_SPECULAR_LIGHT;	       			// lighting的输出，有降噪
-layout(set = 2, binding = 7, rgba8)         uniform image2D G_BUFFER_SPECULAR_F0_ROUGHNESS;	// F0+roughness（只读，RW风格绑定与同组一致）
-
-//////////////////////////////////////////////////////////////////////////
 
 vec3 EvaluatePHatFull(
 	uint lightID, vec3 worldPos, vec3 normal,

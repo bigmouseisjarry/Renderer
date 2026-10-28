@@ -277,6 +277,10 @@ bool NRDIntegration::_CreateResources() {
             rootSignatureInfo.AddEntry({resourcesSpaceIndex, i, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE});
         for(uint32_t i = samplerOffset; i <= 1; i++)
             rootSignatureInfo.AddEntry({constantBufferAndSamplersSpaceIndex, i, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_SAMPLER});
+        // 静态采样器声明即绑定：set1创建期播种b0/b1（见VulkanRHIRootSignature::CreateDescriptorSet）
+        // ——替代pass级.Sampler()旁路（SamplerBind流程已删）；b2常量缓冲照旧走Read边+池化set写入
+        rootSignatureInfo.AddStaticSampler({constantBufferAndSamplersSpaceIndex, samplerOffset + 0, 0, m_Samplers[0]});
+        rootSignatureInfo.AddStaticSampler({constantBufferAndSamplersSpaceIndex, samplerOffset + 1, 0, m_Samplers[1]});
         rootSignatureInfo.AddEntry({constantBufferAndSamplersSpaceIndex, constantBufferOffset, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_UNIFORM_BUFFER});
               
         m_RootSignature = backend->CreateRootSignature(rootSignatureInfo);
@@ -355,7 +359,7 @@ void NRDIntegration::Denoise(RDGBuilder& builder, const nrd::Identifier* denoise
 
     // ReBlur里有个REBLUR_FORMAT_PREV_NORMAL_ROUGHNESS宏是靠cmake定义的，需要跟着改！！！
 
-    // 注册RDG资源（名字带实例前缀——多实例共存时黑板名字不撞车）
+    // 注册RDG资源
     const std::string prefix = (m_Desc.name[0] != '\0') ? std::string(m_Desc.name) : std::string("NRD");
     RDGBufferHandle bufferHandle = builder.CreateBuffer(prefix + " Constant Buffer")
         .Import(m_ConstantBuffer, RESOURCE_STATE_UNDEFINED)
@@ -364,7 +368,7 @@ void NRDIntegration::Denoise(RDGBuilder& builder, const nrd::Identifier* denoise
     {
         NRDResource& resource = m_TexturePool[i];
         resource.handle = builder.CreateTexture(prefix + " Texture [" + std::to_string(i) + "]")
-            .Import(resource.texture, resource.state)
+            .Import(resource.texture)
             .Finish();
     }
 
@@ -462,8 +466,6 @@ void NRDIntegration::_Dispatch(RDGBuilder& builder, const nrd::DispatchDesc& dis
     RDGComputePassHandle pass = passBuilder
         .RootSignature(m_RootSignature)
         .PassIndex(dispatchDesc.gridWidth, dispatchDesc.gridHeight, dispatchDesc.pipelineIndex)
-        .Sampler(1, 0, 0, m_Samplers[0])
-        .Sampler(1, 1, 0, m_Samplers[1])
         .Execute([&](RDGPassContext context) {       
 
             uint32_t width = context.passIndex[0];

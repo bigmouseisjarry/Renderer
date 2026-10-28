@@ -20,7 +20,8 @@ void RayTracingBasePass::Init()
 
     RHIRootSignatureInfo rootSignatureInfo = {};
     rootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetPerFrameRootSignature()->GetInfo())
-                     .AddEntry({1, 0, 1, SHADER_FREQUENCY_RAY_TRACING, RESOURCE_TYPE_RW_TEXTURE})
+                     .AddEntry(EngineContext::RenderResource()->GetBindlessRootSignature()->GetInfo())
+                     .AddEntry(EngineContext::RenderResource()->GetSet2RootSignature()->GetInfo())       // 刀7b-3：set2全局统一RS（98槽）
                      .AddPushConstant({128, SHADER_FREQUENCY_RAY_TRACING});
     rootSignature = backend->CreateRootSignature(rootSignatureInfo);
 
@@ -36,21 +37,34 @@ void RayTracingBasePass::Build(RDGBuilder& builder)
     {
         RDGTextureHandle outColor = builder.GetTexture("Noisy HDR Color");
 
-        RDGRayTracingPassHandle pass = builder.CreateRayTracingPass(GetName())
-        .RootSignature(rootSignature)
-        .ReadAccelerationStructure(builder.GetBuffer("TLAS Storage"))      // 依赖TLAS Update的产出（虚拟边，不绑定描述符；RT读AS）
-        .ReadWrite(1, 0, 0, outColor)
-        .Execute([&](RDGPassContext context) {       
+        // 刀5：mesh card readback经SC域b27（FetchSurfaceCacheLighting写时间戳；与PostProcessing共享节点）
+        RDGBufferHandle cardUpdate = builder.GetOrCreateBuffer("Surface Cache Card Update")
+            .Import(EngineContext::RenderResource()->GetCardUpdateBuffer(), RESOURCE_STATE_UNORDERED_ACCESS)
+            .Finish();
 
-            RHICommandListRef command = context.command; 
-            command->SetRayTracingPipeline(rayTracingPipeline);
-            command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);  
-            command->BindDescriptorSet(context.descriptors[1], 1);
-            command->PushConstants(&setting, sizeof(RayTracingBaseSetting), SHADER_FREQUENCY_RAY_TRACING);
-            command->TraceRays(  EngineContext::Render()->GetWindowsExtent().width, 
-                                EngineContext::Render()->GetWindowsExtent().height, 
-                                1);
-        })
-        .Finish();
+        RDGRayTracingPassHandle pass = builder.CreateRayTracingPass(GetName())
+            .RootSignature(rootSignature)
+            .Shaders({rayGenShader.shader, rayMissShader.shader, closestHitShader.shader})   // 刀7b-3：严格边校验
+            .ReadWrite(2, SET2_BINDING_MESH_CARD_READBACK, 0, cardUpdate)
+            .Read(2, SET2_BINDING_SURFACE_CACHE, 0, builder.GetTexture("Surface Cache Diffuse/Metallic"))
+            .Read(2, SET2_BINDING_SURFACE_CACHE, 1, builder.GetTexture("Surface Cache Normal/Roughness"), VIEW_TYPE_2D, {})
+            .Read(2, SET2_BINDING_SURFACE_CACHE, 2, builder.GetTexture("Surface Cache Emission"), VIEW_TYPE_2D, {})
+            .Read(2, SET2_BINDING_SURFACE_CACHE, 3, builder.GetTexture("Surface Cache Lighting"), VIEW_TYPE_2D, {})
+            .Read(2, SET2_BINDING_SURFACE_CACHE, 4, builder.GetTexture("Surface Cache Depth"), VIEW_TYPE_2D, {})
+            .ReadAccelerationStructure(builder.GetBuffer("TLAS Storage"))      // 依赖TLAS Update的产出（虚拟边，不绑定描述符；RT读AS）
+            .ReadWrite(2, SET2_BINDING_RTB_A, 0, outColor)
+            .Execute([&](RDGPassContext context) {       
+
+                RHICommandListRef command = context.command; 
+                command->SetRayTracingPipeline(rayTracingPipeline);
+                command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);
+                    command->BindDescriptorSet(EngineContext::RenderResource()->GetPoolDescriptorSet(), 1);  
+                command->BindDescriptorSet(context.descriptors[2], 2);
+                command->PushConstants(&setting, sizeof(RayTracingBaseSetting), SHADER_FREQUENCY_RAY_TRACING);
+                command->TraceRays(  EngineContext::Render()->GetWindowsExtent().width, 
+                                    EngineContext::Render()->GetWindowsExtent().height, 
+                                    1);
+            })
+            .Finish();
     }
 }

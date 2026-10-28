@@ -56,14 +56,8 @@ void NRDPass::Init()
     {
         RHIRootSignatureInfo viewZRootSignatureInfo = {};
         viewZRootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetPerFrameRootSignature()->GetInfo())
-            .AddEntry({ 1, 0, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })      // G_BUFFER_DEPTH
-            .AddEntry({ 1, 1, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })      // G_BUFFER_DIFFUSE_METALLIC
-            .AddEntry({ 1, 2, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })      // G_BUFFER_NORMAL_ROUGHNESS
-            .AddEntry({ 1, 7, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })      // G_BUFFER_SPECULAR_F0_ROUGHNESS（漏加的这条）
-            .AddEntry({ 1, 3, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE })   // RESTIR_DIFFUSE_COLOR
-            .AddEntry({ 1, 4, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE })   // RESTIR_SPECULAR_COLOR
-            .AddEntry({ 1, 5, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE })   // NRD_VIEW_Z
-            .AddEntry({ 1, 6, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE })  // NRD_NORMAL
+                     .AddEntry(EngineContext::RenderResource()->GetBindlessRootSignature()->GetInfo())
+            .AddEntry(EngineContext::RenderResource()->GetSet2RootSignature()->GetInfo())       // 刀7b-3：set2全局统一RS（98槽）
             .AddPushConstant({128, SHADER_FREQUENCY_COMPUTE});
                                                                  
 
@@ -79,12 +73,8 @@ void NRDPass::Init()
     {
         RHIRootSignatureInfo combineRootSignatureInfo = {};
         combineRootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetPerFrameRootSignature()->GetInfo())
-            .AddEntry({ 1, 1, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })      // G_BUFFER_DIFFUSE_METALLIC
-            .AddEntry({ 1, 2, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })      // G_BUFFER_NORMAL_ROUGHNESS
-            .AddEntry({ 1, 7, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })      // G_BUFFER_SPECULAR_F0_ROUGHNESS（nrd/common.glsl共享声明）
-            .AddEntry({ 1, 3, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })      // NRD_OUT_DIFFUSE
-            .AddEntry({ 1, 4, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })      // NRD_OUT_SPECULAR
-            .AddEntry({ 1, 5, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE })  // OUT
+                     .AddEntry(EngineContext::RenderResource()->GetBindlessRootSignature()->GetInfo())
+            .AddEntry(EngineContext::RenderResource()->GetSet2RootSignature()->GetInfo())       // 刀7b-3：set2全局统一RS（98槽）
             .AddPushConstant({128, SHADER_FREQUENCY_COMPUTE});  
 
         combineRootSignature = backend->CreateRootSignature(combineRootSignatureInfo);
@@ -98,10 +88,9 @@ void NRDPass::Init()
     {
         RHIRootSignatureInfo copySssrRootSignatureInfo = {};
         copySssrRootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetPerFrameRootSignature()->GetInfo())
-            .AddEntry({ 1, 1, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE })
-            .AddEntry({ 1, 2, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })
-            .AddEntry({ 1, 7, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })      // G_BUFFER_SPECULAR_F0_ROUGHNESS（nrd/common.glsl共享声明）
-            .AddPushConstant({128, SHADER_FREQUENCY_COMPUTE});
+                     .AddEntry(EngineContext::RenderResource()->GetBindlessRootSignature()->GetInfo())
+                     .AddEntry(EngineContext::RenderResource()->GetSet2RootSignature()->GetInfo())       // 刀7b-3：set2全局统一RS（98槽）
+                     .AddPushConstant({128, SHADER_FREQUENCY_COMPUTE});
 
         copySssrRootSignature = backend->CreateRootSignature(copySssrRootSignatureInfo);
 
@@ -237,15 +226,16 @@ void NRDPass::Build(RDGBuilder& builder)
             RDGComputePassHandle pass2 = builder.CreateComputePass(GetName() + " Copy SSSR")
                 .AddFlag(RDGPassFlags::ForceGraphicsQueue)
                 .RootSignature(copySssrRootSignature)
-                .ReadWrite(1, 1, 0, restirSpecularColor)
-                .Read(1, 2, 0, sssrResolve)
-                .Read(1, 7, 0, specularF0)
+                .Shaders({computeShader[2].shader})
+                .ReadWrite(2, SET2_BINDING_DI_SPECULAR_COLOR, 0, restirSpecularColor)
+                .ReadWrite(2, SET2_BINDING_SSSR_RESOLVE, 0, sssrResolve)   // 刀7b-3修：RW槽imageLoad读法=ReadWrite边（cluster uimage3D消费先例；Read边type=TEXTURE撞族）
                 .Execute([this, specSetting, windowExtent](RDGPassContext context) mutable {
 
                     RHICommandListRef command = context.command;
                     command->SetComputePipeline(computePipeline[2]);
                     command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);
-                    command->BindDescriptorSet(context.descriptors[1], 1);
+                    command->BindDescriptorSet(EngineContext::RenderResource()->GetPoolDescriptorSet(), 1);
+                    command->BindDescriptorSet(context.descriptors[2], 2);
                     command->PushConstants(&specSetting, sizeof(specSetting), SHADER_FREQUENCY_COMPUTE);
                     command->Dispatch(  Math::CeilDivide(windowExtent.width, 16),
                                         Math::CeilDivide(windowExtent.height, 16),
@@ -258,19 +248,22 @@ void NRDPass::Build(RDGBuilder& builder)
         {
             RDGComputePassHandle pass = builder.CreateComputePass(GetName() + " Generate View Z")
                 .RootSignature(viewZRootSignature)
-                .Read(1, 0, 0, depth, VIEW_TYPE_2D, {TEXTURE_ASPECT_DEPTH, 0, 1, 0, 1})
-                .Read(1, 1, 0, diffuse)
-                .Read(1, 2, 0, normal)
-                .Read(1, 7, 0, specularF0)
-                .ReadWrite(1, 3, 0, restirDiffuseColor)
-                .ReadWrite(1, 5, 0, nrdViewZ)
-                .ReadWrite(1, 6, 0, nrdNormal)
+                .Shaders({computeShader[0].shader})
+                .Read(2, SET2_BINDING_HISTORY_DEPTH, 0, depth, VIEW_TYPE_2D, {TEXTURE_ASPECT_DEPTH, 0, 1, 0, 1})
+                .Read(2, SET2_BINDING_GBUFFER_DIFFUSE_METALLIC, 0, diffuse)
+                .Read(2, SET2_BINDING_GBUFFER_NORMAL_ROUGHNESS, 0, normal)
+                .Read(2, SET2_BINDING_GBUFFER_SPECULAR_F0_ROUGHNESS, 0, specularF0)
+                .ReadWrite(2, SET2_BINDING_DI_DIFFUSE_COLOR, 0, restirDiffuseColor)
+                .Conditional(2, SET2_BINDING_DI_SPECULAR_COLOR)   // 刀7b-5：view_z.comp的SPECULAR分支由SETTING.side==2动态关闭（diffSetting），静态accessed但运行期不达
+                .ReadWrite(2, SET2_BINDING_NRD_VIEW_Z, 0, nrdViewZ)
+                .ReadWrite(2, SET2_BINDING_NRD_NORMAL, 0, nrdNormal)
                 .Execute([this, diffSetting, windowExtent](RDGPassContext context) mutable {  
 
                     RHICommandListRef command = context.command;
                     command->SetComputePipeline(computePipeline[0]);
                     command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);
-                    command->BindDescriptorSet(context.descriptors[1], 1);
+                command->BindDescriptorSet(EngineContext::RenderResource()->GetPoolDescriptorSet(), 1);
+                    command->BindDescriptorSet(context.descriptors[2], 2);
                     command->PushConstants(&diffSetting, sizeof(diffSetting), SHADER_FREQUENCY_COMPUTE);
                     command->Dispatch(  Math::CeilDivide(windowExtent.width, 16),
                                         Math::CeilDivide(windowExtent.height, 16),
@@ -359,18 +352,18 @@ void NRDPass::Build(RDGBuilder& builder)
         {
             RDGComputePassHandle pass1 = builder.CreateComputePass(GetName() + " Combine")
                 .RootSignature(combineRootSignature)
-                .Read(1, 1, 0, diffuse)
-                .Read(1, 2, 0, normal)
-                .Read(1, 7, 0, specularF0)
-                .Read(1, 3, 0, nrdOutDiffuse)
-                .Read(1, 4, 0, nrdOutSpecular)
-                .ReadWrite(1, 5, 0, outColor)
+                .Read(2, SET2_BINDING_GBUFFER_DIFFUSE_METALLIC, 0, diffuse)
+                .Read(2, SET2_BINDING_NRD_OUT_DIFFUSE, 0, nrdOutDiffuse)
+                .Read(2, SET2_BINDING_NRD_OUT_SPECULAR, 0, nrdOutSpecular)
+                .Shaders({computeShader[1].shader})
+                .ReadWrite(2, SET2_BINDING_FINAL_COLOR, 0, outColor)
                 .Execute([&](RDGPassContext context) {       
 
                     RHICommandListRef command = context.command; 
                     command->SetComputePipeline(computePipeline[1]);
                     command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);
-                    command->BindDescriptorSet(context.descriptors[1], 1);
+                    command->BindDescriptorSet(EngineContext::RenderResource()->GetPoolDescriptorSet(), 1);
+                    command->BindDescriptorSet(context.descriptors[2], 2);
                     command->PushConstants(&setting, sizeof(setting), SHADER_FREQUENCY_COMPUTE);
                     command->Dispatch(  Math::CeilDivide(EngineContext::Render()->GetWindowsExtent().width, 16), 
                                         Math::CeilDivide(EngineContext::Render()->GetWindowsExtent().height, 16), 

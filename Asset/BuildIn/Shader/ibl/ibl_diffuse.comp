@@ -2,9 +2,8 @@
 #extension GL_ARB_separate_shader_objects : enable
 #extension GL_GOOGLE_include_directive : enable
 
-#include "../common/common.glsl"
+#include "include/common.glsl"
 
-layout (set = 1, binding = 0, rgba16f) uniform image2D OUT_COLOR;
 
 layout(push_constant) uniform IBLSetting {
 	vec4 front;
@@ -23,7 +22,7 @@ vec3 UVToWorldDir(vec2 uv)
 {
 	vec2 dir 		= uv * 2.0f - 1.0f;			//左上[-1,-1] 右下[1,1]
 	vec3 right 		= cross(SETTING.front.xyz, SETTING.up.xyz);
-	vec3 worldDir 		= normalize(SETTING.front.xyz) + dir.x * normalize(right.xyz) + dir.y * normalize(SETTING.up.xyz);
+	vec3 worldDir	= normalize(SETTING.front.xyz) + dir.x * normalize(right.xyz) + dir.y * normalize(SETTING.up.xyz);
 
 	return worldDir;
 }
@@ -75,7 +74,7 @@ void main()
 //         = (1/π)·Riemann(E)
 //         = E/π
 // 所以我们采样端仅需albedo
-	imageStore(OUT_COLOR, pixel, vec4(PI * color / float(sampleCount), 1.0));
+	imageStore(IBL_OUT, pixel, vec4(PI * color / float(sampleCount), 1.0));
 }
 
 // 漫反射部分使用: (1 - F) * (1 - metallic) * ibl_diffuse(N) * albedo

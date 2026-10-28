@@ -22,8 +22,6 @@ RHIGraphicsPipelineRef GBufferThinPassProcessor::OnCreatePipeline(const DrawPipe
     pipelineInfo.fragmentShader             = pipelineState.fragmentShader;
     pipelineInfo.primitiveType              = PRIMITIVE_TYPE_TRIANGLE_LIST;
     pipelineInfo.rasterizerState            = { pipelineState.fillMode, pipelineState.cullMode, DEPTH_CLIP, 0.0f, 0.0f };
-    // 与不透明G-Buffer唯一的管线差异：不写深度（薄层不污染HiZ/SSR的不透明语义）。
-    // 材质透传的depthWrite位不采纳——合批key仍按材质位分裂，只会过分裂不会错批。
     pipelineInfo.depthStencilState          = { COMPARE_FUNCTION_LESS_EQUAL, true, false };
 
     pipelineInfo.rootSignature                  = pass->rootSignature;
@@ -62,10 +60,12 @@ void GBufferThinPass::Init()
 
     vertexShader        = Shader(EngineContext::File()->ShaderPath() + "default/default.vert.spv", SHADER_FREQUENCY_VERTEX);
     clusterVertexShader = Shader(EngineContext::File()->ShaderPath() + "default/default_cluster.vert.spv", SHADER_FREQUENCY_VERTEX);
-    fragmentShader      = Shader(EngineContext::File()->ShaderPath() + "default/deferred.frag.spv", SHADER_FREQUENCY_FRAGMENT);   // 与不透明G-Buffer共用，零变体
+    fragmentShader      = Shader(EngineContext::File()->ShaderPath() + "default/deferred.frag.spv", SHADER_FREQUENCY_FRAGMENT);   
 
     RHIRootSignatureInfo rootSignatureInfo = {};
-    rootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetPerFrameRootSignature()->GetInfo());
+    rootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetPerFrameRootSignature()->GetInfo())
+                     .AddEntry(EngineContext::RenderResource()->GetBindlessRootSignature()->GetInfo())
+                     .AddEntry(EngineContext::RenderResource()->GetSet2RootSignature()->GetInfo());      
     rootSignature = backend->CreateRootSignature(rootSignatureInfo);
 
     RHIGraphicsPipelineInfo pipelineInfo = {};
@@ -103,9 +103,7 @@ void GBufferThinPass::Build(RDGBuilder& builder)
         RDGTextureHandle objectID       = builder.GetTexture("G-Buffer Object ID");
         RDGTextureHandle geometricNormal = builder.GetTexture("G-Buffer Geometric Normal/AO");
         RDGTextureHandle specularF0     = builder.GetTexture("G-Buffer Specular F0/Roughness");
-        RDGTextureHandle ior            = builder.CreateTexture("G-Buffer IOR")
-                                            .Import(EngineContext::RenderResource()->GetIORTexture(), RESOURCE_STATE_UNDEFINED)
-                                            .Finish();
+        RDGTextureHandle ior            = builder.GetTexture("G-Buffer IOR");   // 复用GBufferPass的节点：同物理纹理双节点=隐形依赖边（Duplicate告警2026-10-26定罪），Import声明留GBufferPass一处
         RDGTextureHandle depth          = builder.GetTexture("Depth");
 
         // 间接绘制命令buffer的虚拟依赖边（见GPUCullingPass的Import命名）
@@ -123,6 +121,8 @@ void GBufferThinPass::Build(RDGBuilder& builder)
             .DepthStencil(depth, ATTACHMENT_LOAD_OP_LOAD, ATTACHMENT_STORE_OP_STORE, 1.0f, 0)                       // depthWrite=false由管线保证
             .ReadIndirect(builder.GetBuffer("Mesh Draw Commands" + cmdIndex))
             .ReadIndirect(builder.GetBuffer("Clusrter Draw Commands" + cmdIndex))
+            .RootSignature(rootSignature)    
+            .Read(2, SET2_BINDING_CLUSTER_DRAW_INFOS_READ, 0, builder.GetBuffer("Cluster Draw Infos" + cmdIndex), 0, 0, RESOURCE_TYPE_BUFFER)
             .Execute([&](RDGPassContext context) {
 
                 Extent2D windowExtent = EngineContext::Render()->GetWindowsExtent();
@@ -133,6 +133,8 @@ void GBufferThinPass::Build(RDGBuilder& builder)
                 command->SetScissor({0, 0}, {windowExtent.width, windowExtent.height});
                 command->SetDepthBias(0.0f, 0.0f, 0.0f);
                 command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);
+                command->BindDescriptorSet(EngineContext::RenderResource()->GetPoolDescriptorSet(), 1);
+                command->BindDescriptorSet(context.descriptors[2], 2);
 
                 meshPassProcessor->Draw(command);
             })

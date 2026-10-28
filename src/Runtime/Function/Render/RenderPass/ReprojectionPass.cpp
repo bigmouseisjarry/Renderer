@@ -11,9 +11,8 @@ void ReprojectionPass::Init()
 
     RHIRootSignatureInfo rootSignatureInfo = {};
     rootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetPerFrameRootSignature()->GetInfo())
-                     .AddEntry({1, 0, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE})
-                     .AddEntry({1, 1, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE})
-                     .AddEntry({1, 2, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE})
+                     .AddEntry(EngineContext::RenderResource()->GetBindlessRootSignature()->GetInfo())
+                     .AddEntry(EngineContext::RenderResource()->GetSet2RootSignature()->GetInfo())       // 刀7b-3：set2全局统一RS（98槽）
                      .AddPushConstant({128, SHADER_FREQUENCY_COMPUTE});
     rootSignature = backend->CreateRootSignature(rootSignatureInfo);
 
@@ -43,17 +42,22 @@ void ReprojectionPass::Build(RDGBuilder& builder)
     RDGComputePassHandle pass = builder.CreateComputePass(GetName())
         .AddFlag(RDGPassFlags::ForceGraphicsQueue)
         .RootSignature(rootSignature)
-        .Read(builder.GetTexture("History G-Buffer Object ID"))
-        .Read(builder.GetTexture("Previous Depth"))
-        .Read(1, 0, 0, normal)
-        .Read(1, 1, 0, historyNormal)
-        .ReadWrite(1, 2, 0, reprojectionOut)
+        .Shaders({computeShader.shader})             // 刀7b-3：严格边校验
+        .Read(2, SET2_BINDING_HISTORY_DEPTH, 0, builder.GetTexture("Depth"))
+        .Read(2, SET2_BINDING_HISTORY_DEPTH, 1, builder.GetTexture("Previous Depth"), VIEW_TYPE_2D, {})
+        .ReadIfValid(2, SET2_BINDING_HISTORY_VELOCITY, 0, "G-Buffer Velocity")
+        .Read(2, SET2_BINDING_HISTORY_OBJECT_ID, 0, builder.GetTexture("G-Buffer Object ID"))   // GPU-AV实锤：shader采b15:0（本帧ObjectID）但只绑了:1（悬空槽），2026-10-19补
+        .ReadIfValid(2, SET2_BINDING_HISTORY_OBJECT_ID, 1, "History G-Buffer Object ID")
+        .Read(2, SET2_BINDING_REPROJECTION_CURRENT_NORMAL, 0, normal)
+        .Read(2, SET2_BINDING_REPROJECTION_HISTORY_NORMAL, 0, historyNormal)
+        .ReadWrite(2, SET2_BINDING_REPROJECTION_RESULT_OUT, 0, reprojectionOut)
         .Execute([&](RDGPassContext context) {       
 
             RHICommandListRef command = context.command; 
             command->SetComputePipeline(computePipeline);
-            command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);   
-            command->BindDescriptorSet(context.descriptors[1], 1);
+            command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);
+            command->BindDescriptorSet(EngineContext::RenderResource()->GetPoolDescriptorSet(), 1);   
+            command->BindDescriptorSet(context.descriptors[2], 2);
             command->Dispatch(  Math::CeilDivide(EngineContext::Render()->GetWindowsExtent().width, 16), 
                                 Math::CeilDivide(EngineContext::Render()->GetWindowsExtent().height, 16), 
                                 1);

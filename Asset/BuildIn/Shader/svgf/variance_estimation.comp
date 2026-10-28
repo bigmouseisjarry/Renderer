@@ -1,9 +1,27 @@
 #version 460
 #extension GL_GOOGLE_include_directive : enable
 
-#include "../common/common.glsl"
 
-#include "common.glsl"
+#include "include/common.glsl"
+
+layout(push_constant) uniform SVGFSetting
+{
+    int round;      // 论文给出的参数设置：
+    int maxRound;   // 5
+
+    float sigmaP;   // 1.0
+    float sigmaN;   // 128.0
+    float sigmaL;   // 4.0
+
+    float alpha;
+    int mode;
+
+    int denoisedOnly;
+    int disocclusionFix;
+    int antiFirefly;
+    int historyClamp;
+
+} SETTING;
 
 #define THREAD_SIZE_X 16
 #define THREAD_SIZE_Y 16
@@ -46,8 +64,8 @@ void main()
 					vec3 qNormal        = DecodeGBufferNormal(texelFetch(G_BUFFER_NORMAL_SPECF, qPixel, 0).xyz);
 					vec2 qMoments 		= imageLoad(CURRENT_MOMENTS, qPixel).rg;
 
-					float wp    = GetPlaneDistanceWeight(pPosition.xyz, pNormal, qPosition.xyz);
-                	float wn    = GetNormalWeight(pNormal, qNormal);
+					float wp    = GetPlaneDistanceWeight(pPosition.xyz, pNormal, qPosition.xyz, SETTING.sigmaP);
+                	float wn    = GetNormalWeight(pNormal, qNormal, SETTING.sigmaN);
 					float w 	= wp * wn;
 					float weight = gaussKernel5x5[5 * (y + 2) + (x + 2)] / 273.0f * w;
  

@@ -3,12 +3,11 @@
 #include "Function/Render/RHI/RHICommandList.h"    // RHISemaphoreRef
 
 #include <cstdint>
-#include <functional>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
-// 跨帧注册表——RDG编译管线唯一的跨帧持久状态（V2方案：rdg-crossframe-registry-v2.md）
+// 跨帧注册表——RDG编译管线唯一的跨帧持久状态（时间线双signal模型，定案2026-10-25）
 //
 // 为什么必须是 RenderSystem 拥有、构造注入的共享对象：
 // RDGCompiler 是每帧槽一个实例（RenderSystem.h rdgCompilers[FRAMES_IN_FLIGHT]），
@@ -16,9 +15,11 @@
 // 同槽上一次编译（=帧N-1）的旧数据。文件级 static 语义正确但所有权挂进程、
 // 双实例互踩，本类是其正规化替代。
 //
-// 代际协议：编译期读 current_（上一帧终态）、写 pending_；build_submit_plan 末尾
-// commit_frame() 原子换代。主线程逐帧串行访问（编译在主线程，worker只录命令），
-// 无需加锁。
+// 两块状态：
+//   B（timelineCounters_）——live 非代际：值分配器跨帧延续；主线程逐帧串行访问
+//     （编译在主线程，worker只录命令），无需加锁
+//   import资源同步记录（current_/pending_）——代际：编译期（Phase 7走查）读current_
+//     （上帧终态）、写pending_；build_submit_plan 末尾 commit_frame() 换代（merge语义）
 //
 // 失败语义（定案，勿违反）：编译中途失败=进程fatal，本写入点无需失败回滚——
 // 若帧N在"值已写入注册表"后、"vkQueueSubmit2入队"前死掉，该值永不signal，
@@ -30,86 +31,69 @@
 class RDGCrossFrameRegistry
 {
 public:
-    // 资源在某队列上的末触点（timeline=该队列本帧槽的时间线）
-    struct QueuePoint
+    // B的两个职责，拆任一则规则①（同时间线signal按提交序严格递增）被击穿：
+    //   跨帧值序——时间线为帧槽私有对象（同槽隔帧复用），帧N与帧N+2提交到同一物理队列，
+    //     值必须跨帧延续；
+    //   帧内值序——同队列互不依赖的pass（空wait）从依赖链推不出值，靠计数器垫底防撞。
+    // 分配公式：signal = max(wait[本时间线], B[本时间线]) + 1。
+    // 返回的值可能最终未被任何wait引用（分配后节点被合并等）——空洞无害，计数器照常推进
+    uint64_t alloc_timeline_signal(const void* timeline, uint64_t lowerBound)
     {
-        RHISemaphoreRef timeline = nullptr;
-        uint64_t value = 0;
-    };
-
-    // 队列级记录：上一帧各队列的queueDone（粗链/prologue批的数据源）
-    struct QueueRecord
+        uint64_t& counter = timelineCounters_[timeline];
+        counter = std::max(counter, lowerBound);
+        return ++counter;
+    }
+    // B读取（不分配）：池化种子快照用——本槽各时间线的上代末值（槽fence已保证其完成，waits瞬过）
+    uint64_t peek_timeline_counter(const void* timeline) const
     {
-        RHISemaphoreRef timeline = nullptr;
-        uint64_t doneValue = 0;
-    };
-
-    // 资源级记录：imported资源的上帧末触点（细链数据源）。
-    // 键=底层RHI对象指针（Build期已挂节点；名字因ping-pong复用不可作键、节点句柄每帧重建不可作键）。
-    // per-queue而非单记录：资源上帧在两队列无依赖边并发读时（read-read无边），
-    // 本帧首个写者必须等两者——单记录会漏其一（v1方案的理论洞，本版修正）
-    struct ResourceRecord
+        auto found = timelineCounters_.find(timeline);
+        return found == timelineCounters_.end() ? 0 : found->second;
+    }
+    // 计数器seed（max更新）：B于进程首见每条时间线时从0自起，此接口留作迁移/诊断用
+    void seed_timeline_counter(const void* timeline, uint64_t value)
     {
-        std::unordered_map<uint32_t, QueuePoint> lastUsePerQueue;
-        QueuePoint homingPoint;     // 上帧归巢release的执行点（全局末触批signal；value==0=上帧未归巢）——
-                                    // 本帧prologue acquire(F→GFX)的执行序承接（替代整队列queueDone粗wait）
-    };
-
-    // 写侧：帧首清pending（current保留——本帧编译期读的是上帧数据）
-    void begin_frame(uint32_t queueCount)
-    {
-        pendingQueues_.assign(queueCount, QueueRecord{});
-        pendingResources_.clear();
+        uint64_t& counter = timelineCounters_[timeline];
+        counter = std::max(counter, value);
     }
 
-    // 写侧：build_submit_plan末尾调用，原子换代
+    // import资源同步记录：上帧末的同步状态
+    struct ResourceSyncRecord
+    {
+        uint32_t owner_queue = 0;   // 末触队列（族:队列=1:1，跨族判定即跨队列判定）
+        // 时间线对象 → {同族signal, 异族signal}：
+        //   同族值 = 该线最后一次write的signal（同队列冲突由Phase 7状态屏障覆盖，信号量不管）
+        //   异族值 = 该线最后一次任意访问的signal（跨队列RAW/WAR/WAW全覆盖）
+        // 键持RHISemaphoreRef而非裸指针：记录里含上帧（另一槽）的时间线对象，须持引用
+        // 跨帧保活至被wait完
+        std::unordered_map<RHISemaphoreRef, std::pair<uint64_t, uint64_t>> signals;
+        // 上帧末真实布局（逐子资源，mip主序展开=mip*arrayLayers+layer，与Phase 7 tracker同构）。
+        // 布局动态记载制（2026-10-26）：import的布局种子权威——调用点Import声明退役为首见兜底。
+        // 与signals同代际同语义：他槽在飞帧的记录，其值在下帧wait该帧signals后即为真实
+        std::vector<RHIResourceState> final_states;
+    };
+    const ResourceSyncRecord* find_resource_sync(const void* key) const
+    {
+        auto found = currentSyncRecords_.find(key);
+        return found == currentSyncRecords_.end() ? nullptr : &found->second;
+    }
+    void record_resource_sync(const void* key, ResourceSyncRecord&& record)
+    {
+        pendingSyncRecords_[key] = std::move(record);
+    }
+
+    // build_submit_plan末尾调用，原子换代
     void commit_frame()
     {
-        currentQueues_ = std::move(pendingQueues_);
-        pendingQueues_.clear();
-        currentResources_ = std::move(pendingResources_);
-        pendingResources_.clear();
-        hasLastFrame_ = true;
+        // merge换代而非整表替换：上帧未触碰的import资源（本帧未写pending键），
+        // 其所有权仍停在上上次触碰的族——槽fence保证那些使用已完成，但族信息依然有效且
+        // 下帧悬空起点判定必需；整表替换会丢族→悬空漏发→跨族无release（validation必抓）。
+        // 旧signal值已signal，下帧wait瞬间通过，无害
+        for (auto& [key, record] : pendingSyncRecords_) currentSyncRecords_[key] = std::move(record);
+        pendingSyncRecords_.clear();
     }
-
-    // ---- 队列级 ----
-    const QueueRecord* find_queue(uint32_t queue) const
-    {
-        if (queue >= currentQueues_.size()) return nullptr;
-        return &currentQueues_[queue];
-    }
-    void record_queue(uint32_t queue, QueueRecord&& record)
-    {
-        if (queue < pendingQueues_.size()) pendingQueues_[queue] = std::move(record);
-    }
-
-    // ---- 资源级 ----
-    const ResourceRecord* find_resource(const void* key) const
-    {
-        auto found = currentResources_.find(key);
-        return found == currentResources_.end() ? nullptr : &found->second;
-    }
-    void record_resource_last_use(const void* key, uint32_t queue, QueuePoint point)
-    {
-        pendingResources_[key].lastUsePerQueue[queue] = std::move(point);
-    }
-    void record_homing_point(const void* key, QueuePoint point)
-    {
-        pendingResources_[key].homingPoint = std::move(point);
-    }
-    // 遍历上帧全部资源记录（prologue承接wait的归巢点扫描用）
-    void foreach_resource(const std::function<void(const void*, const ResourceRecord&)>& func) const
-    {
-        for (const auto& [key, record] : currentResources_) func(key, record);
-    }
-
-    // 是否存在上一帧数据（进程首帧为false）
-    bool has_last_frame() const { return hasLastFrame_; }
 
 private:
-    std::vector<QueueRecord> currentQueues_;                        // 上帧终态（只读）
-    std::vector<QueueRecord> pendingQueues_;                        // 本帧写入
-    std::unordered_map<const void*, ResourceRecord> currentResources_;
-    std::unordered_map<const void*, ResourceRecord> pendingResources_;
-    bool hasLastFrame_ = false;
+    std::unordered_map<const void*, uint64_t> timelineCounters_;             // B（live：跨帧延续，非代际）
+    std::unordered_map<const void*, ResourceSyncRecord> currentSyncRecords_; // 上帧终态（只读）
+    std::unordered_map<const void*, ResourceSyncRecord> pendingSyncRecords_; // 本帧写入
 };

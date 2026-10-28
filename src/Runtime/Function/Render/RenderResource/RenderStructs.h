@@ -159,7 +159,6 @@ struct DirectionalLightInfo
     Mat4 view;
     Mat4 proj;
     Mat4 viewProj;
-    Mat4 prevViewProj;          
     Vec3 pos;
     float _padding0;
     Vec3 dir;

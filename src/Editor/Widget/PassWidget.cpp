@@ -255,56 +255,53 @@ void PassWidget::DeferredLightingPassUI(std::shared_ptr<DeferredLightingPass> pa
 	if (ImGui::RadioButton("Shadow", pass->setting.mode == 4))
 		pass->setting.mode = 4;
 	ImGui::SameLine();
-    if (ImGui::RadioButton("Shadow Contrast", pass->setting.mode == 5))
-        pass->setting.mode = 5;
-    ImGui::SameLine();
-	if (ImGui::RadioButton("Linear depth", pass->setting.mode == 6))
+	if (ImGui::RadioButton("Linear depth", pass->setting.mode == 5))
+		pass->setting.mode = 5;
+	ImGui::SameLine();
+	if (ImGui::RadioButton("Shadow cascade", pass->setting.mode == 6))
 		pass->setting.mode = 6;
-	ImGui::SameLine();
-	if (ImGui::RadioButton("Shadow cascade", pass->setting.mode == 7))
+
+    //////////////////////////////////
+	if (ImGui::RadioButton("Cluster light count", pass->setting.mode == 7))
 		pass->setting.mode = 7;
-
-    //////////////////////////////////
-	if (ImGui::RadioButton("Cluster light count", pass->setting.mode == 8))
-		pass->setting.mode = 8;
     ImGui::SameLine();
-	if (ImGui::RadioButton("Cluster XY", pass->setting.mode == 9))
-		pass->setting.mode = 9;
+	if (ImGui::RadioButton("Cluster XY", pass->setting.mode == 8))
+		pass->setting.mode = 8;
 	ImGui::SameLine();
-	if (ImGui::RadioButton("Cluster Z", pass->setting.mode == 10))
-		pass->setting.mode = 10;
+	if (ImGui::RadioButton("Cluster Z", pass->setting.mode == 9))
+		pass->setting.mode = 9;
 
     //////////////////////////////////
-	if (ImGui::RadioButton("Indirect light", pass->setting.mode == 11))
-		pass->setting.mode = 11;
+	if (ImGui::RadioButton("Indirect light", pass->setting.mode == 10))
+		pass->setting.mode = 10;
 	ImGui::SameLine();
-	if (ImGui::RadioButton("Indirect irradiance", pass->setting.mode == 12))
+	if (ImGui::RadioButton("Indirect irradiance", pass->setting.mode == 11))
+		pass->setting.mode = 11;
+    ImGui::SameLine();
+	if (ImGui::RadioButton("AO", pass->setting.mode == 12))
 		pass->setting.mode = 12;
     ImGui::SameLine();
-	if (ImGui::RadioButton("AO", pass->setting.mode == 13))
-		pass->setting.mode = 13;
+    if (ImGui::RadioButton("gnormal", pass->setting.mode == 13))
+        pass->setting.mode = 13;
     ImGui::SameLine();
-    if (ImGui::RadioButton("gnormal", pass->setting.mode == 14))
+    if (ImGui::RadioButton("F0", pass->setting.mode == 14))
         pass->setting.mode = 14;
     ImGui::SameLine();
-    if (ImGui::RadioButton("F0", pass->setting.mode == 15))
+    if (ImGui::RadioButton("transparent", pass->setting.mode == 15))
         pass->setting.mode = 15;
-    ImGui::SameLine();
-    if (ImGui::RadioButton("transparent", pass->setting.mode == 16))
-        pass->setting.mode = 16;
 
     //////////////////////////////////////////////////////////////
-    if (ImGui::RadioButton("emission", pass->setting.mode == 17))
+    if (ImGui::RadioButton("emission", pass->setting.mode == 16))
+        pass->setting.mode = 16;
+    ImGui::SameLine();
+    if (ImGui::RadioButton("directLightColor", pass->setting.mode == 17))
         pass->setting.mode = 17;
     ImGui::SameLine();
-    if (ImGui::RadioButton("directLightColor", pass->setting.mode == 18))
+    if (ImGui::RadioButton("BRDFspecular", pass->setting.mode == 18))
         pass->setting.mode = 18;
     ImGui::SameLine();
-    if (ImGui::RadioButton("BRDFspecular", pass->setting.mode == 19))
+    if (ImGui::RadioButton("BRDFdiffuse", pass->setting.mode == 19))
         pass->setting.mode = 19;
-    ImGui::SameLine();
-    if (ImGui::RadioButton("BRDFdiffuse", pass->setting.mode == 20))
-        pass->setting.mode = 20;
 }
 
 void PassWidget::SSSRPassUI(std::shared_ptr<SSSRPass> pass)

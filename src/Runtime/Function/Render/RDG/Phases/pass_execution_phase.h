@@ -3,7 +3,6 @@
 #include "IRenderGraphPhase.h"
 #include "queue_schedule.h"
 #include "schedule_reorder.h"
-#include "cross_queue_sync_analysis.h"
 #include "barrier_generation_phase.h"
 #include "pass_binding_phase.h"
 #include "cross_frame_registry.h"
@@ -36,12 +35,6 @@ struct CommandRecordingConfig
     // GPU时间戳打点开关（编译侧）。与RHIRenderQueryInfo::enable_gpu_timing是两个独立结构体——
     // 录制期以"本开关 && 每帧传入的RHIRenderQuery非空"共同判定（见record_stream_range）
     bool enable_gpu_timing = false;
-
-    // 跨帧同步模式：true=粗链（帧首各队列wait上帧其他队列queueDone，帧间串行、实现最简）；
-    // false=细链（imported资源首触批wait其上帧各队列末触点，帧间按资源重叠）。
-    // 触碰集/末触signal/注册表回写在两模式下恒做（细链wait的数据源不能因模式切换断代），
-    // 仅wait组装侧不同——粗链模式下末触signal成为无人wait的冗余信号（无害）
-    bool coarse_cross_frame_sync = false;
 };
 
 // 命令录制结果（计数在worker上并发自增，用原子）
@@ -49,7 +42,6 @@ struct CommandRecordingResult
 {
     std::atomic<uint32_t> total_passes_executed = 0;
     std::atomic<uint32_t> total_barriers_inserted = 0;
-    uint32_t total_sync_points_processed = 0;   // 本帧实际消费的有效同步点数（主线程单点赋值）
     uint32_t total_submit_batches = 0;          // 提交批次数（含join批）
 };
 
@@ -102,7 +94,6 @@ public:
     PassExecutionPhase(
         const QueueSchedule& queue_schedule,
         const ExecutionReorderPhase& reorder_phase,
-        const CrossQueueSyncAnalysis& sync_analysis,
         const BarrierGenerationPhase& barrier_generation_phase,
         const PassBindingPhase& binding_phase,
         RDGCrossFrameRegistry& cross_frame_registry,
@@ -128,6 +119,8 @@ private:
         uint32_t begin = 0;
         uint32_t end = 0;
         bool serial = false;                        // 串行区批次（主线程join后录制）
+        bool isDanglingPrologue = false;            // 悬空prologue空批（只含该族帧首release barriers，
+                                                    // 主线程录制；不与任何pass共批——见Step B注释）
         bool hasPresent = false;                    // 含Present pass（signal finishSemaphore）
         const char* openReason = "stream-start";    // 开批原因（仅StepB日志标注用）
         std::vector<RHICommandListRef> commandLists;    // 批内piece的命令流（数组序=执行序）
@@ -142,20 +135,22 @@ private:
         uint32_t end = 0;
     };
 
-    // Step A：队列流 + 串行边界 + 有效同步点过滤（填充 streams_/activeQueues_/orderedPasses_）
+    // Step A：队列流 + 串行边界（填充 streams_/activeQueues_/orderedPasses_；同步点体系已随
+    // 时间线双signal模型退役，CrossQueueSyncAnalysis仅存活于差分审计）
     void build_queue_streams(RDGDependencyGraphRef graph, PerFrameCommonResourceRef executor);
-    // Step B：同步点驱动的批次切分（填充 batches_）
-    void split_submit_batches();
-    // Step C：提交计划组装 + timeline值按提交序分配（写入 executor->submitPlan）
+    // Step B：值级守卫的批次切分（填充 batches_）——pass的结构体A waits已带具体值，
+    // 未被waitedMax支配覆盖的wait开批发wait；本队列时间线的wait恒开批（规则③防同批自等）
+    void split_submit_batches(PerFrameCommonResourceRef executor);
+    // Step C：提交计划组装（写入 executor->submitPlan）——零值分配（wait/signal全由Phase 7定稿），
+    // 只做聚合：批waits=批内逐时间线max+支配去重；每批每时间线恰一条signal=批内最大值（规则①）
     void build_submit_plan(PerFrameCommonResourceRef executor);
     // Step D：piece均衡分配 + workers并行录制 + 主线程串行区录制 + 回填计划
     void record_all(RDGDependencyGraphRef graph, PerFrameCommonResourceRef executor);
 
-    // 细链触碰集推导（build_submit_plan开头调用，需batches_已切好）：
-    // imported资源（键=底层RHI对象指针）→ 每键每队列首触批（wait挂点）+ 每键全局末触pass
-    // （归巢判定与注册表回写用）。触碰集=图边全集（foreach含虚拟Dependency边）——
-    void compute_imported_touch_sets();
-
+    // 悬空起点辅助：q是否为某悬空起点的挂靠队列（挂靠判定=时间线对象匹配）；
+    // 取该队列的悬空节点（无则nullptr）
+    bool queue_has_dangling(uint32_t q, PerFrameCommonResourceRef executor) const;
+    const RDGSyncNode* queue_dangling_node(uint32_t q, PerFrameCommonResourceRef executor) const;
 
     // 录制队列流 [beginIndex, endIndex) 的pass到指定命令流
     void record_stream_range(RDGDependencyGraphRef graph, PerFrameCommonResourceRef executor,
@@ -175,13 +170,10 @@ private:
     void emit_barrier(RHICommandListRef command, const RDGBarrier& barrier);   // 单条虚拟屏障→物理命令
     // after = false：发射非output边的转移屏障（pass之前）；after = true：发射output边的收敛屏障（pass之后）
     void insert_pass_barriers(RHICommandListRef command, RDGPassNodeRef pass, bool after);
-    // pass的屏障批次中是否含帧首跨族acquire标记（source_pass==nullptr且src_family有效）——
-    // 该pass所在批次需wait graphics prologueDone
-    bool pass_has_frame_start_acquire(RDGPassNodeRef pass) const;
 
-    // 收集pass的帧内跨族acquire守卫（{配对release所在pass, release队列}）——Step B统一开批
-    // 检查与QFO配对序断言用。帧首acquire（source_pass==nullptr）的配对release在graphics
-    // prologue批（恒为计划首，提交序天然覆盖），不产生守卫
+    // 收集pass的帧内跨族acquire守卫（{配对release所在pass, release队列}）——QFO配对序断言用
+    //（审计②）。帧首acquire（source_pass==nullptr）跳过——其配对release在悬空起点prologue批
+    //（sortKey强制0=计划首），提交序天然覆盖
     void collect_in_frame_acquire_guards(RDGPassNodeRef pass,
         std::vector<std::pair<RDGPassNodeRef, uint32_t>>& guards) const;
 
@@ -200,7 +192,6 @@ private:
 
     const QueueSchedule& queue_schedule_;
     const ExecutionReorderPhase& reorder_phase_;
-    const CrossQueueSyncAnalysis& sync_analysis_;
     const BarrierGenerationPhase& barrier_generation_phase_;
     const PassBindingPhase& binding_phase_;
     RDGCrossFrameRegistry& cross_frame_registry_;   // 跨帧持久状态（RenderSystem拥有，注入；见其类注释）
@@ -212,24 +203,7 @@ private:
     std::vector<RDGPassNodeRef> orderedPasses_;             // 经过剔除后的pass全局拓扑序，释放sweep用
     std::unordered_map<RDGPassNodeRef, uint32_t> topoIndex_;// pass在orderedPasses_中的下标位置（批次排序用）
     std::vector<QueueStream> streams_;                      // 每队列流
-    std::vector<uint32_t> activeQueues_;                    // 有pass的队列下标
+    std::vector<uint32_t> activeQueues_;                    // 有pass（或有悬空起点挂靠）的队列下标
     std::vector<std::vector<StreamBatch>> batches_;         // 每队列的提交批次
     std::vector<std::vector<uint32_t>> planBatchIndex_;     // (q,b)→计划批次下标（提交序=拓扑序）
-
-    std::vector<CrossQueueSyncPoint> activePoints_;         // 有效同步点（悬空已过滤）
-    std::unordered_map<RDGPassNodeRef, std::vector<uint32_t>> producerPoints_;   // 生产者pass在有效同步点(activePoints_)中的下标
-	std::unordered_map<RDGPassNodeRef, std::vector<uint32_t>> consumerPoints_;   // 消费者pass在有效同步点(activePoints_)中的下标
-    std::unordered_map<uint32_t, uint64_t> pointValues_;    // 同步点下标→timeline值（提交序分配）
-
-    // ---- 细链工作数据（build_submit_plan期间）----
-    // (q,b)→首触键集：该批是这些imported键在队列q的首触批（跨帧wait挂点）
-    std::map<std::pair<uint32_t, uint32_t>, std::vector<const void*>> firstTouchKeys_;
-    // 键→队列→末触(q,b)（本帧内每键每队列的最后触批——signal与回写挂点）
-    std::unordered_map<const void*, std::unordered_map<uint32_t, std::pair<uint32_t, uint32_t>>> lastUseBatch_;
-    // 键→归巢载体批(q,b)：Phase 7归巢release（target_pass==nullptr的跨族release，imported与
-    // 池化纹理皆有）实际挂载的批——锚定屏障真实位置而非拓扑序推断（Phase 7遍历序与本相
-    // 拓扑序对不可比较pass可不一致）。prologue承接wait的数据源
-    std::unordered_map<const void*, std::pair<uint32_t, uint32_t>> homingBatch_;
-    std::set<std::pair<uint32_t, uint32_t>> lastUseBatches_;            // 末触批集合（值分配查询）
-    std::map<std::pair<uint32_t, uint32_t>, uint64_t> batchLastUseValue_;   // 末触批→timeline值
 };

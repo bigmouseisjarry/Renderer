@@ -49,9 +49,10 @@ void TestTrianglePass::Build(RDGBuilder& builder)
             .AllowRenderTarget()
             .Finish();
 
+        // 稳态=DEPTH_STENCIL（与DepthPass声明同值）：test管线里末位触碰者同为EditorUI的DS附件
         RDGTextureHandle depth = builder.GetOrCreateTexture("Depth")
-            .Import(EngineContext::RenderResource()->GetDepthTexture(), RESOURCE_STATE_UNDEFINED)
-            .Finish();  
+            .Import(EngineContext::RenderResource()->GetDepthTexture())
+            .Finish();
 
         RDGRenderPassHandle pass0 = builder.CreateRenderPass(GetName())
             .Color(0, outColor, ATTACHMENT_LOAD_OP_CLEAR, ATTACHMENT_STORE_OP_STORE, {0.0f, 0.0f, 0.0f, 0.0f})

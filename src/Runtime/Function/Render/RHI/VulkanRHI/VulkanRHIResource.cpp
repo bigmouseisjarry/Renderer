@@ -84,13 +84,11 @@ void VulkanRHIRenderQuery::ResolveFrame(uint32_t slot)
 
 		const uint32_t base = SubRangeBase(slot, q);
 		std::vector<uint64_t> stamps(count, 0);
-		if (vkGetQueryPoolResults(device, pool, base, count,
-			stamps.size() * sizeof(uint64_t), stamps.data(), sizeof(uint64_t),
-			VK_QUERY_RESULT_64_BIT) != VK_SUCCESS)
-		{
-			for (uint32_t i = 0; i < count; i++) names[base + i].clear();   // 结果未就绪（理论不可达：fence已过）——丢弃
-			continue;
-		}
+        if (vkGetQueryPoolResults(device, pool, base, count, stamps.size() * sizeof(uint64_t), stamps.data(), sizeof(uint64_t), VK_QUERY_RESULT_64_BIT) != VK_SUCCESS)
+        {
+            for (uint32_t i = 0; i < count; i++) names[base + i].clear();   // 结果未就绪（理论不可达：fence已过）——丢弃
+            continue;
+        }
 		vkResetQueryPool(device, pool, base, count);    // 复用前重置（hostQueryReset特性）
 
 		chainStamps[q] = stamps;    // names随后清理，链路dump需按值另存
@@ -823,14 +821,17 @@ VulkanRHIShader::VulkanRHIShader(const RHIShaderInfo& info, VulkanRHIBackend& ba
     // bool isGLSL = module.source_language & SpvSourceLanguageGLSL;
     // bool isHLSL = module.source_language & SpvSourceLanguageHLSL;
 
-    // pushConstant
-    // uint32_t pushConstantCnt;
-    // spvReflectEnumeratePushConstantBlocks(&module, &pushConstantCnt, NULL);
-    // if (pushConstantCnt > 0) 
-    // {
-    //     std::vector<SpvReflectBlockVariable*> blockVariables(pushConstantCnt + 1);
-    //     spvReflectEnumeratePushConstantBlocks(&module, &pushConstantCnt, blockVariables.data());
-    // }
+    // pushConstant使用信息（VulkanUtil::ValidatePipelineBindings用：校验RS的PC range是否覆盖使用它的stage与大小）
+    uint32_t pushConstantCnt = 0;
+    spvReflectEnumeratePushConstantBlocks(&module, &pushConstantCnt, NULL);
+    if (pushConstantCnt > 0)
+    {
+        std::vector<SpvReflectBlockVariable*> blockVariables(pushConstantCnt);
+        spvReflectEnumeratePushConstantBlocks(&module, &pushConstantCnt, blockVariables.data());
+        reflectInfo.usePushConstant = true;
+        for(uint32_t i = 0; i < pushConstantCnt; i++)
+            reflectInfo.pushConstantSize = std::max(reflectInfo.pushConstantSize, blockVariables[i]->size);
+    }
 
     // 着色器输入和输出
     uint32_t inputVariableCnt;
@@ -918,6 +919,9 @@ VulkanRHIShader::VulkanRHIShader(const RHIShaderInfo& info, VulkanRHIBackend& ba
                 entry.size = currentBinding->count;
                 entry.type = VulkanUtil::SpvDescriptorTypeToResourceType(currentBinding->descriptor_type);
                 entry.frequency = reflectInfo.frequency;
+                entry.used = currentBinding->accessed != 0;   // 静态使用分析：声明未使用的绑定（如共享include带来的）无需RS后备
+
+                if (entry.set == 2 && !entry.used)
 
                 if ((currentBinding->type_description->type_flags & SPV_REFLECT_TYPE_FLAG_EXTERNAL_IMAGE) ||
                     (currentBinding->type_description->type_flags & SPV_REFLECT_TYPE_FLAG_EXTERNAL_SAMPLED_IMAGE))
@@ -1189,6 +1193,29 @@ void VulkanRHITopLevelAccelerationStructure::PrepareUpdate(const std::vector<RHI
 
 void VulkanRHITopLevelAccelerationStructure::RecordBuild(VkCommandBuffer commandBuffer)
 {
+    // 刀5定罪修复（2026-10-19晚）：scratch buffer跨帧复用的WAW——同队列submit间无隐式执行序，
+    // 帧N/N+1的build可并发写同一scratch（sync validation 175/175实锤）→TLAS损坏→RT噪点+nvlddmkm fault。
+    // refit模式下帧N+1还读帧N写的AS本体，故另加全局memory barrier覆盖opaque AS内存。
+    VkBufferMemoryBarrier scratchBarrier{};
+    scratchBarrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+    scratchBarrier.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+    scratchBarrier.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+    scratchBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    scratchBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    scratchBarrier.buffer = ResourceCast(scratchBuffer)->GetHandle();
+    scratchBarrier.offset = 0;
+    scratchBarrier.size = VK_WHOLE_SIZE;
+
+    VkMemoryBarrier asBodyBarrier{};
+    asBodyBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    asBodyBarrier.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+    asBodyBarrier.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+
+    vkCmdPipelineBarrier(commandBuffer,
+        VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+        VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+        0, 1, &asBodyBarrier, 1, &scratchBarrier, 0, nullptr);
+
     VkAccelerationStructureBuildRangeInfoKHR* rangeInfo = &accelerationStructureBuildRangeInfo;
     vkCmdBuildAccelerationStructuresKHR(commandBuffer,
         1,
@@ -1218,7 +1245,7 @@ VulkanRHIBottomLevelAccelerationStructure::VulkanRHIBottomLevelAccelerationStruc
 
     accelerationStructureGeometry.geometry.triangles.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
     accelerationStructureGeometry.geometry.triangles.vertexData = vertexBufferDeviceAddress;
-    accelerationStructureGeometry.geometry.triangles.maxVertex = 3;
+    accelerationStructureGeometry.geometry.triangles.maxVertex = info.vertexOffset / info.vertexStride + (info.vertexCount > 0 ? info.vertexCount - 1 : 0);    // 2026-10-28:修复硬编码3(须≥firstVertex+最大索引值,VUID-09156)
     accelerationStructureGeometry.geometry.triangles.vertexStride = info.vertexStride;
 
     accelerationStructureGeometry.geometry.triangles.indexType = VK_INDEX_TYPE_UINT32;
@@ -1366,9 +1393,22 @@ VulkanRHIRootSignature::VulkanRHIRootSignature(const RHIRootSignatureInfo& info,
             // 指定 Descriptor Set Layout CreateInfo 扩展
             layoutInfo.pNext = &setLayoutBindingFlags;
 
-            if (vkCreateDescriptorSetLayout(backend.GetLogicalDevice(), &layoutInfo, nullptr, &set.layout) != VK_SUCCESS) 
+            if (vkCreateDescriptorSetLayout(backend.GetLogicalDevice(), &layoutInfo, nullptr, &set.layout) != VK_SUCCESS)
             {
                 LOG_FATAL("Failed to create descriptor set layout!");
+            }
+        }
+        else
+        {
+            // 稀疏签名（如只声明set1/set2的pass根签名）：空set也创建空layout占位。
+            // 否则setInfos按set号稠密索引，管线构造直接push set.layout，会把NULL句柄塞进
+            // VkPipelineLayoutCreateInfo.pSetLayouts造成set编号错位（刀0的set0清退首次踩中）
+            VkDescriptorSetLayoutCreateInfo emptyLayoutInfo = {};
+            emptyLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+            emptyLayoutInfo.bindingCount = 0;
+            if (vkCreateDescriptorSetLayout(backend.GetLogicalDevice(), &emptyLayoutInfo, nullptr, &set.layout) != VK_SUCCESS)
+            {
+                LOG_FATAL("Failed to create empty descriptor set layout!");
             }
         }
     }
@@ -1378,8 +1418,20 @@ RHIDescriptorSetRef VulkanRHIRootSignature::CreateDescriptorSet(uint32_t set)
 {
     if(setInfos.size() > set && setInfos[set].bindings.size() > 0)
     {
-        RHIDescriptorSetRef descriptorSet = std::make_shared<VulkanRHIDescriptorSet>(setInfos[set].layout, *Backend());  
+        RHIDescriptorSetRef descriptorSet = std::make_shared<VulkanRHIDescriptorSet>(setInfos[set].layout, *Backend());
         Backend()->RegisterResource(descriptorSet);
+
+        // 静态采样器播种（声明即绑定）：RS声明表中的采样器在set创建时写入对应binding。
+        // 创建期一次写入即长期有效（池化set跨帧复用时由RDG描述符池幂等重播兜底——池键只含entries）
+        for (const RHIStaticSampler& staticSampler : info.GetStaticSamplers())
+        {
+            if (staticSampler.set != set || staticSampler.sampler == nullptr) continue;
+            descriptorSet->UpdateDescriptor({
+                .binding = staticSampler.binding,
+                .index = staticSampler.index,
+                .resourceType = RESOURCE_TYPE_SAMPLER,
+                .sampler = staticSampler.sampler});
+        }
 
         return descriptorSet;
     }
@@ -1441,6 +1493,7 @@ RHIDescriptorSet& VulkanRHIDescriptorSet::UpdateDescriptor(const RHIDescriptorUp
     case RESOURCE_TYPE_TEXTURE_CUBE:
         imageDescriptor.imageView = ResourceCast(descriptorUpdateInfo.textureView)->GetHandle();
         imageDescriptor.imageLayout = VulkanUtil::DescriptorToImageLayout(descriptorUpdateInfo.state, descriptorUpdateInfo.resourceType);
+        // [DescBake]取证日志已删（2026-10-28收尾：S4池键案结案，元素粒度监管已由[DanglingSlot]自查器接管）
         descriptorWrite.pImageInfo = &imageDescriptor;
         break;
 

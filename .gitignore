@@ -5,3 +5,6 @@ src/Runtime/Test/
 
 vsxmake2022/
 vsxmake2026/
+
+*.spv
+*.log

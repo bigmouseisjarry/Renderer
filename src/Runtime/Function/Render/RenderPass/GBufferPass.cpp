@@ -65,7 +65,9 @@ void GBufferPass::Init()
     fragmentShader      = Shader(EngineContext::File()->ShaderPath() + "default/deferred.frag.spv", SHADER_FREQUENCY_FRAGMENT);
 
     RHIRootSignatureInfo rootSignatureInfo = {};
-    rootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetPerFrameRootSignature()->GetInfo());                      
+    rootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetPerFrameRootSignature()->GetInfo())
+                     .AddEntry(EngineContext::RenderResource()->GetBindlessRootSignature()->GetInfo())
+                     .AddEntry(EngineContext::RenderResource()->GetSet2RootSignature()->GetInfo());     
     rootSignature = backend->CreateRootSignature(rootSignatureInfo);
 
     RHIGraphicsPipelineInfo pipelineInfo = {};
@@ -77,7 +79,7 @@ void GBufferPass::Init()
     for(uint32_t i = 0; i < MAX_RENDER_TARGETS; i++) pipelineInfo.blendState.renderTargets[i].enable = false;
 	pipelineInfo.colorAttachmentFormats[0]      = FORMAT_R8G8B8A8_UNORM;                // diffuse、metallic
     pipelineInfo.colorAttachmentFormats[1]      = FORMAT_R8G8B8A8_UNORM;                // 八面体2×12位拼+specF（位模式用UNORM）
-	pipelineInfo.colorAttachmentFormats[2]      = FORMAT_R8G8B8A8_UNORM;             // emission RGBM（rgb=e/max(e,1)，a=log2(max)/10，上界2^10）           // emission（A=IOR）
+	pipelineInfo.colorAttachmentFormats[2]      = FORMAT_R8G8B8A8_UNORM;                // emission RGBM（rgb=e/max(e,1)，a=log2(max)/10，上界2^10）           // emission（A=IOR）
 	pipelineInfo.colorAttachmentFormats[3]      = FORMAT_R32G32_SFLOAT;                 // velocity
     pipelineInfo.colorAttachmentFormats[4]      = FORMAT_R32_UINT;                      // objectID
 	pipelineInfo.colorAttachmentFormats[5]      = FORMAT_R8G8B8A8_UNORM;                // 八面体几何法线+AO
@@ -105,8 +107,9 @@ void GBufferPass::Build(RDGBuilder& builder)
         .AllowRenderTarget()
         .Finish();
 
+    // 持久对稳态声明（帧末位触碰者收敛态，首帧由Import自动按UNDEFINED处理）：
     RDGTextureHandle normal = builder.CreateTexture("G-Buffer Normal/Roughness")
-        .Import(EngineContext::RenderResource()->GetNormalTexture(), RESOURCE_STATE_UNDEFINED)
+        .Import(EngineContext::RenderResource()->GetNormalTexture())      // 末位=SSSR读
         .Finish();
 
     RDGTextureHandle emission = builder.CreateTexture("G-Buffer Emission")
@@ -120,19 +123,19 @@ void GBufferPass::Build(RDGBuilder& builder)
         .Finish();
 
     RDGTextureHandle velocity = builder.CreateTexture("G-Buffer Velocity")
-        .Import(EngineContext::RenderResource()->GetVelocityTexture(), RESOURCE_STATE_UNDEFINED)
+        .Import(EngineContext::RenderResource()->GetVelocityTexture())    // 末位=thin的OutputRead（NRD读UAV）
         .Finish();
 
     RDGTextureHandle objectID = builder.CreateTexture("G-Buffer Object ID")
-        .Import(EngineContext::RenderResource()->GetObjectIDTexture(), RESOURCE_STATE_UNDEFINED)
+        .Import(EngineContext::RenderResource()->GetObjectIDTexture())    // 末位=thin的OutputRead
         .Finish();
 
     RDGTextureHandle historyObjectID = builder.CreateTexture("History G-Buffer Object ID")
-        .Import(EngineContext::RenderResource()->GetPrevObjectIDTexture(), RESOURCE_STATE_UNDEFINED)
+        .Import(EngineContext::RenderResource()->GetPrevObjectIDTexture()) // copy+OutputRead后全程只读（Reprojection）
         .Finish();
 
     RDGTextureHandle historyNormal = builder.CreateTexture("History G-Buffer Normal/Roughness")
-        .Import(EngineContext::RenderResource()->GetPrevNormalTexture(), RESOURCE_STATE_UNDEFINED)
+        .Import(EngineContext::RenderResource()->GetPrevNormalTexture())   // copy后由Reprojection读收敛SRV
         .Finish();
 
     RDGTextureHandle geometricNormal = builder.CreateTexture("G-Buffer Geometric Normal/AO")
@@ -156,7 +159,7 @@ void GBufferPass::Build(RDGBuilder& builder)
         .Finish();
 
     RDGTextureHandle ior = builder.CreateTexture("G-Buffer IOR")
-        .Import(EngineContext::RenderResource()->GetIORTexture(), RESOURCE_STATE_UNDEFINED)
+        .Import(EngineContext::RenderResource()->GetIORTexture())          // 末位=DeferredLighting读（thin的OutputRead之后）
         .Finish();
 
     RDGTextureHandle depth = builder.GetTexture("Depth");
@@ -188,19 +191,23 @@ void GBufferPass::Build(RDGBuilder& builder)
             .DepthStencil(depth, ATTACHMENT_LOAD_OP_LOAD, ATTACHMENT_STORE_OP_STORE, 1.0f, 0)
             .ReadIndirect(builder.GetBuffer("Mesh Draw Commands" + cmdIndex))
             .ReadIndirect(builder.GetBuffer("Clusrter Draw Commands" + cmdIndex))
+            .RootSignature(rootSignature)     // 带根签名才会为下方set1声明生成池化描述符
+            .Read(2, SET2_BINDING_CLUSTER_DRAW_INFOS_READ, 0, builder.GetBuffer("Cluster Draw Infos" + cmdIndex), 0, 0, RESOURCE_TYPE_BUFFER)
             .Execute([&](RDGPassContext context) {
 
                 Extent2D windowExtent = EngineContext::Render()->GetWindowsExtent();
 
-                RHICommandListRef command = context.command;  
-                command->SetGraphicsPipeline(pipeline);                                          
+                RHICommandListRef command = context.command;
+                command->SetGraphicsPipeline(pipeline);
                 command->SetViewport({0, 0}, {windowExtent.width, windowExtent.height});
-                command->SetScissor({0, 0}, {windowExtent.width, windowExtent.height}); 
-                command->SetDepthBias(0.0f, 0.0f, 0.0f); 
-                command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);   
+                command->SetScissor({0, 0}, {windowExtent.width, windowExtent.height});
+                command->SetDepthBias(0.0f, 0.0f, 0.0f);
+                command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);
+                command->BindDescriptorSet(EngineContext::RenderResource()->GetPoolDescriptorSet(), 1);
+                command->BindDescriptorSet(context.descriptors[2], 2);
 
                 // 这里吃掉Commands，所以gl_InstanceIndex = objectID
-                meshPassProcessor->Draw(command);                      
+                meshPassProcessor->Draw(command);
             })
             .OutputRead(depth)  // 后续处理需要读深度
             .OutputRead(velocity)

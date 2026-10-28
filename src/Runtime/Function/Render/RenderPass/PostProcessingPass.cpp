@@ -11,9 +11,7 @@ void PostProcessingPass::Init()
     computeShader = Shader(EngineContext::File()->ShaderPath() + "post_process/post_process.comp.spv", SHADER_FREQUENCY_COMPUTE);
 
     RHIRootSignatureInfo rootSignatureInfo = {};
-    rootSignatureInfo.AddEntry({0, 0, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })
-                     .AddEntry({0, 1, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE})
-                     .AddEntry({0, 2, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_BUFFER})
+    rootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetSet2RootSignature()->GetInfo())       // 刀7b-3：set2全局统一RS（98槽）
                      .AddPushConstant({128, SHADER_FREQUENCY_COMPUTE});
     rootSignature = backend->CreateRootSignature(rootSignatureInfo);
 
@@ -47,14 +45,15 @@ void PostProcessingPass::Build(RDGBuilder& builder)
     RDGComputePassHandle pass = builder.CreateComputePass(GetName())
         .AddFlag(RDGPassFlags::ForceGraphicsQueue)
         .RootSignature(rootSignature)
-        .Read(0, 0, 0, stableColor)
-        .ReadWrite(0, 1, 0, outColor)
-        .ReadWrite(0, 2, 0, exposureData)
+        .Shaders({computeShader.shader})             // 刀7b-3：严格边校验
+        .Read(2, SET2_BINDING_IN_COLOR, 0, stableColor)
+        .ReadWrite(2, SET2_BINDING_POSTPROCESS_OUT, 0, outColor)
+        .ReadWrite(2, SET2_BINDING_EXPOSURE_DATA, 0, exposureData, 0, 0)
         .Execute([&](RDGPassContext context) {       
 
             RHICommandListRef command = context.command; 
             command->SetComputePipeline(computePipeline);
-            command->BindDescriptorSet(context.descriptors[0], 0);
+            command->BindDescriptorSet(context.descriptors[2], 2);
             command->PushConstants(&setting, sizeof(PostProcessingSetting), SHADER_FREQUENCY_COMPUTE);
             command->Dispatch(  Math::CeilDivide(EngineContext::Render()->GetWindowsExtent().width, 16), 
                                 Math::CeilDivide(EngineContext::Render()->GetWindowsExtent().height, 16), 
@@ -66,7 +65,8 @@ void PostProcessingPass::Build(RDGBuilder& builder)
     // TODO 换个位置
     // Surface Cache的更新回读
     
-    RDGBufferHandle cardUpdate = builder.CreateBuffer("Surface Cache Card Update")
+    // 刀5：改GetOrCreate——b27消费者（RTBase/Clipmap/SSSR/ReSTIRGI）先Build时会先建此节点，CreateBuffer不查黑板会造出同名双节点
+    RDGBufferHandle cardUpdate = builder.GetOrCreateBuffer("Surface Cache Card Update")
         .Import(EngineContext::RenderResource()->GetCardUpdateBuffer(), RESOURCE_STATE_UNORDERED_ACCESS)
         .Finish();
 

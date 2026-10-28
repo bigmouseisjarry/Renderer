@@ -2,7 +2,6 @@
 #extension GL_EXT_samplerless_texture_functions : enable
 #extension GL_GOOGLE_include_directive : enable
 
-#include "../common/common.glsl"	
 #include "include/common.glsl"	
 
 #define THREAD_SIZE_X 16
@@ -52,14 +51,14 @@ void main()
         //     for(int y = 0; y < 2; y++)
         //     {
         //         uint reservoirIndex = (downsamplePixel.y + y) * downsampleExtent.x + (downsamplePixel.x + x);
-	    //         GIReservoir res = RESULT_RESERVOIRS[reservoirIndex];
+	    //         GIReservoir res = RESTIR_GI_RESULT_RESERVOIRS[reservoirIndex];
 
         //         vec3 radiance = res.sampl.outRadiance * res.w * cacheFactor * weight[y * 2 + x]; 
         //         float dist = length(res.sampl.hitPos - worldPos.xyz) * weight[y * 2 + x]; // hitDistance
         {
             {
                 uint reservoirIndex = downsamplePixel.y * downsampleExtent.x + downsamplePixel.x;
-	            GIReservoir res = RESULT_RESERVOIRS[reservoirIndex];
+	            GIReservoir res = RESTIR_GI_RESULT_RESERVOIRS[reservoirIndex];
 
                 vec3 radiance = res.sampl.outRadiance * res.w * cacheFactor; 
                 float dist = length(res.sampl.hitPos - worldPos.xyz); // hitDistance

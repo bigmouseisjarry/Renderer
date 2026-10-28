@@ -3,7 +3,7 @@
 #extension GL_ARB_separate_shader_objects : enable
 #extension GL_GOOGLE_include_directive : enable
 
-#include "../common/common.glsl"
+#include "include/common.glsl"
 #include "clipmap.glsl"
 
 layout(location = 0) rayPayloadInEXT vec3 HIT_VALUE;

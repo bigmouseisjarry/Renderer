@@ -1,12 +1,7 @@
 #version 460
 #extension GL_GOOGLE_include_directive : enable
 
-#include "../common/common.glsl"
-
-layout(set = 1, binding = 0) uniform texture2D CURRENT_COLOR;
-layout(set = 1, binding = 1) uniform texture2D HISTORY_COLOR;
-layout(set = 1, binding = 2) uniform texture2D REPROJECTION_RESULT;
-layout(set = 1, binding = 3, rgba16f) uniform image2D OUT_COLOR;
+#include "include/common.glsl"
 
 layout(push_constant) uniform TAASetting 
 {
@@ -67,7 +62,7 @@ void main()
 
     float blend     = SETTING.blendFactor;
 
-    vec4 reprojection   = texelFetch(REPROJECTION_RESULT, pixel, 0);
+    vec4 reprojection   = texelFetch(TAA_REPROJECTION_RESULT, pixel, 0);
     vec2 prevUV         = reprojection.xy;
     bool valid          = prevUV.x > 0.0f ? true : false;
 
@@ -160,7 +155,7 @@ void main()
     if(SETTING.showReprojectionVaild != 0)
         outColor = valid ? vec4(1.0f) : vec4(0.0f);
 
-    imageStore(OUT_COLOR, pixel, outColor);
+    imageStore(TAA_OUT_COLOR, pixel, outColor);
     // imageStore(HISTORY_OUT)已删：OUT_COLOR即本帧稳态（持久槽直写）
 }
 

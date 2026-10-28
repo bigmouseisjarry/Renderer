@@ -26,7 +26,9 @@ void DirectionalShadowPass::Init()
 
     RHIRootSignatureInfo rootSignatureInfo = {};
     rootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetPerFrameRootSignature()->GetInfo())
-                     .AddPushConstant({128, SHADER_FREQUENCY_GRAPHICS});
+                     .AddEntry(EngineContext::RenderResource()->GetBindlessRootSignature()->GetInfo())
+                     .AddEntry(EngineContext::RenderResource()->GetSet2RootSignature()->GetInfo())       
+                                          .AddPushConstant({128, SHADER_FREQUENCY_GRAPHICS});
     rootSignature = backend->CreateRootSignature(rootSignatureInfo);
 
     RHIGraphicsPipelineInfo pipelineInfo = {};
@@ -60,8 +62,9 @@ void DirectionalShadowPass::Build(RDGBuilder& builder)
             {
                 std::string index = " [" + std::to_string(i) + "]";
 
+                // 稳态=SRV：末位=光照读（原[0]的TRANSFER_SRC稳态随History copy链2026-10-22删除而取消）
                 RDGTextureHandle depth = builder.CreateTexture("Directional Depth" + index)
-                    .Import(EngineContext::RenderResource()->GetDirectionalShadowTexture(i), RESOURCE_STATE_UNDEFINED)
+                    .Import(EngineContext::RenderResource()->GetDirectionalShadowTexture(i))
                     .Finish();
 
                 std::string cmdIndex = " [" + std::to_string(MESH_DIRECTIONAL_SHADOW_PASS) + "][" + std::to_string(i) + "]";
@@ -72,23 +75,27 @@ void DirectionalShadowPass::Build(RDGBuilder& builder)
                     .DepthStencil(depth, ATTACHMENT_LOAD_OP_CLEAR, ATTACHMENT_STORE_OP_STORE, 1.0f, 0)
                     .ReadIndirect(builder.GetBuffer("Mesh Draw Commands" + cmdIndex))
                     .ReadIndirect(builder.GetBuffer("Clusrter Draw Commands" + cmdIndex))
+                    .RootSignature(rootSignature)     
+                    .Read(2, SET2_BINDING_CLUSTER_DRAW_INFOS_READ, 0, builder.GetBuffer("Cluster Draw Infos" + cmdIndex), 0, 0, RESOURCE_TYPE_BUFFER)
                     .Execute([&](RDGPassContext context) {
 
                         Extent2D windowExtent = EngineContext::Render()->GetWindowsExtent();
                         auto directionalLight = EngineContext::Render()->GetLightManager()->GetDirectionalLight();
                         uint32_t index = context.passIndex[0];
 
-                        RHICommandListRef command = context.command;                                            
+                        RHICommandListRef command = context.command;
                         command->SetGraphicsPipeline(pipeline);
                         command->SetViewport({0, 0}, {DIRECTIONAL_SHADOW_SIZE, DIRECTIONAL_SHADOW_SIZE});
-                        command->SetScissor({0, 0}, {DIRECTIONAL_SHADOW_SIZE, DIRECTIONAL_SHADOW_SIZE}); 
-                        command->SetDepthBias(directionalLight->GetConstantBias(), 
-                                                 directionalLight->GetSlopeBias(), 
+                        command->SetScissor({0, 0}, {DIRECTIONAL_SHADOW_SIZE, DIRECTIONAL_SHADOW_SIZE});
+                        command->SetDepthBias(directionalLight->GetConstantBias(),
+                                                 directionalLight->GetSlopeBias(),
                                                  0.0f);
                         command->PushConstants(&index, sizeof(uint32_t), SHADER_FREQUENCY_GRAPHICS);
-                        command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);   
+                        command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);
+                        command->BindDescriptorSet(EngineContext::RenderResource()->GetPoolDescriptorSet(), 1);
+                        command->BindDescriptorSet(context.descriptors[2], 2);
 
-                        meshPassProcessor->Draw(command, index);                      
+                        meshPassProcessor->Draw(command, index);
                     })
                     .OutputRead(depth)  // 输出，作为后续阴影绘制的SRV
                     .Finish();

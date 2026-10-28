@@ -26,7 +26,9 @@ void DepthPass::Init()
     fragmentShader      = Shader(EngineContext::File()->ShaderPath() + "depth/depth.frag.spv", SHADER_FREQUENCY_FRAGMENT);
 
     RHIRootSignatureInfo rootSignatureInfo = {};
-    rootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetPerFrameRootSignature()->GetInfo());
+    rootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetPerFrameRootSignature()->GetInfo())
+                     .AddEntry(EngineContext::RenderResource()->GetBindlessRootSignature()->GetInfo())
+                     .AddEntry(EngineContext::RenderResource()->GetSet2RootSignature()->GetInfo());     
     rootSignature = backend->CreateRootSignature(rootSignatureInfo);
 
     RHIGraphicsPipelineInfo pipelineInfo = {};
@@ -46,12 +48,12 @@ void DepthPass::Init()
 void DepthPass::Build(RDGBuilder& builder) 
 {
     RDGTextureHandle depth = builder.CreateTexture("Depth")
-        .Import(EngineContext::RenderResource()->GetDepthTexture(), RESOURCE_STATE_UNDEFINED)
-        .Finish();  
+        .Import(EngineContext::RenderResource()->GetDepthTexture())
+        .Finish();
 
     RDGTextureHandle prevDepth = builder.CreateTexture("Previous Depth")
-        .Import(EngineContext::RenderResource()->GetPrevDepthTexture(), RESOURCE_STATE_UNDEFINED)
-        .Finish();  
+        .Import(EngineContext::RenderResource()->GetPrevDepthTexture())
+        .Finish();
 
     RDGCopyPassHandle copyPass = builder.CreateCopyPass(GetName() + " Copy")
         .From(depth)
@@ -65,20 +67,24 @@ void DepthPass::Build(RDGBuilder& builder)
         .DepthStencil(depth, ATTACHMENT_LOAD_OP_CLEAR, ATTACHMENT_STORE_OP_STORE, 1.0f, 0)
         .ReadIndirect(builder.GetBuffer("Mesh Draw Commands" + cmdIndex))
         .ReadIndirect(builder.GetBuffer("Clusrter Draw Commands" + cmdIndex))
+        .RootSignature(rootSignature)     
+        .Read(2, SET2_BINDING_CLUSTER_DRAW_INFOS_READ, 0, builder.GetBuffer("Cluster Draw Infos" + cmdIndex), 0, 0, RESOURCE_TYPE_BUFFER)
         .Execute([&](RDGPassContext context) {
 
             Extent2D windowExtent = EngineContext::Render()->GetWindowsExtent();
 
-            RHICommandListRef command = context.command;                                            
+            RHICommandListRef command = context.command;
             command->SetGraphicsPipeline(pipeline);     // 这一行似乎是多余的？
             command->SetViewport({0, 0}, {windowExtent.width, windowExtent.height});
-            command->SetScissor({0, 0}, {windowExtent.width, windowExtent.height}); 
-            command->SetDepthBias(0.0f, 
-                                    0.0f, 
+            command->SetScissor({0, 0}, {windowExtent.width, windowExtent.height});
+            command->SetDepthBias(0.0f,
+                                    0.0f,
                                     0.0f);
-            command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);   
+            command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);
+                command->BindDescriptorSet(EngineContext::RenderResource()->GetPoolDescriptorSet(), 1);
+            command->BindDescriptorSet(context.descriptors[2], 2);
 
-            meshPassProcessor->Draw(command);                      
+            meshPassProcessor->Draw(command);
         })
         .Finish();
 }

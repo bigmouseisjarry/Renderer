@@ -4,7 +4,6 @@
 #extension GL_ARB_separate_shader_objects : enable
 #extension GL_GOOGLE_include_directive : enable
 
-#include "../common/common.glsl"
 #include "include/common.glsl"
 
 float CalculateJacobian(
@@ -63,7 +62,7 @@ void main()
 	// 空域复用Reservoir //////////////////////////////////
 
 	uint reservoirIndex = ReservoirIndex(pixel);
-	GIReservoir res = RESERVOIRS[reservoirIndex];
+	GIReservoir res = RESTIR_GI_RESERVOIRS[reservoirIndex];
 	if (!IsGIReservoirValid(res)) res = NewGIReservoir();	// 防护：毒化/垃圾数据视作空reservoir
 	Rand rand = SeedRand(GLOBAL_SETTING.totalTicks, pixel.y * GLOBAL_SETTING.totalTicks + pixel.x);
 
@@ -86,7 +85,7 @@ void main()
 			vec2 randNeighborUV = ScreenPixToUV(randNeighborScreenPixel);
 			uint randIndex 		= ReservoirIndex(randNeighborPixel);	
 			
-			neighborNumStreamSamples[j] = RESERVOIRS[randIndex].numStreamSamples; 
+			neighborNumStreamSamples[j] = RESTIR_GI_RESERVOIRS[randIndex].numStreamSamples; 
 			neighborNormal[j] = DecodeGBufferNormal(texelFetch(G_BUFFER_NORMAL_SPECF, randNeighborScreenPixel, 0).xyz);
             neighborWorldPos[j] = DepthToWorld(randNeighborUV); 
 
@@ -109,7 +108,7 @@ void main()
 				}
 			}
 
-			GIReservoir randRes = RESERVOIRS[randIndex];
+			GIReservoir randRes = RESTIR_GI_RESERVOIRS[randIndex];
 			if (!IsGIReservoirValid(randRes)) continue;	// 防护：坏邻居视作无邻居
 			float newPHat = EvaluatePHat(randRes.sampl) * CalculateJacobian(worldPos.xyz, neighborWorldPos[j].xyz, randRes.sampl);
 			CombineGIReservoirs(res, randRes, newPHat, rand);
@@ -153,5 +152,5 @@ void main()
 		}
 	}
 
-	RESULT_RESERVOIRS[reservoirIndex] = res;
+	RESTIR_GI_RESULT_RESERVOIRS[reservoirIndex] = res;
 }

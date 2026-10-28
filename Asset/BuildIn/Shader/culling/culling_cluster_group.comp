@@ -1,8 +1,21 @@
 #version 460
 #extension GL_GOOGLE_include_directive : enable
 
-#include "../common/common.glsl"
-#include "common.glsl"
+#include "include/common.glsl"
+
+layout(push_constant) uniform CullingLodSetting {
+
+	uint passType;	// 当前处理的meshpass种类
+	uint passCount;	// pass数量
+
+    float lodErrorRate;
+	float lodErrorOffset;
+	uint disableVirtualMeshCulling;
+	uint disableOcclusionCulling;
+	uint disableFrustrumCulling;
+	uint showBoundingBox;
+	uint enableStatistics;
+} SETTING;
 
 #define THREAD_SIZE_X 64
 #define THREAD_SIZE_Y 1
@@ -53,14 +66,14 @@ void main()
 			BoundingSphere viewObjectSphere = SphereTransform(object.sphere, CAMERA.view * object.model, object.localScale.xyz * object.modelScale.xyz);		//统一使用object的包围盒做距离测试，保证计算的误差一致
 
 			//if(group.mipLevel == 0)
-			if(!CheckLOD(viewObjectSphere, group.parentLodError))	//父节点error应该大于阈值		
+			if(!CheckLOD(viewObjectSphere, group.parentLodError, SETTING.lodErrorRate, SETTING.lodErrorOffset))	//父节点error应该大于阈值		
 			{
 				for(uint j = 0; j < group.clusterSize; j++)
 				{
 					MeshCluster cluster = MESH_CLUSTERS.slot[group.clusterID[j]];
 
 					//BoundingSphere view_cluster_sphere = SphereTransform(cluster.sphere, CAMERA.view * object.model, object.localScale.xyz * object.modelScale.xyz);	
-					if(CheckLOD(viewObjectSphere, cluster.lodError))						//cluster本身error小于阈值
+					if(CheckLOD(viewObjectSphere, cluster.lodError, SETTING.lodErrorRate, SETTING.lodErrorOffset))						//cluster本身error小于阈值
 					{
 						IndirectClusterDrawInfo clusterInfo;								//把cluster的信息填进缓冲里，在下面里进一步做剔除
 						clusterInfo.objectID = groupInfo.objectID;

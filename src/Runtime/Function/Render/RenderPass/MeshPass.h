@@ -171,17 +171,32 @@ typedef struct DrawCommand
 
 typedef struct MeshPassIndirectBuffers
 {
-    Buffer<IndirectMeshDrawDatas> meshDrawDataBuffer;           
-    Buffer<IndirectMeshDrawCommands> meshDrawCommandBuffer 
+    Buffer<IndirectMeshDrawDatas> meshDrawDataBuffer;
+    Buffer<IndirectMeshDrawCommands> meshDrawCommandBuffer
         = Buffer<IndirectMeshDrawCommands>(RESOURCE_TYPE_RW_BUFFER | RESOURCE_TYPE_INDIRECT_BUFFER);
 
     Buffer<IndirectClusterDrawDatas> clusterDrawDataBuffer;
-    Buffer<IndirectClusterDrawCommands> clusterDrawCommandBuffer 
+    Buffer<IndirectClusterDrawCommands> clusterDrawCommandBuffer
         = Buffer<IndirectClusterDrawCommands>(RESOURCE_TYPE_RW_BUFFER | RESOURCE_TYPE_INDIRECT_BUFFER);;
 
     Buffer<IndirectClusterGroupDrawDatas> clusterGroupDrawDataBuffer;
 
+    // 剔除后本子遍实际绘制的cluster索引表（纯GPU写，GPU_ONLY；经RDG以"Cluster Draw Infos [i][j]"入图，
+    // 写侧GPUCullingPass(set1 b5)/读侧本pass的cluster vert(set1 b5)，布局声明在set2胖头（include/set2/set2.glsl，读侧槽13/写侧槽14）
+    RHIBufferRef clusterDrawInfoBuffer;
+
 } MeshPassIndirectBuffers;
+
+// mesh管线set1布局常量——与include/set2/defines.glsl的SET2_BINDING宏系出同源，勿只改一侧
+enum MeshPassBindingID
+{
+    MESH_PASS_BINDING_INDIRECT_MESH_DRAW_DATAS = 16,
+    MESH_PASS_BINDING_INDIRECT_MESH_DRAW_COMMANDS = 17,
+    MESH_PASS_BINDING_INDIRECT_CLUSTER_DRAW_DATAS = 18,
+    MESH_PASS_BINDING_INDIRECT_CLUSTER_DRAW_COMMANDS = 19,
+    MESH_PASS_BINDING_INDIRECT_CLUSTER_GROUP_DATAS = 20,
+    MESH_PASS_BINDING_CLUSTER_DRAW_INFOS = 21,
+};
 
 // 各个meshpass对应子类，收集各meshpass需要的绘制信息，生成绘制指令 
 class MeshPassProcessor
@@ -193,10 +208,6 @@ public:
 
     const std::vector<std::shared_ptr<MeshPassIndirectBuffers>>& GetIndirectBuffers();
     const std::array<uint32_t, 3>& GetProcessSizes()                                                { return processSizes; }
-
-    static const uint32_t& GetGlobalClusterOffset()                                                 { return globalClusterOffset; }
-    static const uint32_t& AddGlobalClusterOffset(uint32_t size)                                    { globalClusterOffset += size; return globalClusterOffset; }
-    static void ResetGlobalClusterOffset()                                                          { globalClusterOffset = 0; }
 
 protected:    
     virtual void OnCollectBatch(const DrawBatch& batch);                                        // 由子类重载，负责条件判断和实际添加batch进processor，
@@ -220,7 +231,7 @@ protected:
     std::vector<IndirectClusterGroupDrawInfo> clusterGroupDrawInfo;
 
     // GPU缓冲 ///////////////////////////////////////////////////
-    std::array<std::vector<std::shared_ptr<MeshPassIndirectBuffers>>, FRAMES_IN_FLIGHT> indirectBuffers;     // 每帧都完全重构的buffer，因此需要每帧一份   
+    std::array<std::vector<std::shared_ptr<MeshPassIndirectBuffers>>, FRAMES_IN_FLIGHT> indirectBuffers;     // 每帧都完全重构的buffer，因此需要每帧一份
                                                                                                              // 允许一个processor对应多个不同的绘制指令
 private:                                                                                                     // （例如点光源/平行光源阴影，收集流程完全相同，剔除和绘制流程不同）
     // CPU端的数据处理结果 ///////////////////////////////////////////////////
@@ -229,9 +240,6 @@ private:                                                                        
     std::array<std::vector<std::vector<DrawCommand>>, FRAMES_IN_FLIGHT> drawCommands;                       // CPU端的绘制指令也可能延迟执行，数据也需要每帧一份
     std::array<uint32_t, 3> processSizes = { 0, 0, 0 };
     uint32_t multiPass = 1;
-
-    // cluster数据的全局偏移，最后所有的pass都需要收集cluster绘制信息到一个全局buffer，需要记录偏移
-    static uint32_t globalClusterOffset;
 };
 typedef std::shared_ptr<MeshPassProcessor> MeshPassProcessorRef;
 

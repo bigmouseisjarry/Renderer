@@ -1,21 +1,5 @@
 // https://zhuanlan.zhihu.com/p/703950102
 
-struct LightSample 
-{
-	// 被采样光源的信息
-	uint lightID; 				// 光源索引
-};
-
-struct DIReservoir 
-{
-	LightSample sampl;
-
-	float pHat;					// 当前光源的重要性采样权重，也就是targetPdf
-	float sumWeights;			// 已处理的(pHat / proposalPdf)权重和
-	float w;					// 被积函数在当前采样点对应的权重，同时也就是重采样重要性采样的realPdf(SIR PDF)的倒数
-	uint numStreamSamples;		// 已处理的采样总数，M 
-};
-
 uint ReservoirIndex(ivec2 pixel)
 {
 	return pixel.y * WINDOW_WIDTH + pixel.x;

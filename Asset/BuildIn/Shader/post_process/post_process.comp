@@ -1,30 +1,9 @@
 #version 460
+#extension GL_GOOGLE_include_directive : enable
 #extension GL_EXT_samplerless_texture_functions : enable
 
+#include "include/common.glsl"
 
-layout(set = 0, binding = 0)   uniform texture2D IN_COLOR;			// SRV
-layout(set = 0, binding = 1, rgba8)     uniform image2D OUT_COLOR;  // UAV
-
-struct ExposureSetting
-{   
-    float minLog2Luminance;             //最小亮度，对数
-    float inverseLuminanceRange;        //亮度范围，对数倒数
-    float luminanceRange;               //亮度范围，对数
-    float numPixels;                    //总像素数
-    float timeCoeff;                    //时间加权
-    float _padding[3];
-};
-layout(set = 0, binding = 2) buffer EXPOSURE_DATA
-{
-    ExposureSetting setting;     
-    float luminance;                     // 计算得到的平均亮度
-    float adaptedLuminance;              // 多帧渐进的亮度
-    float _padding[2];   
-    uint histogramBuffer[256];           // 直方图数组 
-    uint readBackHistogramBuffer[256];   // 回读用的数组 
-};
-
-// layout(set = 1, binding = 2) uniform sampler2D colorLUT;
 
 layout(push_constant) uniform PostProcessingSetting {
 	int   enable;		
@@ -101,9 +80,9 @@ layout (local_size_x = THREAD_SIZE_X,
 void main() 
 {
     ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
-	vec3 currColor = texelFetch(IN_COLOR, pixel, 0).xyz;
+	vec3 currColor = texelFetch(IN_COLOR[0], pixel, 0).xyz;
 
-	float finalExposure = SETTING.exposure / adaptedLuminance;	//使得整个画面的输出光照接近setting.exposure，例如0.5
+	float finalExposure = SETTING.exposure / EXPOSURE_DATA.adaptedLuminance;	//使得整个画面的输出光照接近setting.exposure，例如0.5
 	if(SETTING.fixLuminance != 0)
 		finalExposure = SETTING.exposure / SETTING.luminance;
 	
@@ -142,5 +121,5 @@ void main()
 		finalColor = currColor;
 	}
 
-	imageStore(OUT_COLOR, pixel, vec4(finalColor, 1.0f));
+	imageStore(POSTPROCESS_OUT, pixel, vec4(finalColor, 1.0f));
 }

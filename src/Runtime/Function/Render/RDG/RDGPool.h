@@ -189,19 +189,47 @@ public:
         RHIDescriptorSetRef descriptor;  
     };
 
+    // 池键=本pass set2反射used条目足迹(频率归一ALL)+set号;同键⟺实际使用槽位集合相同
+    // ⟹跨足迹陈旧槽污染链断绝(旧键=整个RS entries+set,全引擎pass共用同一套全局拼装RS→单桶,
+    // 前任pass的陈旧槽描述符残留→VUID-vkCmdDraw-None-09600,治本方案)
+    // RS仅用于桶miss时CreateDescriptorSet与静态采样器重播,布局真值不变(键只路由分桶)
     struct Key
     {
-        Key(const RHIRootSignatureInfo& info, uint32_t set) 
-        : entries(info.GetEntries())
-        , set(set)
-        {}
+        // 唯一构造点MakeKey:条目按值拷贝后归一(frequency→ALL,used→true),
+        // 并用值初始化条目逐字段拷贝以清零padding——保证同足迹键的Murmur字节哈希跨pass确定一致
+        static Key MakeKey(const std::vector<ShaderResourceEntry>& set2Entries, uint32_t set)
+        {
+            Key k;
+            k.set = set;
+            k.entries.reserve(set2Entries.size());
+            for (const ShaderResourceEntry& e : set2Entries)
+            {
+                ShaderResourceEntry n{};    // 值初始化:padding归零
+                n.set = e.set; n.binding = e.binding; n.size = e.size;
+                n.frequency = SHADER_FREQUENCY_ALL;    // 频率不进键:描述符内容不区分频率,归一后同足迹图形/计算pass共桶
+                n.type = e.type; n.used = true;        // used全真(条目数组本就只含used,防御归一;Murmur字节哈希覆盖used而==不比,归一后两语义一致)
+                k.entries.push_back(n);
+            }
+            return k;
+        }
+
+        // set0/1专用:沿用改键前的RS-entries语义(字节不变)——
+        // ★set1巨型bindless集必须单桶:NRD静态采样器领用set1,若按足迹分桶,
+        // NRD的3个子pass足迹各异→3套巨型set1×帧槽→显存乘法(OOM定案同型,R5卫生)
+        static Key MakeLegacyKey(const RHIRootSignatureInfo& info, uint32_t set)
+        {
+            Key k;
+            k.entries = info.GetEntries();
+            k.set = set;
+            return k;
+        }
 
         std::vector<ShaderResourceEntry> entries;
-        uint32_t set;	
+        uint32_t set = 0;
 
         friend bool operator== (const Key& a, const Key& b)
         {
-            return  a.entries == b.entries&& 
+            return  a.entries == b.entries&&            // used不参与==:键经MakeKey归一后used恒真,哈希与==语义一致
                     a.set == b.set;
         }
 
@@ -219,8 +247,8 @@ public:
         };
     };
 
-    PooledDescriptor Allocate(const RHIRootSignatureRef& rootSignature, uint32_t set);
-    void Release(const PooledDescriptor& pooledDescriptor, const RHIRootSignatureRef& rootSignature, uint32_t set);
+    PooledDescriptor Allocate(const Key& key, const RHIRootSignatureRef& rootSignature);   // 键只路由分桶;RS用于桶miss时CreateDescriptorSet+采样器重播
+    void Release(const Key& key, const PooledDescriptor& pooledDescriptor);
 
     inline uint32_t PooledSize()    { return pooledSize; }
     inline uint32_t AllocatedSize() { return allocatedSize; }

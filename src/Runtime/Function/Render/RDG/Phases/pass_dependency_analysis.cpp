@@ -1,24 +1,19 @@
 
+#include <algorithm>
+
 #include "pass_dependency_analysis.h"
 #include "pass_info_analysis.h"
 #include "Function/Global/EngineContext.h"
 #include "queue_schedule.h"
-#include "cross_queue_sync_analysis.h"
 
 PassDependencyAnalysis::PassDependencyAnalysis(const PassInfoAnalysis& pass_info_analysis)
     : pass_info_analysis(pass_info_analysis)
 {
-    in_degrees_.reserve(64);
-    topo_queue_.reserve(64);
-    topo_levels_.reserve(64);
 }
 
 void PassDependencyAnalysis::reset_for_frame()
 {
     pass_dependencies_.clear();      // 保留 bucket，下帧复用
-    in_degrees_.clear();
-    topo_queue_.clear();             
-    topo_levels_.clear();
     logical_topology_.logical_topological_order.clear();
     logical_topology_.logical_levels.clear();
     logical_topology_.logical_critical_path.clear();
@@ -35,24 +30,20 @@ bool PassDependencies::has_dependency_on(RDGPassNodeRef pass) const
     return false;
 }
 
-// IRenderGraphPhase 接口实现
 void PassDependencyAnalysis::on_execute(RDGDependencyGraphRef graph, PerFrameCommonResourceRef executor)
 {
     ENGINE_TIME_SCOPE(PassDependencyAnalysis::on_execute);
 
     // 建依赖边
     analyze_pass_dependencies(graph);
-    // 拓扑排序+分级
+    // Kahn拓扑排序（唯一产出logical_topological_order——HEFT ranku的输入）
     perform_logical_topological_sort_optimized();
-    // 找关键路径
-    identify_logical_critical_path();
 }
 
 void PassDependencyAnalysis::analyze_pass_dependencies(RDGDependencyGraphRef graph)
 {
     ENGINE_TIME_SCOPE(PassDependencyAnalysis::analyze_pass_dependencies);
 
-    // 优化版本：O(n) 复杂度，为每个资源维护最后访问者索引
     std::vector<RDGPassNodeRef>& all_passes = get_passes(graph);
 
     // 为每个资源维护最后访问的Pass和访问信息
@@ -75,36 +66,6 @@ void PassDependencyAnalysis::analyze_pass_dependencies(RDGDependencyGraphRef gra
             RDGResourceNodeRef resource = current_access.resource;
             auto& last_access = resource_last_access_[resource];
 
-            // 如果这个资源之前被访问过，创建两个pass间的依赖
-            // 这里会为 last_pass---read---->resource ----read---->current_pass间也创建依赖
-        //    if (last_access.last_pass != nullptr && last_access.last_pass != current_pass)
-        //    {
-        //        ResourceDependency dep;
-        //        dep.dependent_pass = last_access.last_pass;
-        //        dep.resource = resource;
-        //        dep.current_access = current_access.access_type;
-        //        dep.previous_access = last_access.last_access_type;
-        //        dep.current_state = current_access.resource_state;
-        //        dep.previous_state = last_access.last_state;
-        //        current_deps.resource_dependencies.push_back(dep);
-
-        //        // 唯一性的插入
-        //        if (std::find(current_deps.dependent_passes.begin(), current_deps.dependent_passes.end(), dep.dependent_pass) == current_deps.dependent_passes.end())
-        //            current_deps.dependent_passes.push_back(dep.dependent_pass);
-        //    }
-
-        //    // 更新该资源的最后一次访问信息
-        //    last_access.last_pass = current_pass;
-        //    last_access.last_access_type = current_access.access_type;
-        //    last_access.last_state = current_access.resource_state;
-        //}
-            // [实验v3 2026-09-11] 写者锚定 + WAR读者登记：
-            //  v1（R-R不建边）已证伪：R2悬空丢失RAW因果（闪烁）。
-            //  v2（纯读者不推进锚）RAW保留、QFO零断裂，但帧内W-R-W序列的WAR洞导致仍有闪烁
-            //  ——第二写者只锚第一写者，不等读者读完就覆盖。
-            //  v3：读者登记进readers_since_write；写者到来时对全体读者逐个建R-W边
-            //  （读者间无序，不能只等最近一个）。R-R边依然不存在（读者各自锚写者）。
-            //  同pass的重复访问由last_pass!=current_pass与读者登记去重共同挡住自环。
             const bool pureRead = current_access.access_type == EResourceAccessType::Read;
             if (last_access.last_pass != nullptr && last_access.last_pass != current_pass)
             {
@@ -112,12 +73,12 @@ void PassDependencyAnalysis::analyze_pass_dependencies(RDGDependencyGraphRef gra
                 dep.dependent_pass = last_access.last_pass;
                 dep.resource = resource;
                 dep.current_access = current_access.access_type;
-                dep.previous_access = last_access.last_access_type;
                 dep.current_state = current_access.resource_state;
+                dep.previous_access = last_access.last_access_type;
                 dep.previous_state = last_access.last_state;
                 current_deps.resource_dependencies.push_back(dep);
 
-                // 唯一性的插入
+                // 加入当前pass的依赖信息
                 if (std::find(current_deps.dependent_passes.begin(), current_deps.dependent_passes.end(), dep.dependent_pass) == current_deps.dependent_passes.end())
                     current_deps.dependent_passes.push_back(dep.dependent_pass);
             }
@@ -138,6 +99,8 @@ void PassDependencyAnalysis::analyze_pass_dependencies(RDGDependencyGraphRef gra
                     dep.previous_access = EResourceAccessType::Read;
                     dep.current_state = current_access.resource_state;
                     dep.previous_state = readerState;
+
+                    // 加入当前pass的依赖信息
                     current_deps.resource_dependencies.push_back(dep);
                     current_deps.dependent_passes.push_back(reader);
                 }
@@ -147,10 +110,7 @@ void PassDependencyAnalysis::analyze_pass_dependencies(RDGDependencyGraphRef gra
             // 写者推进锚并清空读者登记（后续读者改锚定新写者）
             if (pureRead)
             {
-                bool alreadyRegistered = false;
-                for (const auto& [reader, _] : last_access.readers_since_write)
-                    if (reader == current_pass) { alreadyRegistered = true; break; }
-                if (!alreadyRegistered)
+                if (!std::ranges::any_of(last_access.readers_since_write, [&](const auto& entry) {return entry.first == current_pass; }))
                     last_access.readers_since_write.emplace_back(current_pass, current_access.resource_state);
             }
             else
@@ -163,7 +123,6 @@ void PassDependencyAnalysis::analyze_pass_dependencies(RDGDependencyGraphRef gra
         }
     }
 
-    // Build dependent_by_passes (reverse dependencies)
     // 构建反向依赖，即（谁依赖了我）
     {
         ENGINE_TIME_SCOPE("DoInsert");
@@ -181,103 +140,33 @@ void PassDependencyAnalysis::perform_logical_topological_sort_optimized()
 {
     ENGINE_TIME_SCOPE("PerformLogicalTopologicalSortOptimized");
 
-    const size_t num_passes = pass_dependencies_.size();
-    if (num_passes == 0) return;
+    if (pass_dependencies_.empty()) return;
 
-    // 预分配容器，避免动态扩容
-    in_degrees_.reserve(num_passes);
-    topo_queue_.reserve(num_passes);
-    topo_levels_.reserve(num_passes);
-    logical_topology_.logical_topological_order.reserve(num_passes);
-    logical_topology_.logical_levels.reserve(num_passes);
+    // Kahn拓扑排序——唯一产出logical_topological_order（HEFT ranku的逆序DP基准，
+    // 调度后由apply_schedule_order重建为调度序）。级别分组/关键路径/逐pass索引产出
+    // 已随消费者清退删除（2026-10-24瘦身，消费者仅剩HEFT与barrier的拓扑序）
+    std::unordered_map<RDGPassNodeRef, uint32_t> inDegrees;
+    inDegrees.reserve(pass_dependencies_.size());
+    std::vector<RDGPassNodeRef> queue;
+    queue.reserve(pass_dependencies_.size());
+    logical_topology_.logical_topological_order.reserve(pass_dependencies_.size());
 
-    // 第一步：计算所有节点的入度，同时初始化依赖级别为0
     for (auto& [pass, deps] : pass_dependencies_)
     {
-        in_degrees_[pass] = static_cast<uint32_t>(deps.dependent_passes.size());
-        deps.logical_dependency_level = 0;           // 初始化级别
-        deps.logical_topological_order = UINT32_MAX; // 临时标记为未处理
+        const uint32_t degree = static_cast<uint32_t>(deps.dependent_passes.size());
+        inDegrees[pass] = degree;
+        if (degree == 0) queue.push_back(pass);
     }
 
-    // 第二步：找到所有入度为0的节点（没有依赖的节点）
-    for (const auto& [pass, degree] : in_degrees_)
+    for (size_t i = 0; i < queue.size(); ++i)
     {
-        if (degree == 0)
-        {
-            topo_queue_.push_back(pass);
-            topo_levels_.push_back(0); // 起始节点的级别为0
-        }
-    }
-
-    // 第三步：Kahn算法 + 同时计算依赖级别
-    size_t queue_idx = 0;
-    while (queue_idx < topo_queue_.size())
-    {
-        RDGPassNodeRef current = topo_queue_[queue_idx];
-        uint32_t current_level = topo_levels_[queue_idx];
-        ++queue_idx;
-
-        // 添加到拓扑排序结果
+        RDGPassNodeRef current = queue[i];
         logical_topology_.logical_topological_order.push_back(current);
 
-        // 设置当前节点的拓扑索引和依赖级别
-        if (auto current_it = pass_dependencies_.find(current);current_it != pass_dependencies_.end())
-        {
-            current_it->second.logical_topological_order = static_cast<uint32_t>(logical_topology_.logical_topological_order.size() - 1);
-            current_it->second.logical_dependency_level = current_level;
-
-            // 处理所有依赖于当前节点的节点
-            for (auto* dependent : current_it->second.dependent_by_passes)
-            {
-                // 减少入度（即这个节点的依赖减一）
-                --in_degrees_[dependent];
-
-                // 更新依赖节点的级别（取所有前驱的最大级别+1）
-                if (auto dep_it = pass_dependencies_.find(dependent); dep_it != pass_dependencies_.end())
-                {
-                    dep_it->second.logical_dependency_level = std::max(
-                        dep_it->second.logical_dependency_level,
-                        current_level + 1);
-
-                    // 如果入度变为0，加入队列（复用已找到的iterator）(前置依赖都已经完成)
-                    if (in_degrees_[dependent] == 0)
-                    {
-                        topo_queue_.push_back(dependent);
-                        topo_levels_.push_back(dep_it->second.logical_dependency_level);
-                    }
-                }
-                else if (in_degrees_[dependent] == 0)
-                {
-                    // 备用路径，正常情况下不应该执行到这里
-                    topo_queue_.push_back(dependent);
-                    topo_levels_.push_back(0);
-                }
-            }
-        }
-    }
-
-    // 第五步：计算最大依赖深度并构建级别分组
-    logical_topology_.max_logical_dependency_depth = 0;
-    for (const auto& [pass, deps] : pass_dependencies_)
-    {
-        logical_topology_.max_logical_dependency_depth = std::max(
-            logical_topology_.max_logical_dependency_depth,
-            deps.logical_dependency_level);
-    }
-
-    // 构建级别分组
-    logical_topology_.logical_levels.resize(logical_topology_.max_logical_dependency_depth + 1);
-
-    for (uint32_t i = 0; i <= logical_topology_.max_logical_dependency_depth; ++i)
-    {
-        logical_topology_.logical_levels[i].level = i;
-        logical_topology_.logical_levels[i].passes.clear();
-    }
-
-    // 将节点分配到对应级别
-    for (const auto& [pass, deps] : pass_dependencies_)
-    {
-        logical_topology_.logical_levels[deps.logical_dependency_level].passes.push_back(pass);
+        if (auto it = pass_dependencies_.find(current); it != pass_dependencies_.end())
+            for (RDGPassNodeRef dependent : it->second.dependent_by_passes)
+                if (--inDegrees[dependent] == 0)
+                    queue.push_back(dependent);
     }
 }
 
@@ -293,7 +182,6 @@ void PassDependencyAnalysis::identify_logical_critical_path()
         auto pass_it = pass_dependencies_.find(pass);
         if (pass_it == pass_dependencies_.end())
             continue; // 如果没有依赖信息，跳过
-
 
         // 如果没有后继节点，高度为0
         if (pass_it->second.dependent_by_passes.empty())
@@ -545,42 +433,6 @@ void PassDependencyAnalysis::dump_logical_critical_path() const
     ENGINE_LOG_INFO("=========================================");
 }
 
-// 跨队列同步点生成方法
-void PassDependencyAnalysis::generate_cross_queue_sync_points(const QueueSchedule& queue_schedule, std::vector<CrossQueueSyncPoint>& sync_points) const
-{
-    const auto& queue_result = queue_schedule.get_schedule_result();
-    sync_points.clear();
-
-    // 为每个Pass检查其依赖关系
-    for (const auto& [consumer_pass, deps] : pass_dependencies_)
-    {
-        uint32_t consumer_queue = queue_result.pass_queue_assignments.find(consumer_pass)->second;
-
-        // 检查当前pass的每个资源依赖
-        for (const auto& resource_dep : deps.resource_dependencies)
-        {
-            RDGPassNodeRef producer_pass = resource_dep.dependent_pass;
-            uint32_t producer_queue = queue_result.pass_queue_assignments.find(producer_pass)->second;
-
-            // 如果生产者和消费者在不同队列上，创建跨队列同步点
-            if (producer_queue != consumer_queue)
-            {
-                CrossQueueSyncPoint sync_point;
-                sync_point.type = ESyncPointType::Signal;
-                sync_point.producer_queue_index = producer_queue;
-                sync_point.consumer_queue_index = consumer_queue;
-                sync_point.producer_pass = producer_pass;
-                sync_point.consumer_pass = consumer_pass;
-                sync_point.resource = resource_dep.resource;
-                sync_point.from_state = resource_dep.previous_state;
-                sync_point.to_state = resource_dep.current_state;
-                sync_point.sync_value = 0;     // 相对值未分配：timeline绝对value由Phase 8按提交序统一分配
-
-                sync_points.push_back(sync_point);
-            }
-        }
-    }
-}
 
 // ---- HEFT回写接口 ///////////////////////////////////////////////////////////////////////
 
@@ -610,7 +462,6 @@ void PassDependencyAnalysis::add_scheduling_order_edges(const std::vector<Schedu
         deps.resource_dependencies.push_back(dep);
 
         // 双向表同步维护（Kahn入度=前向dependent_passes计数、递减遍历反向dependent_by_passes
-        // ——只更前向会让入度永不归零、拓扑序缺pass，下游绑定/屏障缺失→录制期崩溃）
         if (std::find(deps.dependent_passes.begin(), deps.dependent_passes.end(), edge.from) == deps.dependent_passes.end())
             deps.dependent_passes.push_back(edge.from);
         PassDependencies& fromDeps = pass_dependencies_[edge.from];
@@ -622,7 +473,9 @@ void PassDependencyAnalysis::add_scheduling_order_edges(const std::vector<Schedu
 void PassDependencyAnalysis::apply_schedule_order(const std::vector<RDGPassNodeRef>& order)
 {
     // 按HEFT调度序直接重建拓扑（合法序：就绪集保证前驱先于后继调度）。级别=前驱最大级别+1
-    // 按序一次遍历（前驱必已计算）。关键路径照旧（高度DP按dependent_by_passes，遍历序无关）
+    // 按序一次遍历（前驱必已计算）。关键路径照旧（高度DP按dependent_by_passes，遍历序无关）。
+    // 本函数是级别分组/关键路径/逐pass索引的唯一权威生产点——预排序只产出拓扑序（ranku输入），
+    // 这些字段调度前不存在（2026-10-24瘦身定案）
     logical_topology_.logical_topological_order.clear();
     logical_topology_.logical_levels.clear();
     logical_topology_.logical_critical_path.clear();

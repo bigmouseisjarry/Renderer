@@ -2,7 +2,7 @@
 #extension GL_GOOGLE_include_directive : enable
 
 #define ENABLE_RAY_TRACING 0
-#include "../common/common.glsl"
+#include "include/common.glsl"
 #include "clipmap.glsl"
 
 layout(push_constant) uniform clipmap_visualize_setting {
@@ -11,36 +11,33 @@ layout(push_constant) uniform clipmap_visualize_setting {
 	int maxMipLevel;		
 } SETTING;
 
-layout(set = 1, binding = 0, rgba16f) uniform readonly image3D VXGI_CLIPMAP;
-layout(set = 1, binding = 1) buffer VXGI_CLIPMAP_BUFFER {
-	ClipmapInfo clipmapInfo;
-};
+
 
 layout(points) in;
 layout(triangle_strip, max_vertices = 24) out;
 layout(location = 0) in ivec3 IN_INDEX[];
-layout(location = 0) out vec4 OUT_COLOR;
+layout(location = 0) out vec4 VIS_COLOR;
 layout(location = 1) out vec2 OUT_UV;
 
 void Emit(vec4 v0, vec4 v1, vec4 v2, vec4 v3, vec4 color)
 {
 	gl_Position = v0;
-	OUT_COLOR = color;
+	VIS_COLOR = color;
 	OUT_UV = vec2(0.0, 0.0);
 	EmitVertex();
 
 	gl_Position = v1;
-	OUT_COLOR = color;
+	VIS_COLOR = color;
 	OUT_UV = vec2(0.0, 1.0);
 	EmitVertex();
 
 	gl_Position = v2;
-	OUT_COLOR = color;
+	VIS_COLOR = color;
 	OUT_UV = vec2(1.0, 0.0);
 	EmitVertex();
 
 	gl_Position = v3;
-	OUT_COLOR = color;
+	VIS_COLOR = color;
 	OUT_UV = vec2(1.0, 1.0);
 	EmitVertex();
 
@@ -50,7 +47,7 @@ void Emit(vec4 v0, vec4 v1, vec4 v2, vec4 v3, vec4 color)
 void main()
 {
 	int mipLevel = SETTING.mipLevel;
-	ClipmapLevel clipmapLevel = clipmapInfo.levels[mipLevel];
+	ClipmapLevel clipmapLevel = VXGI_CLIPMAP_BUFFER.clipmapInfo.levels[mipLevel];
 
 	ivec3 index = IN_INDEX[0];
 
@@ -63,7 +60,7 @@ void main()
 	// 	 all(lessThan(worldPos, clipmapLevel.center.xyz + halfExtent / 2))))
 	// 	return;
 	
-	int bestMip = FetchClipmapMipLevel(clipmapInfo, worldPos);
+	int bestMip = FetchClipmapMipLevel(VXGI_CLIPMAP_BUFFER.clipmapInfo, worldPos);
 	if(	bestMip < SETTING.mipLevel &&
 		mipLevel != SETTING.minMipLevel) return;
 

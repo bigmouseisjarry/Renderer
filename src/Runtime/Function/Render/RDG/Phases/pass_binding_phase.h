@@ -2,7 +2,7 @@
 
 #include "IRenderGraphPhase.h"
 #include "pass_info_analysis.h"
-#include "cross_queue_sync_analysis.h"
+#include "queue_schedule.h"
 
 #include <unordered_map>
 #include <utility>
@@ -29,7 +29,7 @@ struct PassBindInfo {
 // 资源生命期信息
 struct ResourceLifecycleInfo {
     struct LastUse {
-        RDGPassNodeRef pass = nullptr;          // 最后一次使用的pass（按拓扑序）
+        RDGPassNodeRef pass = nullptr;          // 最后一次使用的pass（按执行序）
         bool pass_has_output_edge = false;      // 该pass是否以output边写出该资源（同pass先读后写时，读不算最后使用）
     };
 
@@ -46,7 +46,7 @@ class PassBindingPhase : public IRenderGraphPhase {
 public:
     PassBindingPhase(
         const PassInfoAnalysis& pass_info_analysis,
-        const CrossQueueSyncAnalysis& sync_analysis,
+        const QueueSchedule& queue_schedule,
         const PassBindingConfig& config = {});
     ~PassBindingPhase() override = default;
 
@@ -82,7 +82,7 @@ private:
     PassBindingConfig config_;
 
     const PassInfoAnalysis& pass_info_analysis_;
-    const CrossQueueSyncAnalysis& sync_analysis_;   // 经 get_dependency_analysis() 提供Phase2拓扑序，并为将来按队列区分描述符池预留
+    const QueueSchedule& queue_schedule_;   // 提供HEFT全局调度序（生命期分析的执行序基准）；将来按队列区分描述符池时用 pass_queue_assignments/all_queues
 
     std::unordered_map<RDGPassNodeRef, PassBindInfo> pass_bind_infos_;
     ResourceLifecycleInfo lifecycle_;

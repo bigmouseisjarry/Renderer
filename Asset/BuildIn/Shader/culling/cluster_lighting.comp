@@ -1,7 +1,7 @@
 #version 460
 #extension GL_GOOGLE_include_directive : enable
 
-#include "../common/common.glsl"
+#include "include/common.glsl"
 
 #define THREAD_SIZE_X LIGHT_CLUSTER_WIDTH
 #define THREAD_SIZE_Y LIGHT_CLUSTER_HEIGHT

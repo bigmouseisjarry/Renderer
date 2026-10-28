@@ -81,8 +81,6 @@ enum RHIResourceType : uint32_t	// 此处的倒序也是有效的析构顺序
 	RHI_RESOURCE_TYPE_MAX_CNT,	//
 };
 
-// 渲染查询配置——RenderSystem在init期创建RHIRenderQuery时填写并持有，enable位决定
-// 每帧采集与回读的内容（与CommandRecordingConfig的开关是两个独立结构体，录制侧共同判定）
 struct RHIRenderQueryInfo
 {
 	bool enable_gpu_timing = false;                // 逐pass GPU时间戳采集与回读
@@ -1114,6 +1112,7 @@ struct RHIBottomLevelAccelerationStructureInfo
 	uint32_t vertexStride = 0;
 	uint32_t indexOffset = 0;
 	uint32_t vertexOffset = 0;
+	uint32_t vertexCount = 0;    // BLAS几何真实顶点数(maxVertex上限用,2026-10-28 AS范围违规修复)
 
 };
 
@@ -1128,6 +1127,7 @@ struct ShaderResourceEntry
 	ShaderFrequency frequency = SHADER_FREQUENCY_ALL;
 
 	ResourceType type = RESOURCE_TYPE_NONE;
+	bool used = true;			// 反射填充：该绑定是否被shader静态使用（声明未使用的不需要后备，校验器跳过）
     // TextureViewType textureViewType = VIEW_TYPE_UNDEFINED;	// 只有反射会填的信息，创建描述符绑定并不需要
 
 	friend bool operator== (const ShaderResourceEntry& a, const ShaderResourceEntry& b)
@@ -1148,6 +1148,8 @@ struct ShaderReflectInfo
 
     ShaderFrequency frequency;
     std::vector<ShaderResourceEntry> resources;
+	bool usePushConstant = false;		// shader是否声明了push constant block
+	uint32_t pushConstantSize = 0;		// 使用的最大block大小
 	std::unordered_set<std::string> definedSymbols;
 	std::array<RHIFormat, MAX_SHADER_IN_OUT_VARIABLES> inputVariables = {};		// 按照location做索引
 	std::array<RHIFormat, MAX_SHADER_IN_OUT_VARIABLES> outputVariables = {};
@@ -1206,6 +1208,17 @@ struct RHIRenderingInfo
 	uint32_t multiviewCount = 0;
 };
 
+// 静态采样器（声明即绑定）：RS声明表携带采样器值，set创建/池化领用时自动播种进对应binding——
+// 内容帧间不变，引擎侧无须逐pass喂采样器（原pass->samplers旁路已删）。与entries分列：
+// entries是纯布局（池键/边校验/反射匹配），本表是"布局+值"
+struct RHIStaticSampler
+{
+    uint32_t set = 0;
+    uint32_t binding = 0;
+    uint32_t index = 0;             // 数组元素（离散采样器恒0）
+    RHISamplerRef sampler = nullptr;
+};
+
 struct RHIRootSignatureInfo	
 {
 	// Sakura中使用了shader反射来获取全部的绑定资源信息，在函数CGPUUtil_InitRSParamTables中，
@@ -1213,14 +1226,17 @@ struct RHIRootSignatureInfo
 	// 拆分一下把手动创建补上
 
 	RHIRootSignatureInfo& AddPushConstant(const PushConstantInfo& pushConstant) { pushConstants.push_back(pushConstant); return *this; }
+	RHIRootSignatureInfo& AddStaticSampler(const RHIStaticSampler& staticSampler) { staticSamplers.push_back(staticSampler); return *this; }
 	RHIRootSignatureInfo& AddEntry(const ShaderResourceEntry& entry);
 	RHIRootSignatureInfo& AddEntry(const RHIRootSignatureInfo& other);
 	RHIRootSignatureInfo& AddEntryFromReflect(RHIShaderRef shader);
 	const std::vector<PushConstantInfo>& GetPushConstants() const { return pushConstants; }
 	const std::vector<ShaderResourceEntry>& GetEntries() const { return entries; }
+	const std::vector<RHIStaticSampler>& GetStaticSamplers() const { return staticSamplers; }
 
 protected:
 	std::vector<ShaderResourceEntry> entries;
+	std::vector<RHIStaticSampler> staticSamplers;
 	std::vector<PushConstantInfo> pushConstants;
 	
 };
@@ -1476,6 +1492,11 @@ struct RHIBufferBarrier
 	// 队列族所有权转移（release/acquire对）
 	uint32_t srcQueueFamily = RHI_QUEUE_FAMILY_IGNORED;
 	uint32_t dstQueueFamily = RHI_QUEUE_FAMILY_IGNORED;
+
+	// 着色器频率（细化屏障管线阶段用）：src/dst分别为屏障两侧使用该资源的shader频率
+	// 默认ALL=旧路径行为（按access宽展开），RDG反射边会填入精确频率
+	uint32_t srcFrequency = SHADER_FREQUENCY_ALL;
+	uint32_t dstFrequency = SHADER_FREQUENCY_ALL;
 };
 
 struct RHITextureBarrier
@@ -1489,6 +1510,11 @@ struct RHITextureBarrier
 	// 队列族所有权转移（release/acquire对）
 	uint32_t srcQueueFamily = RHI_QUEUE_FAMILY_IGNORED;
 	uint32_t dstQueueFamily = RHI_QUEUE_FAMILY_IGNORED;
+
+	// 着色器频率（细化屏障管线阶段用）：src/dst分别为屏障两侧使用该资源的shader频率
+	// 默认ALL=旧路径行为（按access宽展开），RDG反射边会填入精确频率
+	uint32_t srcFrequency = SHADER_FREQUENCY_ALL;
+	uint32_t dstFrequency = SHADER_FREQUENCY_ALL;
 };
 
 //多队列提交 ////////////////////////////////////////////////////////////////////////////////////////////////////////

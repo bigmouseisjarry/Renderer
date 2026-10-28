@@ -71,6 +71,7 @@ public:
     uint32_t binding = 0;   // 描述符/color attachment使用
     uint32_t index = 0;
     ResourceType type = RESOURCE_TYPE_TEXTURE;
+    uint32_t frequency = SHADER_FREQUENCY_ALL;    // 反射边自动填充:该槽位的shader使用频率(屏障阶段细化用);非反射路径(Color/DS/Copy/虚拟边)保持ALL
     TextureViewType viewType = VIEW_TYPE_2D;
 
     AttachmentLoadOp 	loadOp          = ATTACHMENT_LOAD_OP_DONT_CARE;     // 仅attachments时使用
@@ -106,5 +107,6 @@ public:
     uint32_t binding = 0;
     uint32_t index = 0;
     ResourceType type = RESOURCE_TYPE_UNIFORM_BUFFER;
+    uint32_t frequency = SHADER_FREQUENCY_ALL;    // 反射边自动填充:该槽位的shader使用频率(屏障阶段细化用);非反射路径(Color/DS/Copy/虚拟边)保持ALL
 };
 using RDGBufferEdgeRef = RDGBufferEdge* ;

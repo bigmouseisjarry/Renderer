@@ -24,6 +24,7 @@ public:
 
     inline uint64_t ID() { return id; }
 
+
 protected:
     uint64_t id = UINT64_MAX;
 };

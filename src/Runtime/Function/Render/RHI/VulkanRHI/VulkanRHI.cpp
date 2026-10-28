@@ -254,24 +254,43 @@ RHIRootSignatureRef VulkanRHIBackend::CreateRootSignature(const RHIRootSignature
 
 //管线状态 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-RHIGraphicsPipelineRef VulkanRHIBackend::CreateGraphicsPipeline(const RHIGraphicsPipelineInfo& info) 
-{ 
+RHIGraphicsPipelineRef VulkanRHIBackend::CreateGraphicsPipeline(const RHIGraphicsPipelineInfo& info)
+{
+    VulkanUtil::ValidatePipelineBindings("GraphicsPipeline", { info.vertexShader, info.geometryShader, info.fragmentShader }, info.rootSignature);
+
     RHIGraphicsPipelineRef graphicsPipeline = std::make_shared<VulkanRHIGraphicsPipeline>(info, *this);
     RegisterResource(graphicsPipeline);
 
     return graphicsPipeline;
 }
 
-RHIComputePipelineRef VulkanRHIBackend::CreateComputePipeline(const RHIComputePipelineInfo& info) 
-{ 
+RHIComputePipelineRef VulkanRHIBackend::CreateComputePipeline(const RHIComputePipelineInfo& info)
+{
+    VulkanUtil::ValidatePipelineBindings("ComputePipeline", { info.computeShader }, info.rootSignature);
+
     RHIComputePipelineRef computePipeline = std::make_shared<VulkanRHIComputePipeline>(info, *this);
     RegisterResource(computePipeline);
 
     return computePipeline;
 }
 
-RHIRayTracingPipelineRef VulkanRHIBackend::CreateRayTracingPipeline(const RHIRayTracingPipelineInfo& info) 
+RHIRayTracingPipelineRef VulkanRHIBackend::CreateRayTracingPipeline(const RHIRayTracingPipelineInfo& info)
 {
+    if(info.shaderBindingTable)    // 从SBT里收集全部shader做校验
+    {
+        const RHIShaderBindingTableInfo& sbt = info.shaderBindingTable->GetInfo();
+        std::vector<RHIShaderRef> shaders;
+        for(auto& shader : sbt.rayGenGroups)   shaders.push_back(shader);
+        for(auto& group : sbt.hitGroups)
+        {
+            shaders.push_back(group.closestHitShader);
+            shaders.push_back(group.anyHitShader);
+            shaders.push_back(group.intersectionShader);
+        }
+        for(auto& shader : sbt.missGroups)     shaders.push_back(shader);
+        VulkanUtil::ValidatePipelineBindings("RayTracingPipeline", shaders, info.rootSignature);
+    }
+
     RHIRayTracingPipelineRef rayTracingPipeline = std::make_shared<VulkanRHIRayTracingPipeline>(info, *this);
     RegisterResource(rayTracingPipeline);
 
@@ -813,10 +832,15 @@ void TextureBarrier(VkCommandBuffer commandBuffer, const RHITextureBarrier& barr
         ? Backend()->GetQueueFamilyProperties()[queueFamilyIndex].queueFlags
         : VK_QUEUE_GRAPHICS_BIT;
 
-    VkAccessFlags srcAccessMask = VulkanUtil::ResourceStateToAccessFlags(barrier.srcState, queueFlags);
-    VkAccessFlags dstAccessMask = VulkanUtil::ResourceStateToAccessFlags(barrier.dstState, queueFlags);
-    VkPipelineStageFlags srcStage = VulkanUtil::AccessFlagsToPipelineStageFlags(srcAccessMask, queueFlags);
-    VkPipelineStageFlags dstStage = VulkanUtil::AccessFlagsToPipelineStageFlags(dstAccessMask, queueFlags);
+    // 单一推导入口：(状态+频率)→access/布局/stage，频率仅细化shader类访问的阶段展开
+    VkAccessFlags srcAccessMask;
+    VkAccessFlags dstAccessMask;
+    VkPipelineStageFlags srcStage;
+    VkPipelineStageFlags dstStage;
+    VkImageLayout oldLayout;
+    VkImageLayout newLayout;
+    VulkanUtil::ResourceStateToBarrierInfo(barrier.srcState, barrier.srcFrequency, queueFlags, srcAccessMask, oldLayout, srcStage);
+    VulkanUtil::ResourceStateToBarrierInfo(barrier.dstState, barrier.dstFrequency, queueFlags, dstAccessMask, newLayout, dstStage);
 
     // srcStage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;   // 可以保证绝对不会出错
     // dstStage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;   // 目前验证层VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT还是会有一些报错，太难调了
@@ -853,12 +877,14 @@ void TextureBarrier(VkCommandBuffer commandBuffer, const RHITextureBarrier& barr
     memoryBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
     memoryBarrier.srcQueueFamilyIndex = barrier.srcQueueFamily == RHI_QUEUE_FAMILY_IGNORED ? VK_QUEUE_FAMILY_IGNORED : barrier.srcQueueFamily;
     memoryBarrier.dstQueueFamilyIndex = barrier.dstQueueFamily == RHI_QUEUE_FAMILY_IGNORED ? VK_QUEUE_FAMILY_IGNORED : barrier.dstQueueFamily;
-    memoryBarrier.oldLayout = VulkanUtil::ResourceStateToImageLayout(barrier.srcState);
-    memoryBarrier.newLayout = VulkanUtil::ResourceStateToImageLayout(barrier.dstState);
+    memoryBarrier.oldLayout = oldLayout;
+    memoryBarrier.newLayout = newLayout;
     memoryBarrier.image = ResourceCast(barrier.texture)->GetHandle();
     memoryBarrier.subresourceRange = VulkanUtil::SubresourceToVk(range);
     memoryBarrier.srcAccessMask = srcAccessMask;
     memoryBarrier.dstAccessMask = dstAccessMask;
+
+    // [BEmitted]取证日志已删（2026-10-28收尾：布局案经悬空槽案终局翻案+刀A修复，使命完成）
 
     vkCmdPipelineBarrier(
         commandBuffer,
@@ -876,10 +902,14 @@ void BufferBarrier(VkCommandBuffer commandBuffer, const RHIBufferBarrier& barrie
         ? Backend()->GetQueueFamilyProperties()[queueFamilyIndex].queueFlags
         : VK_QUEUE_GRAPHICS_BIT;
 
-    VkAccessFlags srcAccessMask = VulkanUtil::ResourceStateToAccessFlags(barrier.srcState, queueFlags);
-    VkAccessFlags dstAccessMask = VulkanUtil::ResourceStateToAccessFlags(barrier.dstState, queueFlags);
-    VkPipelineStageFlags srcStage = VulkanUtil::AccessFlagsToPipelineStageFlags(srcAccessMask, queueFlags);
-    VkPipelineStageFlags dstStage = VulkanUtil::AccessFlagsToPipelineStageFlags(dstAccessMask, queueFlags);
+    // 单一推导入口：(状态+频率)→access/stage；布局输出对缓冲无意义，占位丢弃
+    VkAccessFlags srcAccessMask;
+    VkAccessFlags dstAccessMask;
+    VkPipelineStageFlags srcStage;
+    VkPipelineStageFlags dstStage;
+    VkImageLayout ignoreLayout;
+    VulkanUtil::ResourceStateToBarrierInfo(barrier.srcState, barrier.srcFrequency, queueFlags, srcAccessMask, ignoreLayout, srcStage);
+    VulkanUtil::ResourceStateToBarrierInfo(barrier.dstState, barrier.dstFrequency, queueFlags, dstAccessMask, ignoreLayout, dstStage);
 
     // UNDEFINED源侧与纹理同理（sync validation实证的WAW缺口——帧首转移须与上帧写建立内存依赖）
     if (barrier.srcState == RESOURCE_STATE_UNDEFINED)
@@ -1170,8 +1200,20 @@ void VulkanRHICommandContext::Submit(const RHIQueueSubmitBatch& batch, const std
 
     VkFence signalFence = batch.signalFence != nullptr ? ResourceCast(batch.signalFence)->GetHandle() : VK_NULL_HANDLE;
 
+    // 取证：布局案（2026-10-26）——批次CB清单+timeline等待值：对账VVL报错CB与悬空CB的相对提交序
+    {
+        char buf[4096]; int off = 0;
+        off += snprintf(buf + off, sizeof(buf) - off, "[Submit2] qfam %u cbs[%u]:", queue->GetQueueFamilyIndex(), (uint32_t)commandBufferInfos.size());
+        for (const auto& info : commandBufferInfos)
+            off += snprintf(buf + off, sizeof(buf) - off, " %p", info.commandBuffer);
+        off += snprintf(buf + off, sizeof(buf) - off, " | waits:");
+        for (const auto& w : waitInfos)
+            off += snprintf(buf + off, sizeof(buf) - off, " %p:%llu", w.semaphore, (unsigned long long)w.value);
+        LOG_DEBUG("%s", buf);
+    }
 
-    if (vkQueueSubmit2(queue->GetHandle(), 1, &submitInfo, signalFence) != VK_SUCCESS)
+    VkResult err = vkQueueSubmit2(queue->GetHandle(), 1, &submitInfo, signalFence);
+    if (err != VK_SUCCESS)
     {
         LOG_FATAL("Failed to submit queue batch!");
     }

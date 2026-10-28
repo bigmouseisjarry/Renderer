@@ -112,7 +112,6 @@ public:
     void SetCastShadow(bool shadow)                         { castShadow = shadow; }
 
 protected:
-    // 材质参数（baseColor：资产序列化键名保持"diffuse"兼容旧材质，GPU侧见MaterialInfo.baseColor）
     Vec4 baseColor = Vec4::Ones();
     Vec4 emission = Vec4::Zero();
 

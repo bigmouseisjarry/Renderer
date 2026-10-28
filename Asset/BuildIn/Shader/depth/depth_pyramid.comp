@@ -3,9 +3,7 @@
 #extension GL_GOOGLE_include_directive : enable
 #extension GL_EXT_samplerless_texture_functions : enable
 
-layout(set = 0, binding = 0) 			uniform texture2D LAST_MIP;
-layout(set = 0, binding = 1, r32f) 		uniform image2D CURRENT_MIP;
-layout(set = 1, binding = 0)            uniform sampler SAMPLER[];
+#include "include/common.glsl"
 
 layout(push_constant) uniform depth_pyramid_setting {
     uint mode;
@@ -22,9 +20,9 @@ void main()
 {
 	if(DEPTH_PYRAMID_SETTING.mipLevel == 0)	// 第一层是拷贝
 	{
-		float result = texelFetch(LAST_MIP, ivec2(gl_GlobalInvocationID.xy), 0).r;
+		float result = texelFetch(DEPTH_PYRAMID_LAST_MIP, ivec2(gl_GlobalInvocationID.xy), 0).r;
 
-		imageStore(CURRENT_MIP, ivec2(gl_GlobalInvocationID.xy), vec4(result, 0, 0, 0));
+		imageStore(DEPTH_PYRAMID_CURRENT_MIP, ivec2(gl_GlobalInvocationID.xy), vec4(result, 0, 0, 0));
 	}
 	else
 	{
@@ -33,15 +31,15 @@ void main()
 		ivec2 position10 = position00 + ivec2(1, 0);
 		ivec2 position11 = position00 + ivec2(1, 1);
 
-		float color00 = texelFetch(LAST_MIP, position00, 0).r;
-		float color01 = texelFetch(LAST_MIP, position01, 0).r;
-		float color10 = texelFetch(LAST_MIP, position10, 0).r;
-		float color11 = texelFetch(LAST_MIP, position11, 0).r;
+		float color00 = texelFetch(DEPTH_PYRAMID_LAST_MIP, position00, 0).r;
+		float color01 = texelFetch(DEPTH_PYRAMID_LAST_MIP, position01, 0).r;
+		float color10 = texelFetch(DEPTH_PYRAMID_LAST_MIP, position10, 0).r;
+		float color11 = texelFetch(DEPTH_PYRAMID_LAST_MIP, position11, 0).r;
 
 		float result;
 		if(DEPTH_PYRAMID_SETTING.mode == 1) result = max(max(max(color00, color01), color10), color11);
 		else							  	result = min(min(min(color00, color01), color10), color11);
 
-		imageStore(CURRENT_MIP, ivec2(gl_GlobalInvocationID.xy), vec4(result, 0, 0, 0));
+		imageStore(DEPTH_PYRAMID_CURRENT_MIP, ivec2(gl_GlobalInvocationID.xy), vec4(result, 0, 0, 0));
 	}
 }

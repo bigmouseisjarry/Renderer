@@ -12,6 +12,8 @@ void DDGIVisualizePass::Init()
 
     RHIRootSignatureInfo rootSignatureInfo = {};
     rootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetPerFrameRootSignature()->GetInfo())
+                     .AddEntry(EngineContext::RenderResource()->GetBindlessRootSignature()->GetInfo())
+                     .AddEntry(EngineContext::RenderResource()->GetSet2RootSignature()->GetInfo())       
                      .AddPushConstant({128, SHADER_FREQUENCY_GRAPHICS});
     rootSignature = backend->CreateRootSignature(rootSignatureInfo);
 
@@ -42,7 +44,7 @@ void DDGIVisualizePass::Init()
     model = std::make_shared<Model>("Asset/BuildIn/Model/Basic/sphere.obj", processSetting);
 }   
 
-void DDGIVisualizePass::Build(RDGBuilder& builder) 
+void DDGIVisualizePass::Build(RDGBuilder& builder)
 {
     if( IsEnabled() &&
         !EngineContext::Render()->IsPassEnabled(RESTIR_DI_PASS) &&
@@ -61,40 +63,53 @@ void DDGIVisualizePass::Build(RDGBuilder& builder)
 
 			if (volumeLight->Enable() &&
 				volumeLight->Visualize())
-			{
+            {
                 std::string index = " [" + std::to_string(volumeLight->GetVolumeLightID()) + "]";
+
+                
+                RDGTextureHandle irrTex = builder.GetOrCreateTexture("Volume Light Irradiance " + index)
+                    .Import(volumeLight->GetTextres().irradianceTex->texture)
+                    .Finish();
+
+                RDGTextureHandle depTex = builder.GetOrCreateTexture("Volume Light Depth " + index)
+                    .Import(volumeLight->GetTextres().depthTex->texture)
+                    .Finish();
 
                 RDGRenderPassHandle pass = builder.CreateRenderPass(GetName() + index)
                     .PassIndex(i)
-                    .Color(0, outColor, ATTACHMENT_LOAD_OP_LOAD, ATTACHMENT_STORE_OP_STORE, {0.0f, 0.0f, 0.0f, 0.0f})
+                    .Shaders({vertexShader.shader, fragmentShader.shader})     // S5:聚合文件补声明(第8个,盘点漏网)
+                    .Color(0, outColor, ATTACHMENT_LOAD_OP_LOAD, ATTACHMENT_STORE_OP_STORE, { 0.0f, 0.0f, 0.0f, 0.0f })
                     .DepthStencil(depth, ATTACHMENT_LOAD_OP_LOAD, ATTACHMENT_STORE_OP_STORE, 1.0f, 0)
+                    .Read(2, SET2_BINDING_VOLUME_LIGHT_IRRADIANCE, volumeLight->GetVolumeLightID(), irrTex, VIEW_TYPE_2D, {})  
+                    .Read(2, SET2_BINDING_VOLUME_LIGHT_DEPTH, volumeLight->GetVolumeLightID(), depTex, VIEW_TYPE_2D, {})
                     .Execute([&](RDGPassContext context) {
 
-                        auto& volumeLight = volumeLights[EngineContext::ThreadPool()->ThreadFrameIndex()][context.passIndex[0]];
+                            auto& volumeLight = volumeLights[EngineContext::ThreadPool()->ThreadFrameIndex()][context.passIndex[0]];
 
-                        DDGIVisualizeSetting setting = {};
-                        setting.volumeLightID   = volumeLight->GetVolumeLightID();
-                        setting.visualizeMode   = volumeLight->GetVisulaizeMode();
-                        setting.probeScale      = volumeLight->GetVisulaizeProbeScale();
-                        setting.vertexID        = model->GetVertexBuffer(0)->vertexID;
+                            DDGIVisualizeSetting setting = {};
+                            setting.volumeLightID   = volumeLight->GetVolumeLightID();
+                            setting.visualizeMode   = volumeLight->GetVisulaizeMode();
+                            setting.probeScale      = volumeLight->GetVisulaizeProbeScale();
+                            setting.vertexID        = model->GetVertexBuffer(0)->vertexID;
 
-                        int instanceCount = volumeLight->GetProbeCounts().x() * 
-                                            volumeLight->GetProbeCounts().y() *
-                                            volumeLight->GetProbeCounts().z();
+                            int instanceCount = volumeLight->GetProbeCounts().x() *
+                                volumeLight->GetProbeCounts().y() *
+                                volumeLight->GetProbeCounts().z();
 
-                        Extent2D windowExtent = EngineContext::Render()->GetWindowsExtent();
+                            Extent2D windowExtent = EngineContext::Render()->GetWindowsExtent();
 
-                        RHICommandListRef command = context.command;    
-                        command->SetGraphicsPipeline(graphicsPipeline);                                        
-                        command->SetViewport({0, 0}, {windowExtent.width, windowExtent.height});
-                        command->SetScissor({0, 0}, {windowExtent.width, windowExtent.height}); 
-                        command->SetDepthBias(0.0f, 0.0f, 0.0f);          
-                        command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);   
-                        command->PushConstants(&setting, sizeof(DDGIVisualizeSetting), SHADER_FREQUENCY_GRAPHICS);
+                            RHICommandListRef command = context.command;
+                            command->SetGraphicsPipeline(graphicsPipeline);
+                            command->SetViewport({ 0, 0 }, { windowExtent.width, windowExtent.height });
+                            command->SetScissor({ 0, 0 }, { windowExtent.width, windowExtent.height });
+                            command->SetDepthBias(0.0f, 0.0f, 0.0f);
+                            command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);
+                            command->BindDescriptorSet(EngineContext::RenderResource()->GetPoolDescriptorSet(), 1);
+                            command->PushConstants(&setting, sizeof(DDGIVisualizeSetting), SHADER_FREQUENCY_GRAPHICS);
 
-                        command->BindIndexBuffer(model->GetIndexBuffer(0)->buffer);
-                        command->DrawIndexed(model->GetIndexBuffer(0)->IndexNum(), instanceCount);                    
-                    })
+                            command->BindIndexBuffer(model->GetIndexBuffer(0)->buffer);
+                            command->DrawIndexed(model->GetIndexBuffer(0)->IndexNum(), instanceCount);
+                        })
                     .Finish();
             }
         }      

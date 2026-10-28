@@ -1,29 +1,30 @@
 #version 460
 #extension GL_GOOGLE_include_directive : enable
 
-#include "../common/common.glsl"
+#include "include/common.glsl"
+#include "../include/iridescence.glsl"
 
 layout(location = 0) in vec4 IN_POSITION;
 layout(location = 1) in vec4 IN_PREV_POSITION;
-layout(location = 2) in vec3 IN_COLOR;
+layout(location = 2) in vec3 VIS_IN_COLOR;
 layout(location = 3) in vec2 IN_TEXCOORD;
 layout(location = 4) in vec3 IN_NORMAL;
 layout(location = 5) in vec4 IN_TANGENT;
 layout(location = 6) in flat uint IN_ID;
 
-layout (location = 0) out vec4 G_BUFFER_DIFFUSE_TRANSPARENT;
-layout (location = 1) out vec4 G_BUFFER_NORMAL_SPECF;
-layout (location = 2) out vec4 G_BUFFER_EMISSION;
-layout (location = 3) out vec2 G_BUFFER_VELOCITY;
-layout (location = 4) out uint G_BUFFER_OBJECT_ID;
-layout (location = 5) out vec4 G_BUFFER_GEOMETRIC_NORMAL_AO;
-layout (location = 6) out vec4 G_BUFFER_SPECULAR_F0_ROUGHNESS;
-layout (location = 7) out float G_BUFFER_IOR;
+layout (location = 0) out vec4 OUT_GBUFFER_DIFFUSE;
+layout (location = 1) out vec4 OUT_GBUFFER_NORMAL;
+layout (location = 2) out vec4 OUT_GBUFFER_EMISSION;
+layout (location = 3) out vec2 OUT_GBUFFER_VELOCITY;
+layout (location = 4) out uint OUT_GBUFFER_OBJECT_ID;
+layout (location = 5) out vec4 OUT_GBUFFER_GEOMETRIC_NORMAL_AO;
+layout (location = 6) out vec4 OUT_GBUFFER_SPECULAR_F0;
+layout (location = 7) out float OUT_GBUFFER_IOR;
 
 void main()
 {
     Material material   = FetchMaterial(IN_ID);
-    vec4 color          = vec4(IN_COLOR, 1.0f);
+    vec4 color          = vec4(VIS_IN_COLOR, 1.0f);
     vec4 albedo         = FetchAlbedo(material, IN_TEXCOORD);
     vec3 emission       = FetchEmission(material);
     vec3 normal         = FetchNormal(material, IN_TEXCOORD, IN_NORMAL, IN_TANGENT);
@@ -49,14 +50,14 @@ void main()
         F0 = IridescenceFresnel(cosTheta1, cosTheta2, material.ior, material.index2, metallic, material.dinc);
     }
 
-    if(GLOBAL_SETTING.clusterInspectMode == 0) G_BUFFER_DIFFUSE_TRANSPARENT = vec4(diffusePremultiplied, 1.0f - albedo.a);
-    else                                       G_BUFFER_DIFFUSE_TRANSPARENT = color;
+    if(GLOBAL_SETTING.clusterInspectMode == 0) OUT_GBUFFER_DIFFUSE = vec4(diffusePremultiplied, 1.0f - albedo.a);
+    else                                       OUT_GBUFFER_DIFFUSE = color;
 
-    G_BUFFER_NORMAL_SPECF           = vec4(EncodeGBufferNormal(normal), material.iridescence != 0 ? 1.0f : 0.0f);   
-    G_BUFFER_EMISSION               = EncodeEmissionRGBM(emission);        
-    G_BUFFER_VELOCITY               = CalculateVelocity(IN_POSITION, IN_PREV_POSITION);
-    G_BUFFER_OBJECT_ID              = IN_ID;
-    G_BUFFER_GEOMETRIC_NORMAL_AO    = vec4(EncodeGBufferNormal(normalize(IN_NORMAL)), FetchAO(material, IN_TEXCOORD));   
-    G_BUFFER_SPECULAR_F0_ROUGHNESS  = vec4(F0, roughness);    
-    G_BUFFER_IOR                    = (material.ior - 1.0f) * 0.5f;   
+    OUT_GBUFFER_NORMAL                 = vec4(EncodeGBufferNormal(normal), material.iridescence != 0 ? 1.0f : 0.0f);   
+    OUT_GBUFFER_EMISSION               = EncodeEmissionRGBM(emission);        
+    OUT_GBUFFER_VELOCITY               = CalculateVelocity(IN_POSITION, IN_PREV_POSITION);
+    OUT_GBUFFER_OBJECT_ID              = IN_ID;
+    OUT_GBUFFER_GEOMETRIC_NORMAL_AO    = vec4(EncodeGBufferNormal(normalize(IN_NORMAL)), FetchAO(material, IN_TEXCOORD));   
+    OUT_GBUFFER_SPECULAR_F0            = vec4(F0, roughness);    
+    OUT_GBUFFER_IOR                    = (material.ior - 1.0f) * 0.5f;   
 }

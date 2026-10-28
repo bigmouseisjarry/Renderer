@@ -79,9 +79,9 @@ void RenderSystem::InitBaseResource()
     swapchain     = backend->CreateSwapChain({ surface, queue, FRAMES_IN_FLIGHT, surface->GetExetent(), COLOR_FORMAT });
 
     // 队列调度配置：编译器与帧槽预建共用同一份（QueryConfiguredQueues按它枚举，保证slot下标与all_queues对齐）
-    QueueScheduleConfig queueCfg{}; queueCfg.use_heft = true;
+    QueueScheduleConfig queueCfg{}; 
     queueCfg.enable_graphic_queues = 1;
-    queueCfg.enable_async_compute_queues = 1;
+    queueCfg.enable_async_compute_queues = 1;   // 已还原正式态（10-27夜单队列消融:单队列frame546照崩→多队列域洗清;Xid案转环境假说:显存92-95%悬崖+当日30+次TDR的驱动会话退化,重启后复测）
     queueCfg.enable_copy_queues = 0;
     queueCfg.enable_debug_output = false;
 
@@ -110,24 +110,19 @@ void RenderSystem::InitBaseResource()
         reorderConfig.max_attraction_distance = 10;
         reorderConfig.min_affinity_score = 0.3;
 
-        CrossQueueSyncConfig crossQueueSyncConfig{};
-        crossQueueSyncConfig.enable_ssis_optimization = true;
-        crossQueueSyncConfig.enable_debug_output = false;
-        crossQueueSyncConfig.max_sync_distance = 16;
 
         PassBindingConfig passBindingConfig{};
-        passBindingConfig.enable_debug_output = false;
+        passBindingConfig.enable_debug_output = false;      // 排查时与barrier输出一起开：可见每pass描述符写入时机
 
         BarrierGenerationConfig barrierGenerationConfig{};
         barrierGenerationConfig.enable_debug_output = false;
 
         CommandRecordingConfig commandRecordingConfig{};
         commandRecordingConfig.enable_debug_markers = true;
-        commandRecordingConfig.enable_debug_output = false;
+        commandRecordingConfig.enable_debug_output = false;       // 2026-10-28收尾关回（布局案结案；[Phase8]/[Step*]取证dump停用）
         commandRecordingConfig.enable_gpu_timing = false;        
         commandRecordingConfig.chunk_count = 3;     // ANY池worker(2) + 主线程(1)——亦是每队列预建命令流数
-        commandRecordingConfig.coarse_cross_frame_sync = false;    // 细链（V2）：imported资源首触批wait上帧末触点；true=粗链A/B回退
-        rdgCompilers[i] = std::make_shared<RDGCompiler>(crossFrameRegistry, renderQuery, queueCfg, reorderConfig, crossQueueSyncConfig, passBindingConfig, barrierGenerationConfig, commandRecordingConfig);
+        rdgCompilers[i] = std::make_shared<RDGCompiler>(crossFrameRegistry, renderQuery, queueCfg, reorderConfig, passBindingConfig, barrierGenerationConfig, commandRecordingConfig);
     }
 }
 

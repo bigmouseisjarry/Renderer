@@ -1,19 +1,7 @@
 #version 460
 #extension GL_GOOGLE_include_directive : enable
 
-#include "../common/common.glsl"
-
-layout(set = 1, binding = 0)            uniform texture2D CURRENT_NORMAL;
-layout(set = 1, binding = 1)   		    uniform texture2D HISTORY_NORMAL;
-layout(set = 1, binding = 2, rgba32f)   uniform image2D REPROJECTION_RESULT;
-
-
-
-
-
-
-
-
+#include "include/common.glsl"
 
 #define THREAD_SIZE_X 16
 #define THREAD_SIZE_Y 16
@@ -43,7 +31,7 @@ void main()
         prevPixel);
 
     vec4 result = vec4(prevUV, prevPixel);
-    imageStore(REPROJECTION_RESULT, pixel, result);
+    imageStore(REPROJECTION_RESULT_OUT, pixel, result);
 
 
     // 此处统一的重投影计算：

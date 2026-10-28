@@ -6,7 +6,6 @@
 #include "Function/Render/RDG/Phases/pass_dependency_analysis.h"
 #include "Function/Render/RDG/Phases/queue_schedule.h"
 #include "Function/Render/RDG/Phases/schedule_reorder.h"
-#include "Function/Render/RDG/Phases/cross_queue_sync_analysis.h"
 #include "Function/Render/RDG/Phases/pass_binding_phase.h"
 #include "Function/Render/RDG/Phases/barrier_generation_phase.h"
 #include "Function/Render/RDG/Phases/pass_execution_phase.h"
@@ -26,11 +25,11 @@ class RDGCompiler
 {
 public:
     RDGCompiler(RDGCrossFrameRegistry& crossFrameRegistry, RHIRenderQueryRef renderQuery = nullptr
-        , const QueueScheduleConfig& queueConfig = {}, const ExecutionReorderConfig& reorderConfig = {}, const CrossQueueSyncConfig& queueSyncConfig = {}
+        , const QueueScheduleConfig& queueConfig = {}, const ExecutionReorderConfig& reorderConfig = {}
         , const PassBindingConfig& bindingConfig = {}, const BarrierGenerationConfig& barrierConfig = {}, const CommandRecordingConfig& executionConfig = {})
         : crossFrameRegistry_(crossFrameRegistry)
         , renderQuery_(renderQuery)
-        , queueConfig_(queueConfig),reorderConfig_(reorderConfig), queueSyncConfig_(queueSyncConfig), bindingConfig_(bindingConfig), barrierConfig_(barrierConfig), executionConfig_(executionConfig) {}
+        , queueConfig_(queueConfig),reorderConfig_(reorderConfig), bindingConfig_(bindingConfig), barrierConfig_(barrierConfig), executionConfig_(executionConfig) {}
 
     void reset();
 
@@ -45,7 +44,6 @@ public:
     const PassDependencyAnalysis& GetPassDependencyAnalysis() const { return passDependencyAnalysis; }
     const QueueSchedule& GetQueueSchedule() const { return queueSchedule; }
     const ExecutionReorderPhase& GetExecutionReorder() const { return executionReorder; }
-    const CrossQueueSyncAnalysis& GetCrossQueueSyncAnalysis() const { return crossQueueSyncAnalysis; }
     const PassBindingPhase& GetPassBindingPhase() const { return passBinding; }
     const BarrierGenerationPhase& GetBarrierGenerationPhase() const { return barrierGeneration; }
     const PassExecutionPhase& GetPassExecutionPhase() const { return passExecution; }
@@ -72,20 +70,16 @@ private:
     ExecutionReorderConfig reorderConfig_;
     ExecutionReorderPhase executionReorder{ passInfoAnalysis,passDependencyAnalysis,queueSchedule,reorderConfig_ };
 
-    // 阶段5
-    CrossQueueSyncConfig queueSyncConfig_;
-    CrossQueueSyncAnalysis crossQueueSyncAnalysis{ passDependencyAnalysis,queueSchedule,queueSyncConfig_ };
-
-    // 阶段6: 绑定阶段（合并 SakuraEngine 的 resource_allocation + memory_aliasing(Tier0) + bind_table）
+    // 阶段6: 绑定阶段
     PassBindingConfig bindingConfig_;
-    PassBindingPhase passBinding{ passInfoAnalysis,crossQueueSyncAnalysis,bindingConfig_ };
+    PassBindingPhase passBinding{ passInfoAnalysis,queueSchedule,bindingConfig_ };
 
     // 阶段7: 屏障生成
     BarrierGenerationConfig barrierConfig_;
-    BarrierGenerationPhase barrierGeneration{ crossQueueSyncAnalysis,passBinding,passInfoAnalysis,executionReorder,barrierConfig_ };
+    BarrierGenerationPhase barrierGeneration{ queueSchedule,passBinding,passInfoAnalysis,executionReorder,crossFrameRegistry_,barrierConfig_ };
 
     // 阶段8: Pass执行——实际录制command，替代 RDGBuilder::Execute()
     CommandRecordingConfig executionConfig_;
-    PassExecutionPhase passExecution{ queueSchedule,executionReorder,crossQueueSyncAnalysis,barrierGeneration,passBinding,crossFrameRegistry_,executionConfig_ };
+    PassExecutionPhase passExecution{ queueSchedule,executionReorder,barrierGeneration,passBinding,crossFrameRegistry_,executionConfig_ };
 };
 using RDGCompilerRef = std::shared_ptr<RDGCompiler>;

@@ -16,20 +16,9 @@ void SSSRPass::Init()
 
     RHIRootSignatureInfo rootSignatureInfo = {};
     rootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetPerFrameRootSignature()->GetInfo())
-                     .AddEntry({1, 0, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE})   // SSSR_HIT_RESULT
-                     .AddEntry({1, 1, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE})   // SSSR_HIT_COLOR
-                     .AddEntry({1, 2, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE})   // SSSR_PDF
-                     .AddEntry({1, 3, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE})   // SSSR_RESOLVE
-                     .AddEntry({1, 4, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE})   // SSSR_HISTORY
-                     .AddEntry({1, 5, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE})   // OUT_COLOR
-                     .AddEntry({1, 6, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE})      // IN_COLOR_PYRAMID
-                     .AddEntry({1, 7, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE})      // BRDF_LUT
-                     .AddEntry({1, 8, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE})      // REPROJECTION_RESULT
-                     .AddEntry({2, 0, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })     // G_BUFFER_DIFFUSE_METALLIC
-                     .AddEntry({2, 1, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })     // G_BUFFER_NORMAL_ROUGHNESS
-                     .AddEntry({2, 2, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })     // G_BUFFER_EMISSION
-                     .AddEntry({2, 3, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })     // G_BUFFER_SPECULAR_F0_ROUGHNESS
-                     .AddPushConstant({128, SHADER_FREQUENCY_COMPUTE});
+                     .AddEntry(EngineContext::RenderResource()->GetBindlessRootSignature()->GetInfo())
+                     .AddEntry(EngineContext::RenderResource()->GetSet2RootSignature()->GetInfo())       // 刀7b-3：set2全局统一RS（98槽）
+                                                                                                                                                                                                                                                                                                                                                .AddPushConstant({128, SHADER_FREQUENCY_COMPUTE});
     rootSignature = backend->CreateRootSignature(rootSignatureInfo);
 
     RHIComputePipelineInfo pipelineInfo     = {};
@@ -98,14 +87,15 @@ void SSSRPass::Build(RDGBuilder& builder)
             .AllowReadWrite()
             .Finish();
 
+        // 稳态=UAV：末位触碰者是Filter/Resolve对history的ReadWrite（无OutputRead收敛）
         RDGTextureHandle sssrHistory = builder.CreateTexture("SSSR History")
-            .Import(historyColorTex->texture, RESOURCE_STATE_UNDEFINED)
+            .Import(historyColorTex->texture)
             .Finish();
 
         RDGTextureHandle outColor = builder.GetTexture("Noisy HDR Color");
 
         RDGTextureHandle lastFrameColor = builder.GetOrCreateTexture("Stable HDR Color History")
-            .Import(EngineContext::RenderResource()->GetStableHDRColorTexture(1), RESOURCE_STATE_UNDEFINED)     // 上一帧最终颜色（语义槽1）
+            .Import(EngineContext::RenderResource()->GetStableHDRColorTexture(1))     // 上一帧最终颜色（语义槽1）；与TAAPass同纹理同稳态
             .Finish();
 
         RDGTextureHandle inColorPyramid = builder.CreateTexture("SSSR Color Pyramid")
@@ -133,33 +123,41 @@ void SSSRPass::Build(RDGBuilder& builder)
             .GenerateMips()
             .Finish();
 
+        // 刀5：mesh card readback经SC域b27（FetchSurfaceCacheLighting写时间戳；与PostProcessing共享节点）
+        RDGBufferHandle cardUpdate = builder.GetOrCreateBuffer("Surface Cache Card Update")
+            .Import(EngineContext::RenderResource()->GetCardUpdateBuffer(), RESOURCE_STATE_UNORDERED_ACCESS)
+            .Finish();
+
         RDGComputePassHandle pass0 = builder.CreateComputePass(GetName() + " Trace")
             .AddFlag(RDGPassFlags::ForceGraphicsQueue)
             .RootSignature(rootSignature)
-            .ReadWrite(1, 0, 0, sssrHit)
-            .ReadWrite(1, 1, 0, sssrColor)
-            .ReadWrite(1, 2, 0, sssrPDF)
-            .ReadWrite(1, 3, 0, sssrResolve)
-            .ReadWrite(1, 4, 0, sssrHistory)
-            .Read(1, 6, 0, inColorPyramid)
-            .Read(1, 7, 0, brdfLut)
-            .Read(1, 8, 0, reprojectionOut)
-            .Read(2, 0, 0, diffuse)
-            .Read(2, 1, 0, normal)
-            .Read(2, 2, 0, emission)
-            .Read(2, 3, 0, specularF0)
+            .Shaders({computeShader[0].shader})           // 刀7b-3：严格边校验
+            .ReadWrite(2, SET2_BINDING_MESH_CARD_READBACK, 0, cardUpdate)
+            .Read(2, SET2_BINDING_HISTORY_DEPTH, 0, builder.GetTexture("Depth"))     // S4终态边复原(2026-10-27终裁)：trace.comp:131/151读DEPTH[0]本帧深度；S5回退误删(S5快照b2[0]绑Depth=S4边被当"S5加的"删)；同队q0读无QFO=S4稳态形态
+            .ReadWrite(2, SET2_BINDING_SSSR_HIT_RESULT, 0, sssrHit)
+            .Read(2, SET2_BINDING_HISTORY_DEPTH_PYRAMID, 0, builder.GetTexture("Depth Min"))
+            .Read(2, SET2_BINDING_HISTORY_DEPTH_PYRAMID, 1, builder.GetTexture("Depth Max"), VIEW_TYPE_2D, {})
+            .Read(2, SET2_BINDING_SURFACE_CACHE, 0, builder.GetTexture("Surface Cache Diffuse/Metallic"))
+            .Read(2, SET2_BINDING_SURFACE_CACHE, 1, builder.GetTexture("Surface Cache Normal/Roughness"), VIEW_TYPE_2D, {})
+            .Read(2, SET2_BINDING_SURFACE_CACHE, 2, builder.GetTexture("Surface Cache Emission"), VIEW_TYPE_2D, {})
+            .Read(2, SET2_BINDING_SURFACE_CACHE, 3, builder.GetTexture("Surface Cache Lighting"), VIEW_TYPE_2D, {})
+            .Read(2, SET2_BINDING_SURFACE_CACHE, 4, builder.GetTexture("Surface Cache Depth"), VIEW_TYPE_2D, {})
+            .ReadWrite(2, SET2_BINDING_SSSR_HIT_COLOR, 0, sssrColor)
+            .ReadWrite(2, SET2_BINDING_SSSR_PDF, 0, sssrPDF)
+            .Read(2, SET2_BINDING_SSSR_IN_COLOR_PYRAMID, 0, inColorPyramid)
+            .Read(2, SET2_BINDING_GBUFFER_DIFFUSE_METALLIC, 0, diffuse)
+            .Read(2, SET2_BINDING_GBUFFER_NORMAL_ROUGHNESS, 0, normal)
+            .Read(2, SET2_BINDING_GBUFFER_SPECULAR_F0_ROUGHNESS, 0, specularF0)
             .ReadAccelerationStructure(builder.GetBuffer("TLAS Storage"))
-            .Read(builder.GetTexture("Surface Cache Lighting"))
-            .Read(builder.GetTexture("Depth Min"))          // 层级步进采样Min金字塔（经per-frame set，图外通道）——pyramid被禁用时GetTexture返回无效句柄、Read安全跳过
             .Execute([&](RDGPassContext context) {       
 
                 Extent2D extent = EngineContext::Render()->GetWindowsExtent();
 
                 RHICommandListRef command = context.command; 
                 command->SetComputePipeline(computePipeline[0]);
-                command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);  
-                command->BindDescriptorSet(context.descriptors[1], 1);
-                command->BindDescriptorSet(context.descriptors[2], 2); 
+                command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);
+                command->BindDescriptorSet(EngineContext::RenderResource()->GetPoolDescriptorSet(), 1);
+                command->BindDescriptorSet(context.descriptors[2], 2);
                 command->PushConstants(&setting, sizeof(SSSRSetting), SHADER_FREQUENCY_COMPUTE);
                 command->Dispatch(  Math::CeilDivide(extent.width, 16),
                                     Math::CeilDivide(extent.height, 16), 
@@ -170,25 +168,24 @@ void SSSRPass::Build(RDGBuilder& builder)
         RDGComputePassHandle pass1 = builder.CreateComputePass(GetName() + " Resolve")
             .AddFlag(RDGPassFlags::ForceGraphicsQueue)
             .RootSignature(rootSignature)
-            .ReadWrite(1, 0, 0, sssrHit)
-            .ReadWrite(1, 1, 0, sssrColor)
-            .ReadWrite(1, 2, 0, sssrPDF)
-            .ReadWrite(1, 3, 0, sssrResolve)
-            .ReadWrite(1, 4, 0, sssrHistory)
-            .Read(1, 6, 0, inColorPyramid)
-            .Read(1, 7, 0, brdfLut)
-            .Read(1, 8, 0, reprojectionOut)
-            .Read(2, 0, 0, diffuse)
-            .Read(2, 1, 0, normal)
-            .Read(2, 2, 0, emission)
-            .Read(2, 3, 0, specularF0)
+            .Shaders({computeShader[1].shader})           // 刀7b-3：严格边校验
+            .Read(2, SET2_BINDING_HISTORY_DEPTH, 0, builder.GetTexture("Depth"))     // GPU-AV实锤：resolve采b12:0但无边（悬空槽→NaN光线家族），2026-10-19补
+            .ReadWrite(2, SET2_BINDING_SSSR_HIT_RESULT, 0, sssrHit)
+            .ReadWrite(2, SET2_BINDING_SSSR_HIT_COLOR, 0, sssrColor)
+            .ReadWrite(2, SET2_BINDING_SSSR_PDF, 0, sssrPDF)
+            .ReadWrite(2, SET2_BINDING_SSSR_RESOLVE, 0, sssrResolve)
+            .Read(2, SET2_BINDING_SSSR_IN_COLOR_PYRAMID, 0, inColorPyramid)
+            .Read(2, SET2_BINDING_BRDF_LUT, 0, brdfLut)
+            .Read(2, SET2_BINDING_GBUFFER_DIFFUSE_METALLIC, 0, diffuse)
+            .Read(2, SET2_BINDING_GBUFFER_NORMAL_ROUGHNESS, 0, normal)
+            .Read(2, SET2_BINDING_GBUFFER_SPECULAR_F0_ROUGHNESS, 0, specularF0)
             .Execute([&](RDGPassContext context) {       
 
                 RHICommandListRef command = context.command; 
                 command->SetComputePipeline(computePipeline[1]);
-                command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);  
-                command->BindDescriptorSet(context.descriptors[1], 1);
-                command->BindDescriptorSet(context.descriptors[2], 2); 
+                command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);
+                command->BindDescriptorSet(EngineContext::RenderResource()->GetPoolDescriptorSet(), 1);
+                command->BindDescriptorSet(context.descriptors[2], 2);
                 command->PushConstants(&setting, sizeof(SSSRSetting), SHADER_FREQUENCY_COMPUTE);
                 command->Dispatch(  Math::CeilDivide(EngineContext::Render()->GetWindowsExtent().width, 16), 
                                     Math::CeilDivide(EngineContext::Render()->GetWindowsExtent().height, 16), 
@@ -200,25 +197,19 @@ void SSSRPass::Build(RDGBuilder& builder)
         {
             RDGComputePassHandle pass2 = builder.CreateComputePass(GetName() + " Filter")
                 .RootSignature(rootSignature)
-                .ReadWrite(1, 0, 0, sssrHit)
-                .ReadWrite(1, 1, 0, sssrColor)
-                .ReadWrite(1, 2, 0, sssrPDF)
-                .ReadWrite(1, 3, 0, sssrResolve)
-                .ReadWrite(1, 4, 0, sssrHistory)
-                .ReadWrite(1, 5, 0, outColor)
-                .Read(1, 6, 0, inColorPyramid)
-                .Read(1, 7, 0, brdfLut)
-                .Read(1, 8, 0, reprojectionOut)      
-                .Read(2, 0, 0, diffuse)
-                .Read(2, 1, 0, normal)
-                .Read(2, 2, 0, emission)
-                .Read(2, 3, 0, specularF0)
+                .Shaders({computeShader[2].shader})           // 刀7b-3：严格边校验
+                .ReadWrite(2, SET2_BINDING_SSSR_HIT_RESULT, 0, sssrHit)
+                .ReadWrite(2, SET2_BINDING_SSSR_RESOLVE, 0, sssrResolve)
+                .ReadWrite(2, SET2_BINDING_SSSR_HISTORY, 0, sssrHistory)
+                .ReadWrite(2, SET2_BINDING_OUT_COLOR, 0, outColor)
+                .Read(2, SET2_BINDING_SSSR_REPROJECTION_RESULT, 0, reprojectionOut)      
                 .Execute([&](RDGPassContext context) {       
 
                     RHICommandListRef command = context.command; 
                     command->SetComputePipeline(computePipeline[2]);
-                    command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);  
-                    command->BindDescriptorSet(context.descriptors[1], 1);
+                    command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);
+                command->BindDescriptorSet(EngineContext::RenderResource()->GetPoolDescriptorSet(), 1);  
+                    command->BindDescriptorSet(context.descriptors[2], 2);
                     command->BindDescriptorSet(context.descriptors[2], 2); 
                     command->PushConstants(&setting, sizeof(SSSRSetting), SHADER_FREQUENCY_COMPUTE);
                     command->Dispatch(  Math::CeilDivide(EngineContext::Render()->GetWindowsExtent().width, 16), 
@@ -231,19 +222,16 @@ void SSSRPass::Build(RDGBuilder& builder)
         {
             RDGComputePassHandle pass3 = builder.CreateComputePass(GetName() + " Combine")
                 .RootSignature(rootSignature)
-                .ReadWrite(1, 3, 0, sssrResolve)
-                .ReadWrite(1, 5, 0, outColor)
-                .Read(1, 6, 0, inColorPyramid)
-                .Read(2, 0, 0, diffuse)
-                .Read(2, 1, 0, normal)
-                .Read(2, 2, 0, emission)
-                .Read(2, 3, 0, specularF0)
+                .Shaders({computeShader[3].shader})           // 刀7b-3：严格边校验
+                .ReadWrite(2, SET2_BINDING_SSSR_RESOLVE, 0, sssrResolve)
+                .ReadWrite(2, SET2_BINDING_OUT_COLOR, 0, outColor)
                 .Execute([&](RDGPassContext context) {       
 
                     RHICommandListRef command = context.command; 
                     command->SetComputePipeline(computePipeline[3]);
                     command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);
-                    command->BindDescriptorSet(context.descriptors[1], 1);
+                command->BindDescriptorSet(EngineContext::RenderResource()->GetPoolDescriptorSet(), 1);
+                    command->BindDescriptorSet(context.descriptors[2], 2);
                     command->BindDescriptorSet(context.descriptors[2], 2);
                     command->PushConstants(&setting, sizeof(SSSRSetting), SHADER_FREQUENCY_COMPUTE);
                     command->Dispatch(  Math::CeilDivide(EngineContext::Render()->GetWindowsExtent().width, 16), 

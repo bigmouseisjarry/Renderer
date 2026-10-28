@@ -12,8 +12,7 @@ void ExposurePass::Init()
     computeShader1 = Shader(EngineContext::File()->ShaderPath() + "post_process/luminance_exposure.comp.spv", SHADER_FREQUENCY_COMPUTE);
 
     RHIRootSignatureInfo rootSignatureInfo = {};
-    rootSignatureInfo.AddEntry({0, 0, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE })
-                     .AddEntry({0, 1, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_BUFFER});
+    rootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetSet2RootSignature()->GetInfo());     
     rootSignature = backend->CreateRootSignature(rootSignatureInfo);
 
 
@@ -47,19 +46,20 @@ void ExposurePass::Build(RDGBuilder& builder)
     RDGTextureHandle stableColor = builder.GetTexture("Stable HDR Color");
     
     RDGBufferHandle exposureData = builder.CreateBuffer("Exposure Data")
-        .Import(exposureDataBuffer.buffer, RESOURCE_STATE_UNDEFINED)
+        .Import(exposureDataBuffer.buffer, RESOURCE_STATE_UNORDERED_ACCESS)
         .Finish();
 
     RDGComputePassHandle pass0 = builder.CreateComputePass("Luminance Histogram")
         .AddFlag(RDGPassFlags::ForceGraphicsQueue)
         .RootSignature(rootSignature)
-        .Read(0, 0, 0, stableColor)
-        .ReadWrite(0, 1, 0, exposureData)
-        .Execute([&](RDGPassContext context) {       
+        .Shaders({computeShader0.shader})            
+        .Read(2, SET2_BINDING_IN_COLOR, 0, stableColor)
+        .ReadWrite(2, SET2_BINDING_EXPOSURE_DATA, 0, exposureData, 0, 0)
+        .Execute([&](RDGPassContext context) {
 
-            RHICommandListRef command = context.command; 
+            RHICommandListRef command = context.command;
             command->SetComputePipeline(computePipeline0);
-            command->BindDescriptorSet(context.descriptors[0], 0);
+            command->BindDescriptorSet(context.descriptors[2], 2);
             command->Dispatch(  Math::CeilDivide(EngineContext::Render()->GetWindowsExtent().width, 16), 
                                 Math::CeilDivide(EngineContext::Render()->GetWindowsExtent().height, 16), 
                                 1);
@@ -69,13 +69,14 @@ void ExposurePass::Build(RDGBuilder& builder)
     RDGComputePassHandle pass1 = builder.CreateComputePass("Luminance Exposure")
         .AddFlag(RDGPassFlags::ForceGraphicsQueue)
         .RootSignature(rootSignature)
-        .Read(0, 0, 0, stableColor)
-        .ReadWrite(0, 1, 0, exposureData)
-        .Execute([&](RDGPassContext context) {       
+        .Shaders({computeShader1.shader})           
+        .Read(2, SET2_BINDING_IN_COLOR, 0, stableColor)
+        .ReadWrite(2, SET2_BINDING_EXPOSURE_DATA, 0, exposureData, 0, 0)
+        .Execute([&](RDGPassContext context) {
 
-            RHICommandListRef command = context.command; 
+            RHICommandListRef command = context.command;
             command->SetComputePipeline(computePipeline1);
-            command->BindDescriptorSet(context.descriptors[0], 0);
+            command->BindDescriptorSet(context.descriptors[2], 2);
             command->Dispatch(  1, 
                                 1, 
                                 1);

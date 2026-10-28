@@ -3,14 +3,24 @@
 #extension GL_GOOGLE_include_directive : enable
 #extension GL_EXT_samplerless_texture_functions : enable
 
-#include "../common/common.glsl"
+#include "include/common.glsl"
 
-#define NRD_GLSL 1
-#include "NRD.hlsli"
-#include "common.glsl"
+layout(push_constant) uniform NRDSetting
+{
+    uint isBaseColorMetalnessAvailable;
+    uint enableAntiFirefly;
+    uint demodulate;
+    uint denoisedOnly;
+    uint specularOnly;
+    uint restirEnabled;
+    float splitScreen;
+    float motionVectorScaleX;
+    float motionVectorScaleY;
+    float motionVectorScaleZ;
+    uint side;               // view_z用：0=双边打包(legacy), 1=仅specular, 2=仅diffuse
+} SETTING;
+
 	
-layout(set = 1, binding = 1, rgba16f) 	    uniform image2D RESTIR_SPECULAR_COLOR;
-layout(set = 1, binding = 2) 	            uniform texture2D SSSR_RESOLVE;
 
 #define THREAD_SIZE_X 16
 #define THREAD_SIZE_Y 16
@@ -24,9 +34,9 @@ void main()
 
     vec4 specularHitDist = vec4(0.0f);
     if(SETTING.restirEnabled != 0)
-        specularHitDist = imageLoad(RESTIR_SPECULAR_COLOR, pixel);
+        specularHitDist = imageLoad(DI_SPECULAR_COLOR, pixel);
 
-    specularHitDist += texelFetch(SSSR_RESOLVE, pixel, 0);
+    specularHitDist += imageLoad(SSSR_RESOLVE, pixel);
 
-    imageStore(RESTIR_SPECULAR_COLOR, pixel, specularHitDist);
+    imageStore(DI_SPECULAR_COLOR, pixel, specularHitDist);
 }

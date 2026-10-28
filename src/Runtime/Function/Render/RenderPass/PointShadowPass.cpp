@@ -32,7 +32,9 @@ void PointShadowPass::Init()
 
         RHIRootSignatureInfo rootSignatureInfo = {};
         rootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetPerFrameRootSignature()->GetInfo())
-                         .AddPushConstant({128, SHADER_FREQUENCY_GRAPHICS});
+                         .AddEntry(EngineContext::RenderResource()->GetBindlessRootSignature()->GetInfo())
+                         .AddEntry(EngineContext::RenderResource()->GetSet2RootSignature()->GetInfo())       // 刀7b-3：set2全局统一RS
+                                                  .AddPushConstant({128, SHADER_FREQUENCY_GRAPHICS});
         rootSignature0 = backend->CreateRootSignature(rootSignatureInfo);
 
         RHIGraphicsPipelineInfo pipelineInfo = {};
@@ -58,10 +60,9 @@ void PointShadowPass::Init()
         computeShader    = Shader(EngineContext::File()->ShaderPath() + "shadow/point_shadow_kawase.comp.spv", SHADER_FREQUENCY_COMPUTE);
 
         RHIRootSignatureInfo rootSignatureInfo = {};
-        rootSignatureInfo.AddEntry({0, 0, 6, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE})    
-                         .AddEntry({0, 1, 6, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE}) 
-                         .AddEntry(EngineContext::RenderResource()->GetSamplerRootSignature()->GetInfo()) 
-                         .AddPushConstant({128, SHADER_FREQUENCY_COMPUTE});                                 
+        rootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetBindlessRootSignature()->GetInfo())
+                         .AddEntry(EngineContext::RenderResource()->GetSet2RootSignature()->GetInfo())       // 刀7b-3：set2全局统一RS（IN_TEX_ARRAY/OUT_TEX_ARRAY=42/43）
+                         .AddPushConstant({128, SHADER_FREQUENCY_COMPUTE});
         rootSignature1 = backend->CreateRootSignature(rootSignatureInfo);
 
         RHIComputePipelineInfo pipelineInfo     = {};
@@ -92,12 +93,13 @@ void PointShadowPass::Build(RDGBuilder& builder)
                 .AllowRenderTarget()
                 .Finish();
 
+            // 两纹理稳态均=SRV：filtered末位=filter的OutputRead后光照读；depth末位=渲染OutputRead后无人触碰
             RDGTextureHandle filteredColor = builder.CreateTexture("Point Shadow Filtered Color" + index)
-                .Import(EngineContext::RenderResource()->GetPointShadowTexture(i), RESOURCE_STATE_UNDEFINED)
+                .Import(EngineContext::RenderResource()->GetPointShadowTexture(i))
                 .Finish();
 
             RDGTextureHandle depth = builder.CreateTexture("Point Shadow Depth" + index)
-                .Import(EngineContext::RenderResource()->GetPointShadowDepthTexture(i), RESOURCE_STATE_UNDEFINED)
+                .Import(EngineContext::RenderResource()->GetPointShadowDepthTexture(i))
                 .Finish();
 
             // RDGTextureHandle depth = builder.CreateTexture("Point Shadow Depth" + index)
@@ -130,20 +132,30 @@ void PointShadowPass::Build(RDGBuilder& builder)
                 .ReadIndirect(builder.GetBuffer("Clusrter Draw Commands" + cmdIndex + std::to_string(i * 6 + 4) + "]"))
                 .ReadIndirect(builder.GetBuffer("Mesh Draw Commands" + cmdIndex + std::to_string(i * 6 + 5) + "]"))
                 .ReadIndirect(builder.GetBuffer("Clusrter Draw Commands" + cmdIndex + std::to_string(i * 6 + 5) + "]"))
+                .RootSignature(rootSignature0)     // 带根签名才会为下方set1声明生成池化描述符
+                .Shaders({vertexShader.shader, clusterVertexShader.shader, fragmentShader.shader})     // 刀7b-3：严格边校验
+                .Read(2, SET2_BINDING_CLUSTER_DRAW_INFOS_READ, 0, builder.GetBuffer("Cluster Draw Infos" + cmdIndex + std::to_string(i * 6 + 0) + "]"), 0, 0, RESOURCE_TYPE_BUFFER)
+                .Read(2, SET2_BINDING_CLUSTER_DRAW_INFOS_READ, 1, builder.GetBuffer("Cluster Draw Infos" + cmdIndex + std::to_string(i * 6 + 1) + "]"), 0, 0, RESOURCE_TYPE_BUFFER)
+                .Read(2, SET2_BINDING_CLUSTER_DRAW_INFOS_READ, 2, builder.GetBuffer("Cluster Draw Infos" + cmdIndex + std::to_string(i * 6 + 2) + "]"), 0, 0, RESOURCE_TYPE_BUFFER)
+                .Read(2, SET2_BINDING_CLUSTER_DRAW_INFOS_READ, 3, builder.GetBuffer("Cluster Draw Infos" + cmdIndex + std::to_string(i * 6 + 3) + "]"), 0, 0, RESOURCE_TYPE_BUFFER)
+                .Read(2, SET2_BINDING_CLUSTER_DRAW_INFOS_READ, 4, builder.GetBuffer("Cluster Draw Infos" + cmdIndex + std::to_string(i * 6 + 4) + "]"), 0, 0, RESOURCE_TYPE_BUFFER)
+                .Read(2, SET2_BINDING_CLUSTER_DRAW_INFOS_READ, 5, builder.GetBuffer("Cluster Draw Infos" + cmdIndex + std::to_string(i * 6 + 5) + "]"), 0, 0, RESOURCE_TYPE_BUFFER)
                 .Execute([&](RDGPassContext context) {
 
                     Extent2D windowExtent = EngineContext::Render()->GetWindowsExtent();
                     uint32_t index = context.passIndex[0];
                     uint32_t pointLightID = pointShadowLights[EngineContext::ThreadPool()->ThreadFrameIndex()][index]->GetPointLightID();
 
-                    RHICommandListRef command = context.command;      
-                    command->SetGraphicsPipeline(pipeline);                                      
+                    RHICommandListRef command = context.command;
+                    command->SetGraphicsPipeline(pipeline);
                     command->SetViewport({0, 0}, {POINT_SHADOW_SIZE, POINT_SHADOW_SIZE});
-                    command->SetScissor({0, 0}, {POINT_SHADOW_SIZE, POINT_SHADOW_SIZE}); 
-                    command->SetDepthBias(pointShadowLights[EngineContext::ThreadPool()->ThreadFrameIndex()][index]->GetConstantBias(), 
-                                            pointShadowLights[EngineContext::ThreadPool()->ThreadFrameIndex()][index]->GetSlopeBias(), 
-                                            0.0f);            
-                    command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);   
+                    command->SetScissor({0, 0}, {POINT_SHADOW_SIZE, POINT_SHADOW_SIZE});
+                    command->SetDepthBias(pointShadowLights[EngineContext::ThreadPool()->ThreadFrameIndex()][index]->GetConstantBias(),
+                                            pointShadowLights[EngineContext::ThreadPool()->ThreadFrameIndex()][index]->GetSlopeBias(),
+                                            0.0f);
+                    command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);
+                command->BindDescriptorSet(EngineContext::RenderResource()->GetPoolDescriptorSet(), 1);
+                    command->BindDescriptorSet(context.descriptors[2], 2);
 
                     for(int face = 0; face < 6; face++)
                     {
@@ -152,8 +164,8 @@ void PointShadowPass::Build(RDGBuilder& builder)
                         data[1] = face;
 
                         command->PushConstants(&data, sizeof(uint32_t) * 2, SHADER_FREQUENCY_GRAPHICS);
-                        meshPassProcessor->Draw(command, index * 6 + face);    
-                    }                  
+                        meshPassProcessor->Draw(command, index * 6 + face);
+                    }
                 })
                 .OutputRead(depth)
                 .OutputRead(color)  // 手动屏障
@@ -161,24 +173,25 @@ void PointShadowPass::Build(RDGBuilder& builder)
 
             RDGComputePassHandle filterPass = builder.CreateComputePass(GetName() + " Filter" + index)  //TODO 多轮？(级联卷积)
                 .RootSignature(rootSignature1)
-                .Read(0, 0, 0, color, VIEW_TYPE_2D, {TEXTURE_ASPECT_COLOR, 0, 1, 0, 1})
-                .Read(0, 0, 1, color, VIEW_TYPE_2D, {TEXTURE_ASPECT_COLOR, 0, 1, 1, 1})
-                .Read(0, 0, 2, color, VIEW_TYPE_2D, {TEXTURE_ASPECT_COLOR, 0, 1, 2, 1})
-                .Read(0, 0, 3, color, VIEW_TYPE_2D, {TEXTURE_ASPECT_COLOR, 0, 1, 3, 1})
-                .Read(0, 0, 4, color, VIEW_TYPE_2D, {TEXTURE_ASPECT_COLOR, 0, 1, 4, 1})
-                .Read(0, 0, 5, color, VIEW_TYPE_2D, {TEXTURE_ASPECT_COLOR, 0, 1, 5, 1})
-                .ReadWrite(0, 1, 0, filteredColor, VIEW_TYPE_2D, {TEXTURE_ASPECT_COLOR, 0, 1, 0, 1})
-                .ReadWrite(0, 1, 1, filteredColor, VIEW_TYPE_2D, {TEXTURE_ASPECT_COLOR, 0, 1, 1, 1})
-                .ReadWrite(0, 1, 2, filteredColor, VIEW_TYPE_2D, {TEXTURE_ASPECT_COLOR, 0, 1, 2, 1})
-                .ReadWrite(0, 1, 3, filteredColor, VIEW_TYPE_2D, {TEXTURE_ASPECT_COLOR, 0, 1, 3, 1})
-                .ReadWrite(0, 1, 4, filteredColor, VIEW_TYPE_2D, {TEXTURE_ASPECT_COLOR, 0, 1, 4, 1})
-                .ReadWrite(0, 1, 5, filteredColor, VIEW_TYPE_2D, {TEXTURE_ASPECT_COLOR, 0, 1, 5, 1})  
-                .Execute([&](RDGPassContext context) {       
+                .Shaders({computeShader.shader})           // 刀7b-3：严格边校验
+                .Read(2, SET2_BINDING_IN_TEX_ARRAY, 0, color, VIEW_TYPE_2D, {TEXTURE_ASPECT_COLOR, 0, 1, 0, 1})
+                .Read(2, SET2_BINDING_IN_TEX_ARRAY, 1, color, VIEW_TYPE_2D, {TEXTURE_ASPECT_COLOR, 0, 1, 1, 1})
+                .Read(2, SET2_BINDING_IN_TEX_ARRAY, 2, color, VIEW_TYPE_2D, {TEXTURE_ASPECT_COLOR, 0, 1, 2, 1})
+                .Read(2, SET2_BINDING_IN_TEX_ARRAY, 3, color, VIEW_TYPE_2D, {TEXTURE_ASPECT_COLOR, 0, 1, 3, 1})
+                .Read(2, SET2_BINDING_IN_TEX_ARRAY, 4, color, VIEW_TYPE_2D, {TEXTURE_ASPECT_COLOR, 0, 1, 4, 1})
+                .Read(2, SET2_BINDING_IN_TEX_ARRAY, 5, color, VIEW_TYPE_2D, {TEXTURE_ASPECT_COLOR, 0, 1, 5, 1})
+                .ReadWrite(2, SET2_BINDING_OUT_TEX_ARRAY, 0, filteredColor, VIEW_TYPE_2D, {TEXTURE_ASPECT_COLOR, 0, 1, 0, 1})
+                .ReadWrite(2, SET2_BINDING_OUT_TEX_ARRAY, 1, filteredColor, VIEW_TYPE_2D, {TEXTURE_ASPECT_COLOR, 0, 1, 1, 1})
+                .ReadWrite(2, SET2_BINDING_OUT_TEX_ARRAY, 2, filteredColor, VIEW_TYPE_2D, {TEXTURE_ASPECT_COLOR, 0, 1, 2, 1})
+                .ReadWrite(2, SET2_BINDING_OUT_TEX_ARRAY, 3, filteredColor, VIEW_TYPE_2D, {TEXTURE_ASPECT_COLOR, 0, 1, 3, 1})
+                .ReadWrite(2, SET2_BINDING_OUT_TEX_ARRAY, 4, filteredColor, VIEW_TYPE_2D, {TEXTURE_ASPECT_COLOR, 0, 1, 4, 1})
+                .ReadWrite(2, SET2_BINDING_OUT_TEX_ARRAY, 5, filteredColor, VIEW_TYPE_2D, {TEXTURE_ASPECT_COLOR, 0, 1, 5, 1})
+                .Execute([&](RDGPassContext context) {
 
-                    RHICommandListRef command = context.command; 
+                    RHICommandListRef command = context.command;
                     command->SetComputePipeline(computePipeline);
-                    command->BindDescriptorSet(context.descriptors[0], 0);
-                    command->BindDescriptorSet(EngineContext::RenderResource()->GetSamplerDescriptorSet(), 1);
+                    command->BindDescriptorSet(context.descriptors[2], 2);
+                    command->BindDescriptorSet(EngineContext::RenderResource()->GetPoolDescriptorSet(), 1);
                     command->PushConstants(&setting, sizeof(KawaseSetting), SHADER_FREQUENCY_COMPUTE);
                     command->Dispatch(  POINT_SHADOW_SIZE / 16, 
                                         POINT_SHADOW_SIZE / 16, 

@@ -1,9 +1,27 @@
 #version 460
 #extension GL_GOOGLE_include_directive : enable
 
-#include "../common/common.glsl"
 
-#include "common.glsl"
+#include "include/common.glsl"
+
+layout(push_constant) uniform SVGFSetting
+{
+    int round;      // 论文给出的参数设置：
+    int maxRound;   // 5
+
+    float sigmaP;   // 1.0
+    float sigmaN;   // 128.0
+    float sigmaL;   // 4.0
+
+    float alpha;
+    int mode;
+
+    int denoisedOnly;
+    int disocclusionFix;
+    int antiFirefly;
+    int historyClamp;
+
+} SETTING;
 
 #define THREAD_SIZE_X 16
 #define THREAD_SIZE_Y 16
@@ -32,7 +50,7 @@ void main()
 	// 不伤纹理细节
 	// 邻域盒子更紧密
 	vec3 diffuse 		= max(texelFetch(G_BUFFER_DIFFUSE_TRANSPARENT, pixel, 0).xyz, 1e-3);
-	vec3 color 			= imageLoad(IN_COLOR, pixel).xyz / diffuse;	// demodulate
+	vec3 color 			= texelFetch(IN_COLOR[0], pixel, 0).xyz / diffuse;	// demodulate
 
 	vec3 prevColor;
 	vec2 prevMoments;
@@ -43,7 +61,7 @@ void main()
         objectID,
         normal,
         OBJECT_ID[1],
-        HISTORY_G_BUFFER_NORMAL_SPECF,
+        HISTORY_G_BUFFER_NORMAL_ROUGHNESS,
 		HISTORY_COLOR_VARIANCE,
 		HISTORY_MOMENTS,
         prevColor,
@@ -65,7 +83,7 @@ void main()
 				vec3 neighborDiffuse = texelFetch(G_BUFFER_DIFFUSE_TRANSPARENT, neighborPixel, 0).xyz;
 				adjTex.color[i][j] = RGBtoLuminance(neighborDiffuse) < 0.01f ? 
 										vec3(0.0f) : 
-										imageLoad(IN_COLOR, neighborPixel).xyz / neighborDiffuse;
+										texelFetch(IN_COLOR[0], neighborPixel, 0).xyz / neighborDiffuse;
 			}
 		}
 		RGBtoYCoCg(adjTex);

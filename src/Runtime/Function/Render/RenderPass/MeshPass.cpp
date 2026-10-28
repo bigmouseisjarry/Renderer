@@ -12,11 +12,9 @@
 #include <unordered_map>
 #include <vector>
 
-uint32_t MeshPassProcessor::globalClusterOffset = 0;
-
-const std::vector<std::shared_ptr<MeshPassIndirectBuffers>>& MeshPassProcessor::GetIndirectBuffers()                                   
-{ 
-    return indirectBuffers[EngineContext::ThreadPool()->ThreadFrameIndex()]; 
+const std::vector<std::shared_ptr<MeshPassIndirectBuffers>>& MeshPassProcessor::GetIndirectBuffers()
+{
+    return indirectBuffers[EngineContext::ThreadPool()->ThreadFrameIndex()];
 }
 
 void MeshPassProcessor::AddDrawCommand(const DrawCommand& drawCommand, uint32_t passIndex)                         
@@ -25,13 +23,19 @@ void MeshPassProcessor::AddDrawCommand(const DrawCommand& drawCommand, uint32_t 
 }
 
 void MeshPassProcessor::Init(uint32_t multiPass)
-{ 
+{
     this->multiPass = multiPass;
     for(auto& indirectBuffer : indirectBuffers)
     {
         indirectBuffer.clear();
         for(int i = 0; i < multiPass; i++)
-            indirectBuffer.push_back(std::make_shared<MeshPassIndirectBuffers>()); 
+        {
+            auto buffers = std::make_shared<MeshPassIndirectBuffers>();
+            buffers->clusterDrawInfoBuffer = EngineContext::RHI()->CreateBuffer({   // 纯GPU写，GPU_ONLY
+                .size = MAX_PER_FRAME_CLUSTER_SIZE * sizeof(MeshClusterDrawInfo),
+                .type = RESOURCE_TYPE_RW_BUFFER});
+            indirectBuffer.push_back(buffers);
+        }
     }
 }
 
@@ -103,8 +107,7 @@ void MeshPassProcessor::Process(const std::vector<DrawBatch>& drawBatches)
     for(auto& buffers : passBuffers)
     {
         // 填写cluster的间接绘制命令
-        // 由于所有绘制指令(即每pass类型的每一遍)里的索引最后指向同一个全局缓冲，需要计算全局的偏移
-        uint32_t globalClusterOffset = MeshPassProcessor::GetGlobalClusterOffset();
+        // 每遍的索引只指向本遍自己的clusterDrawInfoBuffer，firstInstance为buffer内本地偏移（从0起算）
         uint32_t localClusterOffset = 0;
         clusterDrawCommand.clear();
         for(uint32_t i = 0; i < pipelineIndex; i++)
@@ -113,11 +116,10 @@ void MeshPassProcessor::Process(const std::vector<DrawBatch>& drawBatches)
                 .vertexCount = CLUSTER_TRIANGLE_SIZE * 3,
                 .instanceCount = 0,
                 .firstVertex = 0,
-                .firstInstance = globalClusterOffset + localClusterOffset
+                .firstInstance = localClusterOffset
             });
             localClusterOffset += clusterCount[i];
         }
-        MeshPassProcessor::AddGlobalClusterOffset(localClusterOffset);
 
 
         buffers->meshDrawDataBuffer.SetData(&meshDrawSetting, sizeof(IndirectSetting), 0);

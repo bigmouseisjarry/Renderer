@@ -30,13 +30,19 @@ static const char* INSTANCE_LAYERS[] = {
 };
 
 static const std::vector<VkValidationFeatureEnableEXT> ENABLED_VALIDATION_FEATURES = {  // 需要时再启用，对帧数影响大
+    //VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT,   // 刀6d取证轮（2026-10-20）已用毕还原：C1形态抓到DDGI Radiance set2 b10(LightClusterGrid)悬空实锤
 #if ENABLE_DEBUG_MODE
     //VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT,
     //VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT,
     // 诊断结论（2026-09-03 sync validation实证后移除环境变量门控）：需要跑sync validation时
     // 取消下一行注释（或临时加回env门控）——它是多队列同步掩码正确性的最终裁判
-    //VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT
+    //VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT // RUN4已毕还原(syncval被ENABLE_DEBUG_MODE=0吞,未生效)
 #endif
+//    VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT,  // GPU-AV本机废(2026-10-28五连判:Submit2上internal error自禁,详见memory)
+//    VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT,  // syncval配方:守卫外挂+不挂DISABLE_ALL(ENABLE_DEBUG_MODE=0会吞#if守卫内的)
+};
+static const std::vector<VkValidationFeatureDisableEXT> DISABLED_VALIDATION_FEATURES = {  // RUN5实证:不关core则GPU-AV internal error自禁
+//VK_VALIDATION_FEATURE_DISABLE_ALL_EXT,  // GPU-AV专用(与GPU_ASSISTED配套)
 };
 
 static const char* INSTANCE_EXTENTIONS[] = {
@@ -121,13 +127,16 @@ public:
         return debugCreateInfo;
     }
 
+    // GPU-AV配套：必须关core检查（同开=very slow+GPU-AV internal error，2026-10-19实证）
     static VkValidationFeaturesEXT GetValidationFeatureCreateInfo()
     {
         VkValidationFeaturesEXT validationFeaturesExt = {};
         validationFeaturesExt.sType = VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT;
+        // 刀6d取证轮已毕还原（GPU-AV配方=GPU_ASSISTED+DISABLE_ALL挂载，见memory/devicelost-dangling-descriptor）
         validationFeaturesExt.pEnabledValidationFeatures = ENABLED_VALIDATION_FEATURES.data();
         validationFeaturesExt.enabledValidationFeatureCount = ENABLED_VALIDATION_FEATURES.size();
-
+        validationFeaturesExt.pDisabledValidationFeatures = DISABLED_VALIDATION_FEATURES.data();
+        validationFeaturesExt.disabledValidationFeatureCount = DISABLED_VALIDATION_FEATURES.size();
         return validationFeaturesExt;
     }
 
@@ -672,10 +681,6 @@ public:
         return aspectFlags;
     }
     
-    // state → access，并按录制队列族能力过滤
-    // 图形专属访问（顶点/索引/颜色/深度模板/间接参数）只在图形族有效；
-    // shader/AS访问需要compute能力（带GRAPHICS位的族必带COMPUTE位）；
-    // transfer访问任何族都有效。作为src和dst是一致的
     static VkAccessFlags ResourceStateToAccessFlags(RHIResourceState state, VkQueueFlags queueFlags)
     {
         const bool graphics = (queueFlags & VK_QUEUE_GRAPHICS_BIT) != 0;
@@ -720,6 +725,30 @@ public:
         return layout;
     }
 
+    // (状态 + 着色器频率) → 访问掩码 + 布局 + 管线阶段
+    // 布局与访问仍完全由状态推导；频率仅细化shader类访问的阶段展开（新RHI流单一入口）
+    // ★buffer专有态(VERTEX/INDEX/INDIRECT/AS)不在ImageLayout覆盖集——组合入口对其跳过布局推导
+    // (置UNDEFINED,buffer调用方本就丢弃布局),否则误触ImageLayout的default fatal
+    // (2026-10-27实锤:GPU剔除的INDIRECT_ARGUMENT buffer屏障在双worker同时fatal)
+    static void ResourceStateToBarrierInfo(RHIResourceState state, uint32_t frequency, VkQueueFlags queueFlags,
+        VkAccessFlags& outAccess, VkImageLayout& outLayout, VkPipelineStageFlags& outStages)
+    {
+        outAccess  = ResourceStateToAccessFlags(state, queueFlags);
+        switch (state)
+        {
+        case RESOURCE_STATE_VERTEX_BUFFER:
+        case RESOURCE_STATE_INDEX_BUFFER:
+        case RESOURCE_STATE_INDIRECT_ARGUMENT:
+        case RESOURCE_STATE_ACCELERATION_STRUCTURE:
+            outLayout = VK_IMAGE_LAYOUT_UNDEFINED;     // buffer专有态:无布局概念
+            break;
+        default:
+            outLayout = ResourceStateToImageLayout(state);  // 纹理可达态照常推导
+            break;
+        }
+        outStages  = AccessFlagsToPipelineStageFlags(outAccess, queueFlags, frequency);
+    }
+
 	static uint32_t MultiviewCountToBitmask(uint32_t multiviewCount)
 	{
 		uint32_t bitmask = 0;
@@ -732,7 +761,9 @@ public:
     // access → stage，并裁剪到录制队列族支持的stage集合
     // 非图形族上使用其不支持的stage是未定义行为（如transfer族命令缓冲带COMPUTE_SHADER、compute族带COLOR_ATTACHMENT_OUTPUT）
     // compute族保留compute/RT/AS_BUILD/transfer/host；transfer族仅transfer/host
-    static VkPipelineStageFlags AccessFlagsToPipelineStageFlags(VkAccessFlags accessFlags, VkQueueFlags queueFlags)
+    // 频率感知阶段展开：shader类访问位（UNIFORM/SHADER_READ/SHADER_WRITE）按frequency精确展开，其余access位不变；
+    // frequency=SHADER_FREQUENCY_ALL=旧实现（按队列族宽展开），默认参零行为变化
+    static VkPipelineStageFlags AccessFlagsToPipelineStageFlags(VkAccessFlags accessFlags, VkQueueFlags queueFlags, uint32_t frequency = SHADER_FREQUENCY_ALL)
     {
         // 根据所有的accessFlags来分析涉及到的stage阶段 参考Sakura
         const bool graphics = (queueFlags & VK_QUEUE_GRAPHICS_BIT) != 0;
@@ -749,13 +780,26 @@ public:
                             VK_ACCESS_SHADER_READ_BIT |
                             VK_ACCESS_SHADER_WRITE_BIT))
         {
-            if(graphics)    flags |=    VK_PIPELINE_STAGE_VERTEX_SHADER_BIT |                   // 0x00000008
-                                        VK_PIPELINE_STAGE_TESSELLATION_CONTROL_SHADER_BIT |     // 0x00000010
-                                        VK_PIPELINE_STAGE_TESSELLATION_EVALUATION_SHADER_BIT |  // 0x00000020
-                                        VK_PIPELINE_STAGE_GEOMETRY_SHADER_BIT |                 // 0x00000040
-                                        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;                  // 0x00000080
-            if(compute)     flags |=    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT |                  // 0x00000800
-                                        VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR;           // 0x00200000
+            if(frequency == SHADER_FREQUENCY_ALL)
+            {
+                // 无频率信息：按该队列族可能执行shader的全部stage宽展开（旧路径，逐位与旧实现一致）
+                if(graphics)    flags |=    VK_PIPELINE_STAGE_VERTEX_SHADER_BIT |                   // 0x00000008
+                                            VK_PIPELINE_STAGE_TESSELLATION_CONTROL_SHADER_BIT |     // 0x00000010
+                                            VK_PIPELINE_STAGE_TESSELLATION_EVALUATION_SHADER_BIT |  // 0x00000020
+                                            VK_PIPELINE_STAGE_GEOMETRY_SHADER_BIT |                 // 0x00000040
+                                            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;                  // 0x00000080
+                if(compute)     flags |=    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT |                  // 0x00000800
+                                            VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR;           // 0x00200000
+            }
+            else
+            {
+                // 频率感知：按frequency精确展开，再按队列族门控——
+                // 图形族天然支持图形+compute+RT全部shader stage；纯compute族只保留compute/RT
+                VkShaderStageFlags stages = ShaderFrequencyToVkStageFlags(frequency);
+                if(graphics)                    flags |= stages;
+                else if(compute)                flags |= stages & (VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT |
+                                                                   VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR);
+            }
         }
 
         if(graphics && (accessFlags &   VK_ACCESS_INPUT_ATTACHMENT_READ_BIT))            flags |=    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;                  // 0x00000080
@@ -1056,6 +1100,145 @@ public:
             subresource.mipLevel,
             subresource.baseArrayLayer,
             subresource.layerCount); 
+    }
+
+    // ===== 启动期绑定布局校验（迁自ShaderBindingValidator.cpp的验证A，S1预迁：S2切换调用点后原文件整体退役）=====
+    // shader反射声明 vs 根签名AddEntry布局 对拍（管线创建时调用一次）
+    // 防"绑定乱象"类的存量bug：镜像枚举漂移（C++的AddEntry与glsl声明不一致）、漏加AddEntry、
+    // PC stage掩码不覆盖实际使用它的shader stage
+    // 只检查shader->RS方向（shader用到的必须在RS里声明且兼容）；
+    // RS->shader方向不查（拼了per-frame RS但只消费其中几个槽是合法常态）
+    // 返回值：false=有违例（违例已逐行LOG_FATAL）
+
+    // 类型族：反射得到的ResourceType与AddEntry声明的ResourceType不是一一对应的
+    // （GLSL的readonly buffer反射仍是STORAGE_BUFFER→RW_BUFFER；textureCube反射是SAMPLED_IMAGE→TEXTURE），
+    // 按族匹配，族内混用是历史惯例，跨族才是布局错误
+    enum TypeFamily
+    {
+        FAMILY_NONE,
+        FAMILY_SAMPLER,
+        FAMILY_SAMPLED_IMAGE,
+        FAMILY_STORAGE_IMAGE,
+        FAMILY_SSBO,
+        FAMILY_UBO,
+        FAMILY_COMBINED_IMAGE_SAMPLER,
+        FAMILY_TEXEL_BUFFER,
+        FAMILY_RW_TEXEL_BUFFER,
+        FAMILY_ACCELERATION_STRUCTURE,
+    };
+
+    static TypeFamily GetTypeFamily(ResourceType type)
+    {
+        if(type == RESOURCE_TYPE_SAMPLER)                                        return FAMILY_SAMPLER;
+        if(type == RESOURCE_TYPE_TEXTURE || type == RESOURCE_TYPE_TEXTURE_CUBE)  return FAMILY_SAMPLED_IMAGE;
+        if(type == RESOURCE_TYPE_RW_TEXTURE)                                     return FAMILY_STORAGE_IMAGE;
+        if(type == RESOURCE_TYPE_BUFFER || type == RESOURCE_TYPE_RW_BUFFER)      return FAMILY_SSBO;
+        if(type == RESOURCE_TYPE_UNIFORM_BUFFER)                                 return FAMILY_UBO;
+        if(type == RESOURCE_TYPE_COMBINED_IMAGE_SAMPLER)                         return FAMILY_COMBINED_IMAGE_SAMPLER;
+        if(type == RESOURCE_TYPE_TEXEL_BUFFER)                                   return FAMILY_TEXEL_BUFFER;
+        if(type == RESOURCE_TYPE_RW_TEXEL_BUFFER)                                return FAMILY_RW_TEXEL_BUFFER;
+        if(type == RESOURCE_TYPE_RAY_TRACING)                                    return FAMILY_ACCELERATION_STRUCTURE;
+        return FAMILY_NONE;
+    }
+
+    static const char* TypeFamilyName(TypeFamily family)
+    {
+        switch(family)
+        {
+        case FAMILY_SAMPLER:                    return "SAMPLER";
+        case FAMILY_SAMPLED_IMAGE:              return "SAMPLED_IMAGE(texture)";
+        case FAMILY_STORAGE_IMAGE:              return "STORAGE_IMAGE(rw texture)";
+        case FAMILY_SSBO:                       return "SSBO(buffer)";
+        case FAMILY_UBO:                        return "UBO(uniform buffer)";
+        case FAMILY_COMBINED_IMAGE_SAMPLER:     return "COMBINED_IMAGE_SAMPLER";
+        case FAMILY_TEXEL_BUFFER:               return "TEXEL_BUFFER";
+        case FAMILY_RW_TEXEL_BUFFER:            return "RW_TEXEL_BUFFER";
+        case FAMILY_ACCELERATION_STRUCTURE:     return "ACCELERATION_STRUCTURE(tlas)";
+        default:                                return "NONE";
+        }
+    }
+
+    static bool ValidatePipelineBindings(  const std::string& pipelineName,
+                                            const std::vector<RHIShaderRef>& shaders,
+                                            const RHIRootSignatureRef& rootSignature)
+    {
+        if(rootSignature == nullptr) return true;    // TestTriangle等无签名管线
+
+        const RHIRootSignatureInfo& rsInfo = rootSignature->GetInfo();
+        const std::vector<ShaderResourceEntry>& rsEntries = rsInfo.GetEntries();
+        std::vector<std::string> violations;    // 刀4b：收集全部违例统一抛（一批迭代排查用）
+
+        // 管线使用的每一个shader
+        for(const RHIShaderRef& shader : shaders)
+        {
+            if(shader == nullptr) continue;
+            const ShaderReflectInfo& reflect = shader->GetReflectInfo();
+            const std::string& shaderName = shader->GetInfo().debugName;
+
+            // 反射得到的entity
+            for(const ShaderResourceEntry& used : reflect.resources)
+            {
+                // 共享include常带来"声明但未静态使用"的绑定（如nrd/common.glsl的G_BUFFER_DEPTH对combine），
+                // Vulkan不要求未使用绑定有后备，跳过
+                if(!used.used) continue;
+
+                // 1. shader声明的每个绑定，根签名里必须有同(set,binding)的entry
+                const ShaderResourceEntry* declared = nullptr;
+                for(const ShaderResourceEntry& entry : rsEntries)
+                    if(entry.set == used.set && entry.binding == used.binding) { declared = &entry; break; }
+
+                if(declared == nullptr)
+                {
+                    violations.push_back("[" + pipelineName + "] shader '" + shaderName + "' set=" +
+                        std::to_string(used.set) + " binding=" + std::to_string(used.binding) + " 无对应AddEntry");
+                    continue;
+                }
+
+                // 2. 类型族必须一致
+                if(GetTypeFamily(declared->type) != GetTypeFamily(used.type))
+                {
+                    violations.push_back("[" + pipelineName + "] set=" + std::to_string(used.set) + " binding=" +
+                        std::to_string(used.binding) + " 类型不符 RS=" + TypeFamilyName(GetTypeFamily(declared->type)) +
+                        " shader=" + TypeFamilyName(GetTypeFamily(used.type)) + " (" + shaderName + ")");
+                    continue;
+                }
+
+                // 3. RS的entry必须覆盖实际访问它的shader stage
+                if((((uint32_t)declared->frequency) & ((uint32_t)used.frequency)) == 0)
+                {
+                    violations.push_back("[" + pipelineName + "] set=" + std::to_string(used.set) + " binding=" +
+                        std::to_string(used.binding) + " stage掩码不含 '" + shaderName + "'");
+                    continue;
+                }
+
+                // 4. 数组大小：RS的0=无界池(bindless)；shader的0=runtime数组；否则shader声明数不能超过RS容量
+                if(declared->size != 0 && used.size > declared->size)
+                {
+                    violations.push_back("[" + pipelineName + "] set=" + std::to_string(used.set) + " binding=" +
+                        std::to_string(used.binding) + " 数组超容 RS=" + std::to_string(declared->size) +
+                        " shader=" + std::to_string(used.size) + " (" + shaderName + ")");
+                }
+            }
+
+            // 5. push constant：使用PC的shader，其stage必须被某个PC range掩码覆盖且大小足够
+            if(reflect.usePushConstant)
+            {
+                bool covered = false;
+                for(const PushConstantInfo& pc : rsInfo.GetPushConstants())
+                    if((((uint32_t)pc.frequency) & ((uint32_t)reflect.frequency)) != 0 && pc.size >= reflect.pushConstantSize)
+                    { covered = true; break; }
+
+                if(!covered)
+                {
+                    violations.push_back("[" + pipelineName + "] shader '" + shaderName + "' PC未覆盖(size=" +
+                        std::to_string(reflect.pushConstantSize) + ")");
+                }
+            }
+        }
+
+        for(const std::string& v : violations)
+            LOG_FATAL("%s", v.c_str());
+        return violations.empty();
     }
 };
 

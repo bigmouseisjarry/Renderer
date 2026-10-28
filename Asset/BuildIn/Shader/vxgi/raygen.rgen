@@ -3,16 +3,19 @@
 #extension GL_ARB_separate_shader_objects : enable
 #extension GL_GOOGLE_include_directive : enable
 
-#include "../common/common.glsl"
+#include "include/common.glsl"
 #include "../clipmap/clipmap.glsl"
-#include "common.glsl"
+
+layout(push_constant) uniform vxgi_setting {
+	ClipmapRegion region;
+} SETTING;
 
 layout(location = 0) rayPayloadEXT Payload RAY_PAYLOAD;
 
 void main() 
 {
 	int mipLevel = SETTING.region.mipLevel;
-	ClipmapLevel clipmapLevel = clipmapInfo.levels[mipLevel];
+	ClipmapLevel clipmapLevel = VXGI_CLIPMAP_BUFFER.clipmapInfo.levels[mipLevel];
 
 	ivec3 index     = ivec3(gl_LaunchIDEXT.xyz + SETTING.region.min);
 

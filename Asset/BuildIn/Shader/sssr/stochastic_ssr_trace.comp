@@ -3,9 +3,29 @@
 #extension GL_GOOGLE_include_directive : enable
 #extension GL_EXT_samplerless_texture_functions : enable
 
-#include "../common/common.glsl"
-#include "common.glsl"
 
+#include "include/common.glsl"
+
+layout(push_constant) uniform SSSRSetting {
+    int mode;
+    int maxMip;
+    int startMip;
+    int endMip;
+    int maxLoop;
+
+    float maxRoughness;
+    float minHitDistance;
+    float importanceSampleBias;
+    float thickness;
+    float screenFade;
+    float filterBlend;
+
+    int enableSkybox;
+	int reflectionOnly;
+    int visualizeHitUV;
+    int visualizeHitMask;
+
+} SETTING;
 // https://blog.csdn.net/qjh5606/article/details/120102582
 // https://www.jpgrenier.org/ssr.html
 

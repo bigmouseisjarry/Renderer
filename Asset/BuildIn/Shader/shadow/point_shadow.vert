@@ -3,7 +3,7 @@
 #extension GL_EXT_multiview : enable
 #extension GL_ARB_shader_viewport_layer_array : enable
 
-#include "../common/common.glsl"
+#include "include/common.glsl"
 
 layout(push_constant) uniform point_light_setting {
     uint index;

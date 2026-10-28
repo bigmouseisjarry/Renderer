@@ -13,7 +13,8 @@ void IBLPass::Init()
 
     RHIRootSignatureInfo rootSignatureInfo = {};
     rootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetPerFrameRootSignature()->GetInfo())
-                     .AddEntry({1, 0, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE})
+                     .AddEntry(EngineContext::RenderResource()->GetBindlessRootSignature()->GetInfo())
+                     .AddEntry(EngineContext::RenderResource()->GetSet2RootSignature()->GetInfo())       
                      .AddPushConstant({128, SHADER_FREQUENCY_COMPUTE});
     rootSignature = backend->CreateRootSignature(rootSignatureInfo);
 
@@ -33,19 +34,19 @@ void IBLPass::Init()
 void IBLPass::Build(RDGBuilder& builder) 
 {
     RDGTextureHandle brdfLut = builder.CreateTexture("BRDF LUT")
-        .Import(brdfTex->texture, RESOURCE_STATE_UNDEFINED)
-        .Finish(); 
+        .Import(brdfTex->texture, RESOURCE_STATE_SHADER_RESOURCE)   // bornState特案：PNG文件加载、RDG外出生带内容，首见不可UNDEFINED（丢内容风险）
+        .Finish();
 
     if(IsEnabled())
     {
         SetEnable(false);   // 只执行一次
 
         RDGTextureHandle diffuseTex = builder.CreateTexture("Skybox IBL diffuse")
-            .Import(EngineContext::RenderResource()->GetIBLTexture(0), RESOURCE_STATE_UNDEFINED)
+            .Import(EngineContext::RenderResource()->GetIBLTexture(0))
             .Finish();
 
         RDGTextureHandle specularTex = builder.CreateTexture("Skybox IBL specular")
-            .Import(EngineContext::RenderResource()->GetIBLTexture(1), RESOURCE_STATE_UNDEFINED)
+            .Import(EngineContext::RenderResource()->GetIBLTexture(1))
             .Finish();
 
         for(uint32_t i = 0; i < 6; i++)
@@ -55,7 +56,8 @@ void IBLPass::Build(RDGBuilder& builder)
             auto passBuilder = builder.CreateComputePass(GetName() + " diffuse" + index)
                 .PassIndex(i)
                 .RootSignature(rootSignature)
-                .ReadWrite(1, 0, 0, diffuseTex, VIEW_TYPE_2D, { TEXTURE_ASPECT_COLOR, 0, 1, i, 1 })
+                .Shaders({computeShader[0].shader})  
+                .ReadWrite(2, SET2_BINDING_IBL_A, 0, diffuseTex, VIEW_TYPE_2D, { TEXTURE_ASPECT_COLOR, 0, 1, i, 1})
                 .Execute([&](RDGPassContext context) {       
 
                     IBLSetting setting = {};
@@ -64,8 +66,9 @@ void IBLPass::Build(RDGBuilder& builder)
 
                     RHICommandListRef command = context.command; 
                     command->SetComputePipeline(computePipeline[0]);
-                    command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);   
-                    command->BindDescriptorSet(context.descriptors[1], 1);
+                    command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);
+                    command->BindDescriptorSet(EngineContext::RenderResource()->GetPoolDescriptorSet(), 1);   
+                    command->BindDescriptorSet(context.descriptors[2], 2);
                     command->PushConstants(&setting, sizeof(IBLSetting), SHADER_FREQUENCY_COMPUTE);
                     command->Dispatch(  DIFFUSE_IBL_SIZE / 16, 
                                         DIFFUSE_IBL_SIZE / 16, 
@@ -87,7 +90,8 @@ void IBLPass::Build(RDGBuilder& builder)
                 auto passBuilder = builder.CreateComputePass(GetName() + " specular" + index)
                     .PassIndex(i, j)
                     .RootSignature(rootSignature)
-                    .ReadWrite(1, 0, 0, specularTex, VIEW_TYPE_2D, { TEXTURE_ASPECT_COLOR, j, 1, i, 1 })
+                    .Shaders({computeShader[1].shader})  // 刀7b-3：严格边校验
+                    .ReadWrite(2, SET2_BINDING_IBL_A, 0, specularTex, VIEW_TYPE_2D, { TEXTURE_ASPECT_COLOR, j, 1, i, 1})
                     .Execute([&](RDGPassContext context) {       
 
                         Extent2D extent = { SPECULAR_IBL_SIZE , SPECULAR_IBL_SIZE };
@@ -103,8 +107,9 @@ void IBLPass::Build(RDGBuilder& builder)
 
                         RHICommandListRef command = context.command; 
                         command->SetComputePipeline(computePipeline[1]);
-                        command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);   
-                        command->BindDescriptorSet(context.descriptors[1], 1);
+                        command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);
+                command->BindDescriptorSet(EngineContext::RenderResource()->GetPoolDescriptorSet(), 1);   
+                        command->BindDescriptorSet(context.descriptors[2], 2);
                         command->PushConstants(&setting, sizeof(IBLSetting), SHADER_FREQUENCY_COMPUTE);
                         command->Dispatch(  extent.width, 
                                             extent.height, 

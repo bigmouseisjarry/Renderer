@@ -17,9 +17,8 @@ void BloomPass::Init()
     computeShader[3] = Shader(EngineContext::File()->ShaderPath() + "bloom/bloom_combine.comp.spv", SHADER_FREQUENCY_COMPUTE);
 
     RHIRootSignatureInfo rootSignatureInfo = {};
-    rootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetSamplerRootSignature()->GetInfo())
-                     .AddEntry({0, 0, 2, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE})
-                     .AddEntry({0, 1, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE})
+    rootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetBindlessRootSignature()->GetInfo())   // 刀7b-3：set1资源池集
+                     .AddEntry(EngineContext::RenderResource()->GetSet2RootSignature()->GetInfo())       // 刀7b-3：set2全局统一RS（98槽）
                      .AddPushConstant({128, SHADER_FREQUENCY_COMPUTE});
     rootSignature = backend->CreateRootSignature(rootSignatureInfo);
 
@@ -79,14 +78,15 @@ void BloomPass::Build(RDGBuilder& builder)
         // pass0 根据mesh pass的输出结果选取阈值
         RDGComputePassHandle pass0 = builder.CreateComputePass(GetName() + " Threshold")
             .RootSignature(rootSignature)
-            .Read(0, 0, 0, inputColor)
-            .ReadWrite(0, 1, 0, downSampleMip, VIEW_TYPE_2D, { TEXTURE_ASPECT_COLOR, 0, 1, 0, 1 })
+            .Shaders({computeShader[0].shader})          // 刀7b-3：严格边校验
+            .Read(2, SET2_BINDING_IN_COLOR, 0, inputColor)
+            .ReadWrite(2, SET2_BINDING_OUT_COLOR, 0, downSampleMip, VIEW_TYPE_2D, { TEXTURE_ASPECT_COLOR, 0, 1, 0, 1})
             .Execute([&](RDGPassContext context) {       
 
                 RHICommandListRef command = context.command; 
                 command->SetComputePipeline(computePipeline[0]);
-                command->BindDescriptorSet(context.descriptors[0], 0);
-                command->BindDescriptorSet(EngineContext::RenderResource()->GetSamplerDescriptorSet(), 1);
+                command->BindDescriptorSet(context.descriptors[2], 2);
+                command->BindDescriptorSet(EngineContext::RenderResource()->GetPoolDescriptorSet(), 1);
                 command->PushConstants(&setting, sizeof(BloomSetting), SHADER_FREQUENCY_COMPUTE);
                 command->Dispatch(  Math::CeilDivide(EngineContext::Render()->GetWindowsExtent().width, 16), 
                                     Math::CeilDivide(EngineContext::Render()->GetWindowsExtent().height, 16), 
@@ -102,8 +102,9 @@ void BloomPass::Build(RDGBuilder& builder)
             auto pass1Builder = builder.CreateComputePass(GetName() + " Down Sample" + index)
                 .PassIndex(i)
                 .RootSignature(rootSignature)
-                .Read(0, 0, 0, downSampleMip, VIEW_TYPE_2D, { TEXTURE_ASPECT_COLOR, (uint32_t)(i - 1), 1, 0, 1 })
-                .ReadWrite(0, 1, 0, downSampleMip, VIEW_TYPE_2D, { TEXTURE_ASPECT_COLOR, (uint32_t)i, 1, 0, 1 })
+                .Shaders({computeShader[1].shader})  // 刀7b-3：严格边校验
+                .Read(2, SET2_BINDING_IN_COLOR, 0, downSampleMip, VIEW_TYPE_2D, { TEXTURE_ASPECT_COLOR, (uint32_t)(i - 1), 1, 0, 1})
+                .ReadWrite(2, SET2_BINDING_OUT_COLOR, 0, downSampleMip, VIEW_TYPE_2D, { TEXTURE_ASPECT_COLOR, (uint32_t)i, 1, 0, 1})
                 .Execute([&](RDGPassContext context) {       
 
                     Extent2D extent = EngineContext::Render()->GetWindowsExtent();
@@ -116,8 +117,8 @@ void BloomPass::Build(RDGBuilder& builder)
 
                     RHICommandListRef command = context.command; 
                     command->SetComputePipeline(computePipeline[1]);
-                    command->BindDescriptorSet(context.descriptors[0], 0);
-                    command->BindDescriptorSet(EngineContext::RenderResource()->GetSamplerDescriptorSet(), 1);
+                    command->BindDescriptorSet(context.descriptors[2], 2);
+                    command->BindDescriptorSet(EngineContext::RenderResource()->GetPoolDescriptorSet(), 1);
                     command->PushConstants(&passSetting, sizeof(BloomSetting), SHADER_FREQUENCY_COMPUTE);
                     command->Dispatch(  extent.width,   // 已经除过local_size了
                                         extent.height, 
@@ -137,9 +138,10 @@ void BloomPass::Build(RDGBuilder& builder)
             RDGComputePassHandle pass2 = builder.CreateComputePass(GetName() + " Up Sample" + index)
                 .PassIndex(i)
                 .RootSignature(rootSignature)
-                .Read(0, 0, 0, upSampleMip, VIEW_TYPE_2D, { TEXTURE_ASPECT_COLOR, (uint32_t)(i + 1), 1, 0, 1 })
-                .Read(0, 0, 1, downSampleMip)   // 读整个下采样mip
-                .ReadWrite(0, 1, 0, upSampleMip, VIEW_TYPE_2D, { TEXTURE_ASPECT_COLOR, (uint32_t)i, 1, 0, 1 })
+                .Shaders({computeShader[2].shader})  // 刀7b-3：严格边校验
+                .Read(2, SET2_BINDING_IN_COLOR, 0, upSampleMip, VIEW_TYPE_2D, { TEXTURE_ASPECT_COLOR, (uint32_t)(i + 1), 1, 0, 1})
+                .Read(2, SET2_BINDING_IN_COLOR, 1, downSampleMip, VIEW_TYPE_2D, {})   // 读整个下采样mip
+                .ReadWrite(2, SET2_BINDING_OUT_COLOR, 0, upSampleMip, VIEW_TYPE_2D, { TEXTURE_ASPECT_COLOR, (uint32_t)i, 1, 0, 1})
                 .Execute([&](RDGPassContext context) {       
 
                     Extent2D extent = EngineContext::Render()->GetWindowsExtent();
@@ -152,8 +154,8 @@ void BloomPass::Build(RDGBuilder& builder)
 
                     RHICommandListRef command = context.command; 
                     command->SetComputePipeline(computePipeline[2]);
-                    command->BindDescriptorSet(context.descriptors[0], 0);
-                    command->BindDescriptorSet(EngineContext::RenderResource()->GetSamplerDescriptorSet(), 1);
+                    command->BindDescriptorSet(context.descriptors[2], 2);
+                    command->BindDescriptorSet(EngineContext::RenderResource()->GetPoolDescriptorSet(), 1);
                     command->PushConstants(&passSetting, sizeof(BloomSetting), SHADER_FREQUENCY_COMPUTE);
                     command->Dispatch(  extent.width,   // 已经除过local_size了
                                         extent.height, 
@@ -165,15 +167,16 @@ void BloomPass::Build(RDGBuilder& builder)
         // pass3 合并结果
         RDGComputePassHandle pass3 = builder.CreateComputePass(GetName() + " Combine")
             .RootSignature(rootSignature)
-            .Read(0, 0, 0, inputColor)
-            .Read(0, 0, 1, upSampleMip, VIEW_TYPE_2D, { TEXTURE_ASPECT_COLOR, 0, 1, 0, 1 })
-            .ReadWrite(0, 1, 0, outColor)
-            .Execute([&](RDGPassContext context) {       
+            .Shaders({computeShader[3].shader})      // 刀7b-3：严格边校验
+            .Read(2, SET2_BINDING_IN_COLOR, 0, inputColor)
+            .Read(2, SET2_BINDING_IN_COLOR, 1, upSampleMip, VIEW_TYPE_2D, { TEXTURE_ASPECT_COLOR, 0, 1, 0, 1})
+            .ReadWrite(2, SET2_BINDING_OUT_COLOR, 0, outColor)
+            .Execute([&](RDGPassContext context) {
 
                 RHICommandListRef command = context.command; 
                 command->SetComputePipeline(computePipeline[3]);
-                command->BindDescriptorSet(context.descriptors[0], 0);
-                command->BindDescriptorSet(EngineContext::RenderResource()->GetSamplerDescriptorSet(), 1);
+                command->BindDescriptorSet(context.descriptors[2], 2);
+                command->BindDescriptorSet(EngineContext::RenderResource()->GetPoolDescriptorSet(), 1);
                 command->PushConstants(&setting, sizeof(BloomSetting), SHADER_FREQUENCY_COMPUTE);
                 command->Dispatch(  Math::CeilDivide(EngineContext::Render()->GetWindowsExtent().width, 16), 
                                     Math::CeilDivide(EngineContext::Render()->GetWindowsExtent().height, 16), 

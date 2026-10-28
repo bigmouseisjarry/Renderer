@@ -1,7 +1,7 @@
 #version 460
 #extension GL_GOOGLE_include_directive : enable
 
-#include "../common/common.glsl"
+#include "include/common.glsl"
 
 layout(push_constant) uniform point_light_setting {
     uint index;
@@ -11,7 +11,7 @@ layout(push_constant) uniform point_light_setting {
 layout(location = 0) in vec3 IN_POS;
 layout(location = 1) in vec2 IN_TEXCOORD;
 layout(location = 2) in flat uint IN_ID;
-layout(location = 0) out vec2 OUT_COLOR;
+layout(location = 0) out vec2 VIS_OUT_COLOR;
 
 void main() 
 {	
@@ -27,14 +27,14 @@ void main()
 
 #ifdef SHADOW_QUALITY_LOW	// 直接用深度
 
-    OUT_COLOR = vec2(depth, 1.0); //距离作为深度
+    VIS_OUT_COLOR = vec2(depth, 1.0); //距离作为深度
 
 #else	// 使用VSM
         // EVSM很没必要
-    OUT_COLOR.r = exp(light.c1 * depth);
-    OUT_COLOR.g = OUT_COLOR.r * OUT_COLOR.r;
-    // OUT_COLOR.b = exp(-light.c2 * depth);
-    // OUT_COLOR.a = OUT_COLOR.b * OUT_COLOR.b;
+    VIS_OUT_COLOR.r = exp(light.c1 * depth);
+    VIS_OUT_COLOR.g = VIS_OUT_COLOR.r * VIS_OUT_COLOR.r;
+    // VIS_OUT_COLOR.b = exp(-light.c2 * depth);
+    // VIS_OUT_COLOR.a = VIS_OUT_COLOR.b * VIS_OUT_COLOR.b;
 
 #endif
 }

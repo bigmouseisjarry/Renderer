@@ -188,6 +188,7 @@ void Model::OnLoadAsset()
         blasInfo.vertexStride = sizeof(Vec3);
         blasInfo.indexOffset = 0;
         blasInfo.vertexOffset = 0;
+        blasInfo.vertexCount = submeshes[i].vertexBuffer->positionBuffer->GetInfo().size / blasInfo.vertexStride;    // position字节数/步长=真实顶点数(2026-10-28)
 
         submeshes[i].blas = EngineContext::RHI()->CreateBottomLevelAccelerationStructure(blasInfo);
     }

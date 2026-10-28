@@ -2,11 +2,7 @@
 #extension GL_GOOGLE_include_directive : enable
 #extension GL_EXT_samplerless_texture_functions : enable
 
-#include "../common/screen.glsl"
-
-layout(set = 0, binding = 0) uniform texture2D IN_TEX[6];
-layout(set = 0, binding = 1, rg32f) uniform image2D OUT_TEX[6];
-layout(set = 1, binding = 0) uniform sampler SAMPLER[];
+#include "include/common.glsl"
 
 layout(push_constant) uniform kawase_setting {
     uint round;
@@ -33,12 +29,12 @@ layout (local_size_x = THREAD_SIZE_X,
 void main() 
 {	
     ivec2 pixel     = ivec2(gl_GlobalInvocationID.xy);
-    vec2 texelSize  = vec2(1.0f) / textureSize(IN_TEX[0], 0);
-    vec2 uv         = ScreenPixToUV(pixel, textureSize(IN_TEX[0], 0));
+    vec2 texelSize  = vec2(1.0f) / textureSize(IN_TEX_ARRAY[0], 0);
+    vec2 uv         = ScreenPixToUV(pixel, textureSize(IN_TEX_ARRAY[0], 0));
 
     for(uint i = 0; i < 6; i++)
     {
-        imageStore(OUT_TEX[i], pixel, Kawase(IN_TEX[i], uv, texelSize, KAWASE_SETTING.round));
-        // imageStore(OUT_TEX[i], pixel, texture(sampler2D(IN_TEX[i], SAMPLER), uv));
+        imageStore(OUT_TEX_ARRAY[i], pixel, Kawase(IN_TEX_ARRAY[i], uv, texelSize, KAWASE_SETTING.round));
+        // imageStore(OUT_TEX_ARRAY[i], pixel, texture(sampler2D(IN_TEX_ARRAY[i], SAMPLER), uv));
     }
 }

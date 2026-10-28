@@ -11,11 +11,8 @@ void TAAPass::Init()
 
     RHIRootSignatureInfo rootSignatureInfo = {};
     rootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetPerFrameRootSignature()->GetInfo())
-                     .AddEntry({1, 0, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE})
-                     .AddEntry({1, 1, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE})
-                     .AddEntry({1, 2, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_TEXTURE})
-                     .AddEntry({1, 3, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE})
-                     .AddEntry({1, 4, 1, SHADER_FREQUENCY_COMPUTE, RESOURCE_TYPE_RW_TEXTURE})   // HISTORY_OUT：kernel直写下帧history
+                     .AddEntry(EngineContext::RenderResource()->GetBindlessRootSignature()->GetInfo())
+                     .AddEntry(EngineContext::RenderResource()->GetSet2RootSignature()->GetInfo())       // 刀7b-3：set2全局统一RS（98槽；b36已死——taa.comp的imageStore(HISTORY_OUT)已删）
                      .AddPushConstant({128, SHADER_FREQUENCY_COMPUTE});
     rootSignature = backend->CreateRootSignature(rootSignatureInfo);
 
@@ -33,29 +30,33 @@ void TAAPass::Build(RDGBuilder& builder)
 
     RDGTextureHandle inColor = builder.GetTexture("FXAA Out Color");
 
+    // 乒乓两槽稳态均=SRV：写槽经Exposure/Post读收敛、读槽由本pass读收敛（parity翻转不改变终点）
     RDGTextureHandle historyColor = builder.GetOrCreateTexture("Stable HDR Color History")
-        .Import(EngineContext::RenderResource()->GetStableHDRColorTexture(1), RESOURCE_STATE_UNDEFINED)
+        .Import(EngineContext::RenderResource()->GetStableHDRColorTexture(1))
         .Finish();
 
     RDGTextureHandle reprojectionOut = builder.GetTexture("Reprojection Out");
 
     RDGTextureHandle outColor = builder.CreateTexture("Stable HDR Color")
-        .Import(EngineContext::RenderResource()->GetStableHDRColorTexture(0), RESOURCE_STATE_UNDEFINED)
+        .Import(EngineContext::RenderResource()->GetStableHDRColorTexture(0))  // TAA写UAV后由Exposure/Post读收敛SRV
         .Finish();
 
     RDGComputePassHandle pass = builder.CreateComputePass(GetName())
         .AddFlag(RDGPassFlags::ForceGraphicsQueue)
         .RootSignature(rootSignature)
-        .Read(1, 0, 0, inColor)
-        .Read(1, 1, 0, historyColor)
-        .Read(1, 2, 0, reprojectionOut)
-        .ReadWrite(1, 3, 0, outColor)
+        .Shaders({computeShader.shader})             // 刀7b-3：严格边校验
+        .ReadIfValid(2, SET2_BINDING_HISTORY_VELOCITY, 0, "G-Buffer Velocity")
+        .Read(2, SET2_BINDING_TAA_CURRENT_COLOR, 0, inColor)
+        .Read(2, SET2_BINDING_TAA_HISTORY_COLOR, 0, historyColor)
+        .Read(2, SET2_BINDING_TAA_REPROJECTION_RESULT, 0, reprojectionOut)
+        .ReadWrite(2, SET2_BINDING_TAA_OUT_COLOR, 0, outColor)
         .Execute([&](RDGPassContext context) {
 
             RHICommandListRef command = context.command;
             command->SetComputePipeline(computePipeline);
             command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);
-            command->BindDescriptorSet(context.descriptors[1], 1);
+                command->BindDescriptorSet(EngineContext::RenderResource()->GetPoolDescriptorSet(), 1);
+            command->BindDescriptorSet(context.descriptors[2], 2);
             command->PushConstants(&setting, sizeof(TAASetting), SHADER_FREQUENCY_COMPUTE);
             command->Dispatch(  Math::CeilDivide(EngineContext::Render()->GetWindowsExtent().width, 16),
                                 Math::CeilDivide(EngineContext::Render()->GetWindowsExtent().height, 16),

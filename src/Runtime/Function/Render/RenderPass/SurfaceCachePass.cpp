@@ -22,13 +22,9 @@ void SurfaceCachePass::Init()
 
     RHIRootSignatureInfo rootSignatureInfo = {};
     rootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetPerFrameRootSignature()->GetInfo())
-                     .AddEntry({1, 0, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})      // CACHE_DIFFUSE_METALLIC
-                     .AddEntry({1, 1, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})      // CACHE_NORMAL_ROUGHNESS
-                     .AddEntry({1, 2, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})      // CACHE_EMISSION
-                     .AddEntry({1, 3, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})   // CACHE_LIGHTING
-                     .AddEntry({1, 4, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})      // CACHE_DEPTH
-                     .AddEntry({1, 5, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})    // CACHE_DIRECT_LIGHTING_DISPATCH
-                     .AddPushConstant({128, SHADER_FREQUENCY_GRAPHICS});
+                     .AddEntry(EngineContext::RenderResource()->GetBindlessRootSignature()->GetInfo())
+                     .AddEntry(EngineContext::RenderResource()->GetSet2RootSignature()->GetInfo())       // 刀7b-3：set2全局统一RS
+                                                                                                                                                                                                                  .AddPushConstant({128, SHADER_FREQUENCY_GRAPHICS}); // 掩码须与Execute里PushConstants的stage一致(VUID-01796要求命令掩码⊇range掩码)；direct_lighting.comp不用PC故无需COMPUTE
     rootSignature = backend->CreateRootSignature(rootSignatureInfo);
 
 
@@ -72,28 +68,30 @@ void SurfaceCachePass::Build(RDGBuilder& builder)
 {
     //if (IsEnabled())
     {
+        // 五纹理稳态均=SRV：pass1(Direct Lighting)末尾全OutputRead收敛；lighting槽随后被SSSR/ReSTIRGI读亦SRV
         RDGTextureHandle diffuseTex = builder.CreateTexture("Surface Cache Diffuse/Metallic")
-            .Import(EngineContext::RenderResource()->GetSurfaceCacheTexture(0)->texture, RESOURCE_STATE_UNDEFINED)
+            .Import(EngineContext::RenderResource()->GetSurfaceCacheTexture(0)->texture)
             .Finish();
 
         RDGTextureHandle normalTex = builder.CreateTexture("Surface Cache Normal/Roughness")
-            .Import(EngineContext::RenderResource()->GetSurfaceCacheTexture(1)->texture, RESOURCE_STATE_UNDEFINED)
+            .Import(EngineContext::RenderResource()->GetSurfaceCacheTexture(1)->texture)
             .Finish();
 
         RDGTextureHandle emissionTex = builder.CreateTexture("Surface Cache Emission")
-            .Import(EngineContext::RenderResource()->GetSurfaceCacheTexture(2)->texture, RESOURCE_STATE_UNDEFINED)
+            .Import(EngineContext::RenderResource()->GetSurfaceCacheTexture(2)->texture)
             .Finish();
 
         RDGTextureHandle lightingTex = builder.CreateTexture("Surface Cache Lighting")
-            .Import(EngineContext::RenderResource()->GetSurfaceCacheTexture(3)->texture, RESOURCE_STATE_UNDEFINED)
+            .Import(EngineContext::RenderResource()->GetSurfaceCacheTexture(3)->texture)
             .Finish();
 
         RDGTextureHandle depthTex = builder.CreateTexture("Surface Cache Depth")
-            .Import(EngineContext::RenderResource()->GetSurfaceCacheTexture(4)->texture, RESOURCE_STATE_UNDEFINED)
+            .Import(EngineContext::RenderResource()->GetSurfaceCacheTexture(4)->texture)
             .Finish();
 
+        // buffer稳态=UAV：pass1的ReadWrite后无收敛边
         RDGBufferHandle directLightingBuf = builder.CreateBuffer("Surface Cache Direct Lighting Buffer")
-            .Import(directLightingBuffer[EngineContext::ThreadPool()->ThreadFrameIndex()].buffer, RESOURCE_STATE_UNDEFINED)
+            .Import(directLightingBuffer[EngineContext::ThreadPool()->ThreadFrameIndex()].buffer, RESOURCE_STATE_UNORDERED_ACCESS)
             .Finish();
 
         RDGRenderPassHandle pass0 = builder.CreateRenderPass(GetName() + " Rasterize")
@@ -106,7 +104,8 @@ void SurfaceCachePass::Build(RDGBuilder& builder)
                 RHICommandListRef command = context.command;    
                 command->SetGraphicsPipeline(graphicsPipeline);                                        
                 command->SetDepthBias(0.0f, 0.0f, 0.0f);          
-                command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);   
+                command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);
+                command->BindDescriptorSet(EngineContext::RenderResource()->GetPoolDescriptorSet(), 1);   
                 
                 command->ClearScissors(clearAttachments, EngineContext::Render()->GetSurfaceCacheManager()->GetClearScissors());
 
@@ -130,20 +129,32 @@ void SurfaceCachePass::Build(RDGBuilder& builder)
             })
             .Finish();
 
-        RDGComputePassHandle pass1 = builder.CreateComputePass(GetName() + " Direct Lighting")
+        auto pass1 = builder.CreateComputePass(GetName() + " Direct Lighting")   // 刀5：auto持有builder——链中插volume light边循环需要继续链式调用
             .RootSignature(rootSignature)
-            .Read(1, 0, 0, diffuseTex)
-            .Read(1, 1, 0, normalTex)
-            .Read(1, 2, 0, emissionTex)
-            .ReadWrite(1, 3, 0, lightingTex)
-            .Read(1, 4, 0, depthTex)
-            .ReadWrite(1, 5, 0, directLightingBuf)
-            .Read(builder.GetTexture("Directional Depth [0]"))
-            .Read(builder.GetTexture("Directional Depth [1]"))
-            .Read(builder.GetTexture("Directional Depth [2]"))
-            .Read(builder.GetTexture("Directional Depth [3]"))
-            .Read(builder.GetTexture("Point Shadow Filtered Color [0]"))
-            .Read(builder.GetTexture("Point Shadow Filtered Color [1]"))
+            .Shaders({computeShader.shader})           // 刀7b-3：严格边校验
+            .Read(2, SET2_BINDING_SC_CACHE_DIFFUSE, 0, diffuseTex)
+            .Read(2, SET2_BINDING_SC_CACHE_NORMAL, 0, normalTex)
+            .Read(2, SET2_BINDING_SC_CACHE_EMISSION, 0, emissionTex)
+            .ReadWrite(2, SET2_BINDING_SC_CACHE_LIGHTING, 0, lightingTex)
+            .Read(2, SET2_BINDING_SC_CACHE_DEPTH, 0, depthTex)
+            .ReadWrite(2, SET2_BINDING_SC_DIRECT_LIGHTING_DISPATCH, 0, directLightingBuf, 0, 0);
+            // 刀5：volume light经照明域b25/b26（原set0；index=volumeLightID动态对齐）
+            // 自建导入（不依赖DDGI是否启用；GetOrCreate同参=与DDGI共享单节点）
+            for(auto& volumeLight : EngineContext::Render()->GetLightManager()->GetVolumeLights())
+            {
+                uint32_t vid = volumeLight->GetVolumeLightID();
+                RDGTextureHandle irr = builder.GetOrCreateTexture("Volume Light Irradiance [" + std::to_string(vid) + "]")
+                    .Import(volumeLight->GetTextres().irradianceTex->texture).Finish();     // 刀6a：稳态=U4 OutputRead收尾（与DDGIPass同值，黑板名多导入点同值契约）
+                RDGTextureHandle dep = builder.GetOrCreateTexture("Volume Light Depth [" + std::to_string(vid) + "]")
+                    .Import(volumeLight->GetTextres().depthTex->texture).Finish();
+                pass1.Read(2, SET2_BINDING_VOLUME_LIGHT_IRRADIANCE, vid, irr, VIEW_TYPE_2D, {});
+                pass1.Read(2, SET2_BINDING_VOLUME_LIGHT_DEPTH, vid, dep, VIEW_TYPE_2D, {});
+            }
+            pass1
+            // 刀DDGI假边扫描（2026-10-22）：探针实证direct_lighting.comp不吃DIRECTIONAL_SHADOW(b6)——
+            // 卡片直接光=DDGI体积(b9/b10)+点光阴影(b7)，平行光四条ReadIfValid为假边已删
+            .ReadIfValid(2, SET2_BINDING_POINT_SHADOW, 0, "Point Shadow Filtered Color [0]", VIEW_TYPE_CUBE, { TEXTURE_ASPECT_COLOR, 0, 1, 0, 6 })
+            .ReadIfValid(2, SET2_BINDING_POINT_SHADOW, 1, "Point Shadow Filtered Color [1]", VIEW_TYPE_CUBE, { TEXTURE_ASPECT_COLOR, 0, 1, 0, 6 })
             .Execute([&](RDGPassContext context) {       
                 
                 auto& dispatches = EngineContext::Render()->GetSurfaceCacheManager()->GetDirectLightingDispatches();
@@ -151,8 +162,9 @@ void SurfaceCachePass::Build(RDGBuilder& builder)
 
                 RHICommandListRef command = context.command; 
                 command->SetComputePipeline(computePipeline);
-                command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0); 
-                command->BindDescriptorSet(context.descriptors[1], 1);
+                command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);
+                command->BindDescriptorSet(EngineContext::RenderResource()->GetPoolDescriptorSet(), 1); 
+                command->BindDescriptorSet(context.descriptors[2], 2);
                 command->Dispatch(  dispatches.size(), 
                                     1, 
                                     1);

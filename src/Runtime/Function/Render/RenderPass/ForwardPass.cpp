@@ -24,10 +24,10 @@ RHIGraphicsPipelineRef ForwardPassProcessor::OnCreatePipeline(const DrawPipeline
     pipelineInfo.rasterizerState            = { pipelineState.fillMode, pipelineState.cullMode, DEPTH_CLIP, 0.0f, 0.0f };
     pipelineInfo.depthStencilState          = { pipelineState.depthCompare, pipelineState.depthTest, pipelineState.depthWrite };
 
-    pipelineInfo.rootSignature                  = pass->rootSignature;
+    pipelineInfo.rootSignature                      = pass->rootSignature;
     pipelineInfo.blendState.renderTargets[0].enable = false;
-    pipelineInfo.colorAttachmentFormats[0]      = EngineContext::Render()->GetHdrColorFormat();                                            
-    pipelineInfo.depthStencilAttachmentFormat   = EngineContext::Render()->GetDepthFormat();
+    pipelineInfo.colorAttachmentFormats[0]          = EngineContext::Render()->GetHdrColorFormat();                                            
+    pipelineInfo.depthStencilAttachmentFormat       = EngineContext::Render()->GetDepthFormat();
 
     //if(!pipelineInfo.vertexShader->GetReflectInfo().DefinedSymbol("VERTEX_INPUT"));   // 也可以根据反射信息来检查管线适配性
 
@@ -59,8 +59,10 @@ void ForwardPass::Init()
     fragmentShader      = Shader(EngineContext::File()->ShaderPath() + "default/forward.frag.spv", SHADER_FREQUENCY_FRAGMENT);
 
     RHIRootSignatureInfo rootSignatureInfo = {};
-    rootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetPerFrameRootSignature()->GetInfo());                      
-    rootSignature = backend->CreateRootSignature(rootSignatureInfo);
+    rootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetPerFrameRootSignature()->GetInfo())
+                     .AddEntry(EngineContext::RenderResource()->GetBindlessRootSignature()->GetInfo())
+                     .AddEntry(EngineContext::RenderResource()->GetSet2RootSignature()->GetInfo());      
+                         rootSignature = backend->CreateRootSignature(rootSignatureInfo);
 
     RHIGraphicsPipelineInfo pipelineInfo = {};
     pipelineInfo.vertexShader       = vertexShader.shader;
@@ -93,18 +95,23 @@ void ForwardPass::Build(RDGBuilder& builder)
             .DepthStencil(depth, ATTACHMENT_LOAD_OP_LOAD, ATTACHMENT_STORE_OP_STORE, 1.0f, 0)
             .ReadIndirect(builder.GetBuffer("Mesh Draw Commands" + cmdIndex))
             .ReadIndirect(builder.GetBuffer("Clusrter Draw Commands" + cmdIndex))
+            .RootSignature(rootSignature)     
+            .Read(2, SET2_BINDING_CLUSTER_DRAW_INFOS_READ, 0, builder.GetBuffer("Cluster Draw Infos" + cmdIndex), 0, 0, RESOURCE_TYPE_BUFFER)
             .Execute([&](RDGPassContext context) {
+
 
                 Extent2D windowExtent = EngineContext::Render()->GetWindowsExtent();
 
-                RHICommandListRef command = context.command;    
-                command->SetGraphicsPipeline(pipeline);                                        
+                RHICommandListRef command = context.command;
+                command->SetGraphicsPipeline(pipeline);
                 command->SetViewport({0, 0}, {windowExtent.width, windowExtent.height});
-                command->SetScissor({0, 0}, {windowExtent.width, windowExtent.height}); 
-                command->SetDepthBias(0.0f, 0.0f, 0.0f);          
-                command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);   
+                command->SetScissor({0, 0}, {windowExtent.width, windowExtent.height});
+                command->SetDepthBias(0.0f, 0.0f, 0.0f);
+                command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);
+                command->BindDescriptorSet(EngineContext::RenderResource()->GetPoolDescriptorSet(), 1);
+                command->BindDescriptorSet(context.descriptors[2], 2);
 
-                meshPassProcessor->Draw(command);                      
+                meshPassProcessor->Draw(command);
             })
             //.OutputRead(depth)  // 后续处理需要读深度
             .Finish();

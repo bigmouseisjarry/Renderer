@@ -4,7 +4,6 @@
 #extension GL_ARB_separate_shader_objects : enable
 #extension GL_GOOGLE_include_directive : enable
 
-#include "../common/common.glsl"
 #include "include/common.glsl"
 
 bool RayTraceSurfaceCache(out HitSample hitSample, vec3 worldPos, vec3 worldDir) 
@@ -72,7 +71,7 @@ void main()
 
     if(depth == 1.0f)    // 无效的G-Buffer信息
     {
-        RESERVOIRS[reservoirIndex] = res;
+        RESTIR_GI_RESERVOIRS[reservoirIndex] = res;
         return;
     }
 
@@ -126,7 +125,7 @@ void main()
 
 		if(valid)
 		{
-			GIReservoir prevRes = PREV_RESERVOIRS[ReservoirIndex(prevPixel)];
+			GIReservoir prevRes = RESTIR_GI_PREV_RESERVOIRS[ReservoirIndex(prevPixel)];
 			if (IsGIReservoirValid(prevRes))	// 防护：坏历史（越界读/反馈毒化）视作无历史
 			{
 				prevRes.numStreamSamples = min(prevRes.numStreamSamples, RESTIR_GI_SETTING.temporalSampleCountMultiplier * res.numStreamSamples);	// 需要设置一个累计采样数的上限
@@ -148,8 +147,8 @@ void main()
 		}
 	}
 
-	RESERVOIRS[reservoirIndex] = res;
-	// RESULT_RESERVOIRS[reservoirIndex] = res;
+	RESTIR_GI_RESERVOIRS[reservoirIndex] = res;
+	// RESTIR_GI_RESULT_RESERVOIRS[reservoirIndex] = res;
 
 
 	// vec3 lighting = vec3(0.0f);
@@ -168,5 +167,5 @@ void main()
 	// }
 	// res.w = 1.0f;
 	// res.sampl.outRadiance = lighting / RESTIR_GI_SETTING.initialSampleCount;
-	// RESERVOIRS[reservoirIndex] = res;
+	// RESTIR_GI_RESERVOIRS[reservoirIndex] = res;
 }

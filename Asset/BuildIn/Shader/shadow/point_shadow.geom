@@ -2,7 +2,7 @@
 #extension GL_GOOGLE_include_directive : enable
 
 #define ENABLE_RAY_TRACING 0
-#include "../common/common.glsl"
+#include "include/common.glsl"
 
 layout(push_constant) uniform point_light_setting {
     uint index;

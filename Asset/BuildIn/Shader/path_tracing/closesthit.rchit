@@ -3,8 +3,18 @@
 #extension GL_ARB_separate_shader_objects : enable
 #extension GL_GOOGLE_include_directive : enable
 
-#include "../common/common.glsl"
-#include "common.glsl"
+#include "include/common.glsl"
+
+layout(push_constant) uniform setting {
+    int numSamples;
+    int totalNumSamples;
+    int numBounce;
+
+    int sampleSkyBox;
+    int indirectOnly;
+    int diffuseOnly;
+    int mode;
+} SETTING;
 
 
 // Multiple importance sampling balance heuristic

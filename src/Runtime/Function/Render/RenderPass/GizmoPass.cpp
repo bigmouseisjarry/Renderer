@@ -25,7 +25,8 @@ void GizmoPass::Init()
 
     RHIRootSignatureInfo rootSignatureInfo = {};
     rootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetPerFrameRootSignature()->GetInfo())
-                     .AddPushConstant({128, SHADER_FREQUENCY_GRAPHICS});
+                     .AddEntry(EngineContext::RenderResource()->GetBindlessRootSignature()->GetInfo())
+                     .AddEntry(EngineContext::RenderResource()->GetSet2RootSignature()->GetInfo());     
     rootSignature = backend->CreateRootSignature(rootSignatureInfo);
 
     {
@@ -136,18 +137,21 @@ void GizmoPass::Build(RDGBuilder& builder)
         RDGTextureHandle outColor = builder.GetTexture("Final LDR Color");
         RDGTextureHandle depth = builder.GetTexture("Depth");
 
-        RDGBufferHandle dataBuffer = builder.CreateBuffer("Gizmo Data")
-            .Import(EngineContext::RenderResource()->GetGizmoDataBuffer(), RESOURCE_STATE_UNDEFINED)
+        // buffer稳态=INDIRECT：末位触碰者是pass1绘制的ReadIndirect（pass0的OutputIndirectDraw之后）
+        RDGBufferHandle dataBuffer = builder.GetOrCreateBuffer("Gizmo Data")   // 复用GPUCullingPass建的节点：同物理buffer双节点=隐形依赖边（Duplicate告警2026-10-26定罪）；同INDIRECT稳态，validationMode断言过
+            .Import(EngineContext::RenderResource()->GetGizmoDataBuffer(), RESOURCE_STATE_INDIRECT_ARGUMENT)
             .Finish();
 
         RDGComputePassHandle pass0 = builder.CreateComputePass(GetName() + " Init")
-            //.RootSignature(rootSignature)
-            //.ReadWrite(1, 0, 0, dataBuffer)
+            .RootSignature(rootSignature)
+            .ReadWrite(2, SET2_BINDING_GIZMO_DRAW_DATA, 0, dataBuffer)   
             .Execute([&](RDGPassContext context) {       
 
                 RHICommandListRef command = context.command; 
                 command->SetComputePipeline(computePipeline);
                 command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);
+                command->BindDescriptorSet(EngineContext::RenderResource()->GetPoolDescriptorSet(), 1);
+                command->BindDescriptorSet(context.descriptors[2], 2);
                 command->Dispatch(  std::max(MAX_PER_FRAME_CLUSTER_SIZE, MAX_POINT_LIGHT_COUNT) / 256, 
                                     1, 
                                     1);
@@ -156,9 +160,11 @@ void GizmoPass::Build(RDGBuilder& builder)
             .Finish();
 
         RDGRenderPassHandle pass1 = builder.CreateRenderPass(GetName())
+            .RootSignature(rootSignature)   
             .Color(0, outColor, ATTACHMENT_LOAD_OP_LOAD, ATTACHMENT_STORE_OP_STORE, {0.0f, 0.0f, 0.0f, 0.0f})
             .DepthStencil(depth, ATTACHMENT_LOAD_OP_LOAD, ATTACHMENT_STORE_OP_STORE, 1.0f, 0)
             .ReadIndirect(dataBuffer)
+            .Read(2, SET2_BINDING_GIZMO_DRAW_DATA, 0, dataBuffer, 0, 0, RESOURCE_TYPE_RW_BUFFER)   // 刀3c：绘制侧vert/geom读GIZMO_DRAW_DATA
             .Execute([&](RDGPassContext context) {
                 
                 Extent2D windowExtent = EngineContext::Render()->GetWindowsExtent();
@@ -169,7 +175,9 @@ void GizmoPass::Build(RDGBuilder& builder)
                 command->SetScissor({0, 0}, {windowExtent.width, windowExtent.height}); 
                 command->SetLineWidth(1.0f);
                 command->SetDepthBias(0.0f, 0.0f, 0.0f);          
-                command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);    
+                command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);
+                command->BindDescriptorSet(EngineContext::RenderResource()->GetPoolDescriptorSet(), 1);
+                command->BindDescriptorSet(context.descriptors[2], 2);    
 
                 command->BindVertexBuffer(cubeWire->GetVertexBuffer(0)->positionBuffer, 0, 0);
                 command->BindIndexBuffer(cubeWire->GetIndexBuffer(0)->buffer, 0);

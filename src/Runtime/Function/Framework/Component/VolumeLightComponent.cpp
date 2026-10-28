@@ -159,5 +159,5 @@ void VolumeLightComponent::UpdateTexture()
             1, 1);
     }
 
-    EngineContext::RenderResource()->SetVolumeLightTextures(textures, volumeLightID);
+    // 刀5：纹理改经RDG入图（DDGI导入），不再手写set0描述符
 }

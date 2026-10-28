@@ -23,8 +23,8 @@ void ClipmapPass::Init()
 
     RHIRootSignatureInfo rootSignatureInfo = {};
     rootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetPerFrameRootSignature()->GetInfo())
-                     .AddEntry({1, 0, 1, SHADER_FREQUENCY_RAY_TRACING, RESOURCE_TYPE_RW_TEXTURE})
-                     .AddEntry({1, 1, 1, SHADER_FREQUENCY_RAY_TRACING, RESOURCE_TYPE_RW_BUFFER})
+                     .AddEntry(EngineContext::RenderResource()->GetBindlessRootSignature()->GetInfo())
+                     .AddEntry(EngineContext::RenderResource()->GetSet2RootSignature()->GetInfo())       
                      .AddPushConstant({128, SHADER_FREQUENCY_RAY_TRACING});
     rootSignature = backend->CreateRootSignature(rootSignatureInfo);
 
@@ -79,7 +79,7 @@ void ClipmapPass::Build(RDGBuilder& builder)
         .Finish();
 
     RDGTextureHandle clipmapTex = builder.CreateTexture("VXGI Clipmap Texture")
-        .Import(clipmapTexture, RESOURCE_STATE_UNDEFINED)
+        .Import(clipmapTexture)
         .Finish();
 
     if(IsEnabled())
@@ -90,12 +90,23 @@ void ClipmapPass::Build(RDGBuilder& builder)
         {
             std::string index = " [" + std::to_string(i) + "]";
 
+            RDGBufferHandle cardUpdate = builder.GetOrCreateBuffer("Surface Cache Card Update")
+                .Import(EngineContext::RenderResource()->GetCardUpdateBuffer(), RESOURCE_STATE_UNORDERED_ACCESS)
+                .Finish();
+
             RDGRayTracingPassHandle pass = builder.CreateRayTracingPass(GetName() + index)
                 .PassIndex(i)
                 .RootSignature(rootSignature)
-                .ReadAccelerationStructure(builder.GetBuffer("TLAS Storage"))      
-                .ReadWrite(1, 0, 0, clipmapTex, VIEW_TYPE_3D)
-                .ReadWrite(1, 1, 0, clipmapBuf)
+                .Shaders({rayGenShader.shader, rayMissShader.shader, closestHitShader.shader})   // 刀7b-3：严格边校验（RT三stage）
+                .ReadWrite(2, SET2_BINDING_MESH_CARD_READBACK, 0, cardUpdate)
+                .Read(2, SET2_BINDING_SURFACE_CACHE, 0, builder.GetTexture("Surface Cache Diffuse/Metallic"))
+                .Read(2, SET2_BINDING_SURFACE_CACHE, 1, builder.GetTexture("Surface Cache Normal/Roughness"), VIEW_TYPE_2D, {})
+                .Read(2, SET2_BINDING_SURFACE_CACHE, 2, builder.GetTexture("Surface Cache Emission"), VIEW_TYPE_2D, {})
+                .Read(2, SET2_BINDING_SURFACE_CACHE, 3, builder.GetTexture("Surface Cache Lighting"), VIEW_TYPE_2D, {})
+                .Read(2, SET2_BINDING_SURFACE_CACHE, 4, builder.GetTexture("Surface Cache Depth"), VIEW_TYPE_2D, {})
+                .ReadAccelerationStructure(builder.GetBuffer("TLAS Storage"))
+                .ReadWrite(2, SET2_BINDING_CLIPMAP_A, 0, clipmapTex, VIEW_TYPE_3D)
+                .ReadWrite(2, SET2_BINDING_CLIPMAP_B, 0, clipmapBuf, 0, 0)
                 .Execute([&](RDGPassContext context) {       
 
                     auto region = updateRegions[context.passIndex[0]];
@@ -104,8 +115,9 @@ void ClipmapPass::Build(RDGBuilder& builder)
 
                     RHICommandListRef command = context.command; 
                     command->SetRayTracingPipeline(rayTracingPipeline);
-                    command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);  
-                    command->BindDescriptorSet(context.descriptors[1], 1);
+                    command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);
+                    command->BindDescriptorSet(EngineContext::RenderResource()->GetPoolDescriptorSet(), 1);  
+                    command->BindDescriptorSet(context.descriptors[2], 2);
                     command->PushConstants(&setting, sizeof(VXGISetting), SHADER_FREQUENCY_RAY_TRACING);
                     command->TraceRays( region.extent.x(), 
                                         region.extent.y(), 
