@@ -31,7 +31,7 @@ layout(push_constant) uniform DDGIComputeSetting {
 
 void main() 
 {
-  	VolumeLight volumeLight = LIGHTS.volumeLights[SETTING.volumeLightID];
+  	VolumeLight volumeLight = VOLUME_LIGHT_SETTINGS.volumeLights[SETTING.volumeLightID];
 
 	ivec2 pixel = ivec2(gl_LaunchIDEXT.xy);
 	int   rayIndex   = pixel.x;

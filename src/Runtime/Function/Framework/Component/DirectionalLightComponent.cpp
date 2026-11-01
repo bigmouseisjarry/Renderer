@@ -20,22 +20,11 @@ CEREAL_REGISTER_POLYMORPHIC_RELATION(Component, DirectionalLightComponent)
 void DirectionalLightComponent::OnInit()
 {
 	Component::OnInit();
-	
-	for (int i = 0; i < 4; i++) updateCnts[i] = updateFrequences[i];	//初始时先统一绘制一轮
 }
 
 void DirectionalLightComponent::OnUpdate(float deltaTime)
-{ 
+{
 	InitComponentIfNeed();
-
-	// cascade的更新计数
-	for (int i = 0; i < DIRECTIONAL_SHADOW_CASCADE_LEVEL; i++)
-	{	
-		updateCnts[i]++;    //检测更新频率
-		if (updateCnts[i] >= updateFrequences[i]) updateCnts[i] = 0;
-	}
-
-	//UpdateLightInfo();
 }
 
 void DirectionalLightComponent::UpdateMatrix()
@@ -46,162 +35,22 @@ void DirectionalLightComponent::UpdateMatrix()
         front = transform->Front();
         up = transform->Up();
     }
-    else 
+    else
     {
     	front = Vec3::UnitX();
 	    up = Vec3::UnitY();
     }
 }
 
-void DirectionalLightComponent::UpdateCascades()
-{
-    // 获取相机
-    std::shared_ptr<CameraComponent> camera;
-	if(GetEntity() && GetEntity()->GetScene())
-	{
-		camera = GetEntity()->GetScene()->GetActiveCamera();
-	}
-	if(!camera) return;
-
-	std::array<float, DIRECTIONAL_SHADOW_CASCADE_LEVEL> cascadeSplits;
-
-	float nearClip = camera->GetNear();
-	float farClip = camera->GetFar();
-	float clipRange = farClip - nearClip;
-
-	float minZ = nearClip;
-	float maxZ = nearClip + clipRange;
-
-	float range = maxZ - minZ;
-	float ratio = maxZ / minZ;
-
-	// Calculate split depths based on view camera frustum
-	// Based on method presented in https://developer.nvidia.com/gpugems/GPUGems3/gpugems3_ch10.html
-	// 计算划分，取对数划分和平均划分加权作为结果
-	for (int i = 0; i < DIRECTIONAL_SHADOW_CASCADE_LEVEL; i++) 
-	{
-		// 归一化位置 0.25 0.5 0.75 1.0
-		float p = (i + 1) / (float)(DIRECTIONAL_SHADOW_CASCADE_LEVEL);
-		// 对数划分
-		// 从 minZ * (maxZ/minZ)^0 到 minZ * (maxZ/minZ)^1
-		float log = minZ * std::pow(ratio, p);
-		// 均匀划分
-		float uniform = minZ + range * p;
-		// 加权混合并归一化
-		float d = cascadeSplitLambda * (log - uniform) + uniform;
-		cascadeSplits[i] = (d - nearClip) / clipRange;
-	}
-
-	// 上一级 cascade 的远分割面（即当前级的近分割面）
-	float lastSplitDist = 0.0;
-	for (int i = 0; i < DIRECTIONAL_SHADOW_CASCADE_LEVEL; i++)
-	{
-		// 当前级 cascade 的远分割面
-		float splitDist = cascadeSplits[i];
-
-		// Vulkan NDC 视锥的8个角点
-		Vec3 frustumCorners[8] = 
-		{
-			// 近
-			Vec3(-1.0f,  1.0f, 0.0f),
-			Vec3(1.0f,  1.0f, 0.0f),
-			Vec3(1.0f, -1.0f, 0.0f),
-			Vec3(-1.0f, -1.0f, 0.0f),
-			// 远
-			Vec3(-1.0f,  1.0f,  1.0f),
-			Vec3(1.0f,  1.0f,  1.0f),
-			Vec3(1.0f, -1.0f,  1.0f),
-			Vec3(-1.0f, -1.0f,  1.0f),
-		};
-
-		// 将相机视线台体的八个顶点转到世界空间
-		Mat4 invCam = camera->GetInvViewProjectionMatrix();
-		for (uint32_t j = 0; j < 8; j++) 
-		{
-			Vec4 invCorner = invCam * Vec4(frustumCorners[j].x(), frustumCorners[j].y(), frustumCorners[j].z(), 1.0f);
-			frustumCorners[j] = Vec3(invCorner.x(), invCorner.y(), invCorner.z()) / invCorner.w();
-		}
-
-		// 计算台体四条斜边的世界空间方向向量，将台体的上下表面偏移一定比例来得到划分后的台体
-		for (uint32_t j = 0; j < 4; j++) 
-		{
-			// 近角到远角的方向
-			Vec3 dist = frustumCorners[j + 4] - frustumCorners[j];
-			// 新远角
-			frustumCorners[j + 4] = frustumCorners[j] + (dist * splitDist);
-			// 新近角
-			frustumCorners[j] = frustumCorners[j] + (dist * lastSplitDist);
-		}
-
-		// 寻找划分台体的中心，创建一个包围台体的包围球，那么包围这个包围球的正方体（正交投影时）就是cascade的视线范围
-		Vec3 frustumCenter = Vec3::Zero();
-		for (uint32_t j = 0; j < 8; j++) 
-		{
-			frustumCenter += frustumCorners[j];
-		}
-		frustumCenter /= 8.0f;
-
-		float radius = 0.0f;
-		for (uint32_t j = 0; j < 8; j++) 
-		{
-			float distance = (frustumCorners[j] - frustumCenter).norm();
-			radius = std::max(radius, distance); 
-		}
-
-		// 满一个整台阶余量才迁移
-		float step = radius / 128.0f;
-		if (std::abs(radius - currentRadius[i]) > step)             
-			currentRadius[i] = std::round(radius / step) * step;    
-
-		float offset = 30.0f;	// 把视锥往天上再退一点，背后的场景不在视锥里也有阴影
-
-		Vec3 maxExtents = Vec3::Constant(currentRadius[i]);
-		Vec3 minExtents = -maxExtents;
-
-		Vec3 lightDir = front.normalized();
-		Vec3 lightRight = (Vec3(0, 1, 0).cross(lightDir)).normalized();   // 光view空间x轴
-		Vec3 lightUp = (lightDir.cross(lightRight)).normalized();          // 光view空间y轴
-
-		Vec3 centerLS(frustumCenter.dot(lightRight), frustumCenter.dot(lightUp), frustumCenter.dot(lightDir));
-		float texel = (2.0f * currentRadius[i]) / DIRECTIONAL_SHADOW_SIZE;    
-
-		centerLS.x() = std::round(centerLS.x() / texel) * texel;
-		centerLS.y() = std::round(centerLS.y() / texel) * texel;
-		frustumCenter = lightRight * centerLS.x() + lightUp * centerLS.y() + lightDir * centerLS.z();
-
-		Mat4 lightViewMatrix = Math::LookAt(frustumCenter - lightDir * (currentRadius[i] + offset), frustumCenter, Vec3(0.0f, 1.0f, 0.0f));
-		Mat4 lightOrthoMatrix = Math::Ortho(minExtents.x(), maxExtents.x(), minExtents.y(), maxExtents.y(), 0.0f, maxExtents.z() - minExtents.z() + offset);
-		lightOrthoMatrix(1, 1) *= -1;		// Vulkan的NDC是y向下
-
-		// 最后存储各种信息，只有当即将被更新阴影贴图时才会写入数据
-		if (updateCnts[i] == 0)
-		{
-			lightInfos[i].depth = (camera->GetNear() + splitDist * clipRange);
-			lightInfos[i].view = lightViewMatrix;
-			lightInfos[i].proj = lightOrthoMatrix;
-			lightInfos[i].viewProj = lightOrthoMatrix * lightViewMatrix;
-			lightInfos[i].pos = TryGetComponent<TransformComponent>()->GetPosition();
-			lightInfos[i].color = color;
-            lightInfos[i].intencity = intencity;
-            lightInfos[i].fogScattering = fogScattering;
-			lightInfos[i].sunTan = sunTan;
-			lightInfos[i].ndcZToUV = (maxExtents.z() - minExtents.z() + offset) / (maxExtents.x() - minExtents.x());
-			lightInfos[i].castShadow = castShadow;
-			lightInfos[i].dir = lightDir;
-
-			//更新裁切视锥
-			lightInfos[i].frustum = CreateFrustumFromMatrix(lightOrthoMatrix * lightViewMatrix, -1.0, 1.0, -1.0, 1.0, 0.0, 1.0);
-			lightInfos[i].sphere = BoundingSphere(frustumCenter, currentRadius[i]);
-
-			EngineContext::RenderResource()->SetDirectionalLightInfo(lightInfos[i], i);
-		}
-		lastSplitDist = cascadeSplits[i];
-	}
-}
-
 void DirectionalLightComponent::UpdateLightInfo()
 {
-	UpdateMatrix();
+    UpdateMatrix();
 
-	UpdateCascades();  
+    lightInfo.color = color;
+    lightInfo.intencity = intencity;
+    lightInfo.fogScattering = fogScattering;
+    lightInfo.castShadow = castShadow;
+    lightInfo.dir = front.normalized();
+
+    EngineContext::RenderResource()->SetDirectionalLightInfo(lightInfo);
 }

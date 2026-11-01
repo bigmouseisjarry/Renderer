@@ -18,7 +18,7 @@ layout (local_size_x = THREAD_SIZE_X,
 void main()
 {
     // 第一轮 计算辐射率
-    VolumeLight volumeLight = LIGHTS.volumeLights[SETTING.volumeLightID];
+    VolumeLight volumeLight = VOLUME_LIGHT_SETTINGS.volumeLights[SETTING.volumeLightID];
     
     ivec2 pixel       = ivec2(gl_GlobalInvocationID.xy);
     int   probeIndex  = pixel.y;
@@ -57,10 +57,10 @@ void main()
         vec3 pointDiffuse = vec3(0.0f);
         for(uint lightID = 1; lightID <= LIGHTS.lightSetting.pointLightCnt; lightID++)
             pointDiffuse += PointDiffuseLighting(albedo, roughness, metallic, worldPos, N, V, lightID) *
-                            PointShadow(lightID, worldPos);
+                            RtPointShadow(lightID, worldPos);    // 阴影转换刀C：probe×全表点光=放大器，盯帧率
 
         vec3 directLightColor =
-            DirectionalDiffuseLighting(albedo, roughness, metallic, worldPos, N, V) * DirectionalShadow(worldPos, pixel,2.0) +
+            DirectionalDiffuseLighting(albedo, roughness, metallic, worldPos, N, V) * RtDirectionalShadow(worldPos, GLOBAL_SETTING.rayTracingOffset) +
             pointDiffuse;
 
         // 间接光照计算 //////////////////////////////////

@@ -19,11 +19,7 @@
 #define MAX_PER_FRAME_RESOURCE_SIZE 102400			//全局的缓冲大小（个数）,包括动画，材质等
 #define MAX_PER_FRAME_OBJECT_SIZE 102400		    //全局最大支持的物体数目
 
-#define DIRECTIONAL_SHADOW_SIZE 4096				// 每级联的阴影图是 4096×4096 个 texel
-#define DIRECTIONAL_SHADOW_CASCADE_LEVEL 4			// CSM级数
 
-#define POINT_SHADOW_SIZE 512						//点光源尺寸，分辨率对性能影响也比较大
-#define MAX_POINT_SHADOW_COUNT 4					//阴影点光源最大数目
 #define MAX_POINT_LIGHT_COUNT 10240					//点光源最大数目
 #define MAX_VOLUME_LIGHT_COUNT 100                  //体积光源最大数目
 
@@ -74,12 +70,6 @@
 #define SURFACE_CACHE_DIRECT_INLIGHTING_TILE_SIZE 4	    // 间接光照tile尺寸
 #define SURFACE_CACHE_LOD_SIZE(x) (MAX_SURFACE_CACHE_LOD_SIZE >> (x))
 
-
-// #define ENABLE_RAY_TRACING false					//是否启用光追
-
-
-
-// #define VALIDATION_ENABLE true						//是否开启验证层
 
 // #define MAX_BONE_INFLUENCE 4						//单顶点最大的骨骼影响数
 // #define MAX_BONE_SIZE 200							//动画的最大骨骼数

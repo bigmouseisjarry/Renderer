@@ -26,7 +26,7 @@ void main()
 
 
 
-    VolumeLight volumeLight = LIGHTS.volumeLights[SETTING.volumeLightID];
+    VolumeLight volumeLight = VOLUME_LIGHT_SETTINGS.volumeLights[SETTING.volumeLightID];
     
     ivec3 gridCoord         = FetchProbeCoord(volumeLight.setting, instance);
     vec3 probePosition      = FetchProbeWorldPos(volumeLight.setting, gridCoord);

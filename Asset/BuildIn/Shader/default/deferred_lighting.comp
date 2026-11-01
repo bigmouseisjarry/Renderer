@@ -71,7 +71,7 @@ void main()
     // 直接光照计算 //////////////////////////////////
     // 1+2
     vec3 directLightColor =
-        DirectionalLighting(diffuse, roughness, F0, specF, worldPos, N, V) * DirectionalShadow(worldPos, pixel, SETTING.maxRadius) +
+        DirectionalLighting(diffuse, roughness, F0, specF, worldPos, N, V) * RtDirectionalShadow(worldPos, GLOBAL_SETTING.rayTracingOffset) +    // 阴影转换刀B：CSM/PCSS退役中，bias用RT偏移（UI可调）
         PointLighting(diffuse, roughness, F0, specF, worldPos, N, V);
 
     // 间接光照计算 //////////////////////////////////
@@ -85,19 +85,13 @@ void main()
 
     // 输出 //////////////////////////////////
     // 1+2+3+5
-    vec3 outColor           = directLightColor + indirectLightColor + emission;	
+    vec3 outColor           = directLightColor + indirectLightColor + emission;
 
-    int cascadeLevel        = CascadeLevel(worldPos);
-    float directionalShadow = DirectionalShadow(worldPos, pixel, SETTING.maxRadius);
+    // 灯布局刀②：CascadeLevel/mode6（cascade可视化）随CSM退役删除；probe段一并清
+    float directionalShadow = RtDirectionalShadow(worldPos, GLOBAL_SETTING.rayTracingOffset);
 
     ivec3 clusterGrid       = FetchLightClusterGrid(WorldToNDC(worldPos).xyz);
-    uvec2 clusterIndex      = FetchLightClusterIndex(clusterGrid);  //读取对应cluster的索引信息 
-
-    DirectionalLight probeLight  = LIGHTS.directionalLights[0];
-    vec3 probeL                  = -normalize(probeLight.dir);
-    vec3 probeRadiance           = probeLight.color * probeLight.intencity;
-    BRDFData probeBRDF           = ResolveBRDF(diffuse, roughness, F0, specF, N, V, probeL);
-    float probeNoL               = saturate(dot(N, probeL));
+    uvec2 clusterIndex      = FetchLightClusterIndex(clusterGrid);  //读取对应cluster的索引信息
 
     vec4 finalColor = vec4(0.0f);
     if(SETTING.mode == 0)   finalColor = vec4(outColor, 1.0f);
@@ -106,7 +100,7 @@ void main()
     if(SETTING.mode == 3)   finalColor = worldPos;
     if(SETTING.mode == 4)   finalColor = vec4(vec3(directionalShadow), 1.0f);
     if(SETTING.mode == 5)   finalColor = vec4(vec3(Linear01Depth(FetchDepth(uv), CAMERA.near, CAMERA.far)), 1.0f);
-    if(SETTING.mode == 6)   finalColor = CascadeColors[cascadeLevel];
+    if(SETTING.mode == 6)   finalColor = vec4(0.0f);    // 灯布局刀②：原cascade级联可视化，CSM已退役
     if(SETTING.mode == 7)   finalColor = vec4(vec3(clusterIndex.y / float(MAX_LIGHTS_PER_CLUSTER)), 1.0f);
     if(SETTING.mode == 8)   finalColor = vec4(clusterGrid.xy / vec2(LIGHT_CLUSTER_WIDTH, LIGHT_CLUSTER_HEIGHT), 0.0f, 1.0f);
     if(SETTING.mode == 9)   finalColor = vec4(vec3(clusterGrid.z / float(LIGHT_CLUSTER_DEPTH)), 1.0f);
@@ -118,8 +112,7 @@ void main()
     if(SETTING.mode == 15)  finalColor = vec4(vec3(transparent), 1.0f);
     if(SETTING.mode == 16)  finalColor = vec4(emission, 1.0f);
     if(SETTING.mode == 17)  finalColor = vec4(directLightColor, 1.0f);
-    if(SETTING.mode == 18)  finalColor = vec4(probeBRDF.specular * probeRadiance * probeNoL, 1.0f);
-    if(SETTING.mode == 19)  finalColor = vec4(probeBRDF.diffuse * probeRadiance * probeNoL, 1.0f);
+    // 灯布局刀②：mode18/19（probe BRDF可视化）随CSM probe段退役
 
     if(GLOBAL_SETTING.clusterInspectMode != 0) finalColor = vec4(diffuse.xyz, 1.0f);
 

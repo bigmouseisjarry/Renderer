@@ -74,16 +74,7 @@ void ComponentWidget::DirectionalLightComponentUI(std::shared_ptr<DirectionalLig
         component->up[1], 
         component->up[2]);
 
-	ImGui::DragInt4("Cascade update frequency", &component->updateFrequences[0], 0.1f, 1, 10);
-	ImGui::DragFloat("Cascade split lambda", &component->cascadeSplitLambda, 0.01f);
-	for (int i = 0; i < DIRECTIONAL_SHADOW_CASCADE_LEVEL; i++)
-	{
-		ImGui::BulletText("Cascade [%d] depth: %f", i, component->lightInfos[i].depth);
-	}
-	ImGui::DragFloat("Constant bias", &component->constantBias, 0.05f);
-	ImGui::DragFloat("Slope bias", &component->slopeBias, 0.05f);
 	ImGui::ColorEdit3("Color", &component->color[0]);
-	ImGui::DragFloat("Sun Tan", &component->sunTan, 0.005f, 0.001f, 0.0547f);
 	ImGui::DragFloat("Intencity", &component->intencity, 0.05f, 0);
 	ImGui::DragFloat("Fog scattering", &component->fogScattering, 0.001f, 0.0f, 1.0f);
 }
@@ -103,12 +94,9 @@ void ComponentWidget::PointLightComponentUI(std::shared_ptr<PointLightComponent>
     //     component->box.maxBound[1], 
     //     component->box.maxBound[2]);
 
-	ImGui::DragFloat("Constant bias", &component->constantBias, 0.0005f);
-	ImGui::DragFloat("Slope bias", &component->slopeBias, 0.05f);
 	ImGui::ColorEdit3("Color", &component->color[0]);
 	ImGui::DragFloat("Intencity", &component->intencity, 0.05f, 0);
 	ImGui::DragFloat("Range", &component->far, 0.05f, 0.1f);
-	ImGui::DragFloat2("EVSM", &component->evsm[0]);
 	ImGui::DragFloat("Fog scattering", &component->fogScattering, 0.001f, 0.0f, 1.0f);
 }
 

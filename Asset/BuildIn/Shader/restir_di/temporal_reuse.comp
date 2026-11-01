@@ -77,7 +77,7 @@ void main()
 
 	if (RESTIR_DI_SETTING.visibilityReuse != 0) 
 	{
-		bool shadowed = RayQueryVisibility(worldPos.xyz, LIGHTS.pointLights[res.sampl.lightID].pos, GLOBAL_SETTING.rayTracingOffset);
+		bool shadowed = RayQueryVisibility(worldPos.xyz, LIGHTS.slot[res.sampl.lightID].pos_range.xyz, GLOBAL_SETTING.rayTracingOffset);
 		if (shadowed) 
 		{
 			CleanDIReservoir(res);		

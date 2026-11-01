@@ -48,38 +48,10 @@ void PointLightComponent::UpdateLightInfo()
             info.color = color;
             info.intencity = intencity;
             info.fogScattering = fogScattering;
-            info.near = near;
             info.far = far;
-            info.bias = constantBias;
-            info.enable = enable;
-            info.sphere = sphere;
-            info.shadowID = pointShadowID;
+            info.castShadow = CastShadow() ? 1 : 0;    
         }
 
-        //带阴影点光源需要额外更新的信息
-        if (pointShadowID < MAX_POINT_SHADOW_COUNT)
-        {
-            info.c1 = evsm[0];
-            info.c2 = evsm[1];
-
-            //learn opengl中使用的矩阵
-            info.view[0] = Math::LookAt(info.pos, info.pos + Vec3::UnitX(), -Vec3::UnitY());
-            info.view[1] = Math::LookAt(info.pos, info.pos - Vec3::UnitX(), -Vec3::UnitY());
-            info.view[2] = Math::LookAt(info.pos, info.pos + Vec3::UnitY(), Vec3::UnitZ());
-            info.view[3] = Math::LookAt(info.pos, info.pos - Vec3::UnitY(), -Vec3::UnitZ());
-            info.view[4] = Math::LookAt(info.pos, info.pos + Vec3::UnitZ(), -Vec3::UnitY());
-            info.view[5] = Math::LookAt(info.pos, info.pos - Vec3::UnitZ(), -Vec3::UnitY());
-
-            info.proj = Math::Perspective(Math::ToRadians(90.0f), 1.0f, near, far);
-            // 点光源的采样中，uv的计算我们并不需要关心，我们只要保证看的方向一致即可
-            //info.proj(1, 1) *= -1;	//Vulkan的NDC的Y坐标是向下的，通常要转一次，这下不转了？？
-
-            for(int i = 0; i < 6; i++)
-            {
-                info.viewProj[i] = info.proj * info.view[i];
-                info.frustum[i] = CreateFrustumFromMatrix(info.viewProj[i], -1.0f, 1.0f, -1.0f, 1.0f, 0.0f, 1.0f);
-            }
-        }
     }
 
     EngineContext::RenderResource()->SetPointLightInfo(info, pointLightID);

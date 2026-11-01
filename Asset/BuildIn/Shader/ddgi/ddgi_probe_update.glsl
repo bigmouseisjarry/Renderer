@@ -94,7 +94,7 @@ layout (local_size_x = THREAD_SIZE_X,
         local_size_z = THREAD_SIZE_Z) in;
 void main() 
 {
-    VolumeLight volumeLight = LIGHTS.volumeLights[SETTING.volumeLightID];
+    VolumeLight volumeLight = VOLUME_LIGHT_SETTINGS.volumeLights[SETTING.volumeLightID];
     
 	// 第二轮 计算辐照度
     // 没有补齐的全局pixel位置 + 每个小纹理间的2padding + 当前小纹理前的2padding

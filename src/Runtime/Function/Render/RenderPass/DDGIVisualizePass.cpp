@@ -66,18 +66,18 @@ void DDGIVisualizePass::Build(RDGBuilder& builder)
             {
                 std::string index = " [" + std::to_string(volumeLight->GetVolumeLightID()) + "]";
 
-                
-                RDGTextureHandle irrTex = builder.GetOrCreateTexture("Volume Light Irradiance " + index)
+                RDGTextureHandle irrTex = builder.GetOrCreateTexture("Volume Light Irradiance [" + std::to_string(volumeLight->GetVolumeLightID()) + "]")
                     .Import(volumeLight->GetTextres().irradianceTex->texture)
                     .Finish();
 
-                RDGTextureHandle depTex = builder.GetOrCreateTexture("Volume Light Depth " + index)
+                RDGTextureHandle depTex = builder.GetOrCreateTexture("Volume Light Depth [" + std::to_string(volumeLight->GetVolumeLightID()) + "]")
                     .Import(volumeLight->GetTextres().depthTex->texture)
                     .Finish();
 
                 RDGRenderPassHandle pass = builder.CreateRenderPass(GetName() + index)
                     .PassIndex(i)
-                    .Shaders({vertexShader.shader, fragmentShader.shader})     // S5:聚合文件补声明(第8个,盘点漏网)
+                    .RootSignature(rootSignature)    
+                    .Shaders({vertexShader.shader, fragmentShader.shader})    
                     .Color(0, outColor, ATTACHMENT_LOAD_OP_LOAD, ATTACHMENT_STORE_OP_STORE, { 0.0f, 0.0f, 0.0f, 0.0f })
                     .DepthStencil(depth, ATTACHMENT_LOAD_OP_LOAD, ATTACHMENT_STORE_OP_STORE, 1.0f, 0)
                     .Read(2, SET2_BINDING_VOLUME_LIGHT_IRRADIANCE, volumeLight->GetVolumeLightID(), irrTex, VIEW_TYPE_2D, {})  
@@ -105,6 +105,7 @@ void DDGIVisualizePass::Build(RDGBuilder& builder)
                             command->SetDepthBias(0.0f, 0.0f, 0.0f);
                             command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);
                             command->BindDescriptorSet(EngineContext::RenderResource()->GetPoolDescriptorSet(), 1);
+                            command->BindDescriptorSet(context.descriptors[2], 2);        // 空槽修复：原漏绑set2（边在:83-84但Execute没绑，frag读VOLUME_LIGHT_*纹理=未定义）
                             command->PushConstants(&setting, sizeof(DDGIVisualizeSetting), SHADER_FREQUENCY_GRAPHICS);
 
                             command->BindIndexBuffer(model->GetIndexBuffer(0)->buffer);

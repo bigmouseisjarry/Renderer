@@ -63,10 +63,12 @@ void main()
 	for(int i = 0; i < LIGHTS.lightSetting.pointLightCnt; i++)
 	{
 		uint lightID = LIGHTS.lightSetting.pointLightIDs[i];
-		PointLight pointLight = LIGHTS.pointLights[lightID];
-		if(!pointLight.enable) continue;
+		LightStructGPU pointLight = LIGHTS.slot[lightID];
+		// 灯布局刀②：enable位退役（提交端只收集Enable()灯，活跃列表恒真）
 
-		BoundingSphere view_sphere = SphereTransform(pointLight.sphere, CAMERA.view);
+		// 灯布局刀②：sphere存储退役，pos+range现算（本来就是这个计算的展开）
+		BoundingSphere view_sphere;
+		view_sphere.centerRadius = vec4((CAMERA.view * vec4(pointLight.pos_range.xyz, 1.0f)).xyz, pointLight.pos_range.w);
 
 		// 要看 BoxIntersectSphere
 		if(BoxIntersectSphere(box, view_sphere) && offset < MAX_LIGHTS_PER_CLUSTER) 

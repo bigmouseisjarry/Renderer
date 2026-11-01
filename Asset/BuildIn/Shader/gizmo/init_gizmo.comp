@@ -17,17 +17,18 @@ void main()
     if(gID < LIGHTS.lightSetting.pointLightCnt)
     {
         uint lightID = LIGHTS.lightSetting.pointLightIDs[gID];
-		PointLight pointLight = LIGHTS.pointLights[lightID];
+		LightStructGPU pointLight = LIGHTS.slot[lightID];
 
-        AddGizmoBillboard(pointLight.pos, vec2(0.5f), GLOBAL_SETTING.icons.pointLightIcon, vec4(pointLight.color, 1.0f));
-        //AddGizmoSphere(pointLight.pos, pointLight.far, vec4(pointLight.color, 1.0f));
+        AddGizmoBillboard(pointLight.pos_range.xyz, vec2(0.5f), GLOBAL_SETTING.icons.pointLightIcon, vec4(pointLight.color_intencity.rgb, 1.0f));
+        //AddGizmoSphere(pointLight.pos_range.xyz, pointLight.pos_range.w, vec4(pointLight.color_intencity.rgb, 1.0f));
     }
 
     if(gID == 0 && LIGHTS.lightSetting.directionalLightCnt != 0)    // 目前只支持一个
     {
-        DirectionalLight dirLight = LIGHTS.directionalLights[0];
+        LightStructGPU dirLight = LIGHTS.slot[0];
         
-        AddGizmoBillboard(dirLight.pos, vec2(0.5f), GLOBAL_SETTING.icons.directionalLightIcon, vec4(dirLight.color, 1.0f));
+        // 灯布局刀②：方向光无位置字段，图标摆相机+朝太阳100m（原方案定案）
+        AddGizmoBillboard(CAMERA.pos.xyz + dirLight.dir_tan.xyz * 100.0f, vec2(0.5f), GLOBAL_SETTING.icons.directionalLightIcon, vec4(dirLight.color_intencity.rgb, 1.0f));
     }
 }
 

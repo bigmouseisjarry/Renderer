@@ -8,8 +8,6 @@
 #include "Function/Render/RenderPass/IBLPass.h"
 #include "Function/Render/RenderPass/DepthPass.h"
 #include "Function/Render/RenderPass/DepthPyramidPass.h"
-#include "Function/Render/RenderPass/DirectionalShadowPass.h"
-#include "Function/Render/RenderPass/PointShadowPass.h"
 #include "Function/Render/RenderPass/ClipmapPass.h"
 #include "Function/Render/RenderPass/DDGIPass.h"
 #include "Function/Render/RenderPass/GBufferPass.h"
@@ -144,8 +142,6 @@ void RenderSystem::EnsureQueueFrameSlots(PerFrameCommonResource& resource, const
 void RenderSystem::InitPasses()
 {
     meshPasses[MESH_DEPTH_PASS]                 = std::make_shared<DepthPass>();
-    meshPasses[MESH_DIRECTIONAL_SHADOW_PASS]    = std::make_shared<DirectionalShadowPass>();
-    meshPasses[MESH_POINT_SHADOW_PASS]          = std::make_shared<PointShadowPass>();
     meshPasses[MESH_G_BUFFER_PASS]              = std::make_shared<GBufferPass>();
     meshPasses[MESH_G_BUFFER_THIN_PASS]         = std::make_shared<GBufferThinPass>();    
     meshPasses[MESH_FORWARD_PASS]               = std::make_shared<ForwardPass>();
@@ -156,8 +152,6 @@ void RenderSystem::InitPasses()
     passes[IBL_PASS]                            = std::make_shared<IBLPass>();
     passes[DEPTH_PASS]                          = meshPasses[MESH_DEPTH_PASS];
     passes[DEPTH_PYRAMID_PASS]                  = std::make_shared<DepthPyramidPass>();         // 0.3
-    passes[POINT_SHADOW_PASS]                   = meshPasses[MESH_POINT_SHADOW_PASS];
-    passes[DIRECTIONAL_SHADOW_PASS]             = meshPasses[MESH_DIRECTIONAL_SHADOW_PASS];
     passes[CLIPMAP_PASS]                        = nullptr;
     passes[DDGI_PASS]                           = nullptr;
     passes[G_BUFFER_PASS]                       = meshPasses[MESH_G_BUFFER_PASS];

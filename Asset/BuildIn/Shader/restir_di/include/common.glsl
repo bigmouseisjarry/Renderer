@@ -41,8 +41,8 @@ float HitDistance(uint lightID, vec3 worldPos)
 {
 	if(lightID == 0) return 0.0f;	// 0为无效ID
 
-    PointLight pointLight = LIGHTS.pointLights[lightID];
+    LightStructGPU pointLight = LIGHTS.slot[lightID];
 
-    float pointDistance = length(worldPos.xyz - pointLight.pos);
+    float pointDistance = length(worldPos.xyz - pointLight.pos_range.xyz);
 	return pointDistance;
 }

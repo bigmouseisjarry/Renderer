@@ -58,30 +58,6 @@ void main()
 					DEPTH_PYRAMID[1], SAMPLER[3]); 
 			}
 
-			//光源空间绘制，平行光
-			else if(SETTING.passType == DIRECTIONAL_SHADOW_PASS_INDEX)
-			{			
-				// 实际上这里的剔除也不是很严谨，平行光源的包围盒理论上是"无限长"的矩形
-				// frustumVisible = frustumVisible && FrustumIntersectBox(LIGHTS.directionalLights[passIndex].frustum, worldBox);
-				frustumVisible = frustumVisible && BoxIntersectSphere(worldBox, LIGHTS.directionalLights[passIndex].sphere);
-
-				// 屏幕空间深度提供的是"需要接受阴影的表面"信息，但即便物体在屏幕空间被完全遮蔽，它投射的阴影仍可能在屏幕空间可见（从侧面）
-				// 到底怎么剔除比较合适？
-			}
-
-			//光源空间绘制，点光源
-			else if(SETTING.passType == POINT_SHADOW_PASS_INDEX)
-			{
-				if(passIndex >= LIGHTS.lightSetting.pointshadowedLightCnt * 6)	visible = false;	//没启用的点光源槽位
-				else 
-				{
-					uint pointShadowLightID = passIndex / 6;
-					uint face = passIndex % 6;
-
-					//frustumVisible = frustumVisible && BoxIntersectSphere(worldBox, LIGHTS.pointLights[LIGHTS.lightSetting.pointShadowLightIDs[pointShadowLightID]].sphere);
-					frustumVisible = frustumVisible && FrustumIntersectSphere(LIGHTS.pointLights[LIGHTS.lightSetting.pointShadowLightIDs[pointShadowLightID]].frustum[face], worldSphere);
-				}
-			}
 
 			//TODO INDIRECT_COMMANDS可以放到这里来录制，不只是instanceCount
 

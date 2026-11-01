@@ -20,11 +20,6 @@ std::shared_ptr<DirectionalLightComponent> RenderLightManager::GetDirectionalLig
     return perframeLights[EngineContext::ThreadPool()->ThreadFrameIndex()].directionalLight; 
 }
 
-const std::vector<std::shared_ptr<PointLightComponent>>& RenderLightManager::GetPointShadowLights()  
-{ 
-    return perframeLights[EngineContext::ThreadPool()->ThreadFrameIndex()].pointShadowLights; 
-}
-
 const std::vector<std::shared_ptr<VolumeLightComponent>>& RenderLightManager::GetVolumeLights()     
 { 
     return perframeLights[EngineContext::ThreadPool()->ThreadFrameIndex()].volumeLights; 
@@ -37,14 +32,11 @@ void RenderLightManager::PrepareLights()
     LightSetting setting = {};
     setting.directionalLightCnt = 0;
     setting.pointLightCnt = 0;
-    setting.pointshadowedLightCnt = 0;
-    setting.volumeLightCnt = 0;
     setting.globalIndexOffset = 0;
 
     auto& lights = perframeLights[EngineContext::ThreadPool()->ThreadFrameIndex()];
 
     lights.directionalLight = nullptr;
-    lights.pointShadowLights.clear();
     lights.volumeLights.clear();
 
     // 收集光源信息,更新参数
@@ -62,16 +54,6 @@ void RenderLightManager::PrepareLights()
     {
         if(pointLight) 
         {
-            pointLight->pointShadowID = MAX_POINT_SHADOW_COUNT; 
-
-            if(pointLight->Enable() &&
-               pointLight->CastShadow() && 
-               setting.pointshadowedLightCnt < MAX_POINT_SHADOW_COUNT)                 // 暂时取前几个
-            {                                                                           // TODO 可以做更新策略，阴影分帧更新等
-                pointLight->pointShadowID = setting.pointshadowedLightCnt++;
-                setting.pointShadowLightIDs[pointLight->pointShadowID] = pointLight->pointLightID;
-                lights.pointShadowLights.push_back(pointLight);
-            }
             if(pointLight->Enable())
             {
                 setting.pointLightIDs[setting.pointLightCnt] = pointLight->pointLightID;  
@@ -81,13 +63,15 @@ void RenderLightManager::PrepareLights()
         }
     }
 
+    uint32_t volumeLightIDs[MAX_VOLUME_LIGHT_COUNT] = { 0 };        
+    uint32_t volumeLightCnt = 0;
     auto volumeLightComponents = EngineContext::World()->GetActiveScene()->GetVolumeLights();
     for(auto& volumeLight : volumeLightComponents)
     {
         if(volumeLight && volumeLight->Enable())
         {
-            setting.volumeLightIDs[setting.volumeLightCnt] = volumeLight->volumeLightID;
-            setting.volumeLightCnt++;
+            volumeLightIDs[volumeLightCnt] = volumeLight->volumeLightID;
+            volumeLightCnt++;
             lights.volumeLights.push_back(volumeLight);
 
             volumeLight->UpdateLightInfo();
@@ -96,4 +80,5 @@ void RenderLightManager::PrepareLights()
 
     // 提交整体处理的信息
     EngineContext::RenderResource()->SetLightSetting(setting);
+    EngineContext::RenderResource()->SetVolumeLightSetting(volumeLightCnt, volumeLightIDs);
 }

@@ -22,10 +22,7 @@ layout(set = 2, binding = SET2_BINDING_HISTORY_DEPTH_PYRAMID)  uniform texture2D
 layout(set = 2, binding = SET2_BINDING_HISTORY_VELOCITY)       uniform texture2D VELOCITY;
 layout(set = 2, binding = SET2_BINDING_HISTORY_OBJECT_ID)      uniform utexture2D OBJECT_ID[2];
 
-// 阴影域：POINT_SHADOW[4]=filtered0-3（S5-1收缩：depth4-7半区=死设计,RtPointShadow走ray
-// query不碰数组,唯一数组访问[shadowID]守卫<4;物理纹理也仅4张,8声明=悬空元素永生）
-layout(set = 2, binding = SET2_BINDING_DIRECTIONAL_SHADOW)     uniform texture2D DIRECTIONAL_SHADOW[4];
-layout(set = 2, binding = SET2_BINDING_POINT_SHADOW)           uniform textureCube POINT_SHADOW[4];
+// 阴影域已退役（阴影转换刀D：光栅CSM/cube VSM全转TLAS ray query，b6/b7声明删除，槽号保留防移位）
 
 // SC域：atlas
 layout(set = 2, binding = SET2_BINDING_SURFACE_CACHE)          uniform texture2D SURFACE_CACHE[5];

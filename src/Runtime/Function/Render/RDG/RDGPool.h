@@ -246,7 +246,7 @@ public:
     void Clear()                    { pooledDescriptors.clear(); pooledSize = 0; }
 
     static std::shared_ptr<RDGDescriptorSetPool> Get(uint32_t index)    // 描述符池需要FRAMES_IN_FLIGHT每帧一个，不然下一帧修改可能影响上一帧还未完成的渲染！！！
-    {                                                                   
+    {
         static std::shared_ptr<RDGDescriptorSetPool> pool[FRAMES_IN_FLIGHT];
         if(pool[index] == nullptr) pool[index] = std::make_shared<RDGDescriptorSetPool>();
         return pool[index];

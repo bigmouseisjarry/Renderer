@@ -149,10 +149,6 @@ void SurfaceCachePass::Build(RDGBuilder& builder)
                 pass1.Read(2, SET2_BINDING_VOLUME_LIGHT_DEPTH, vid, dep, VIEW_TYPE_2D, {});
             }
             pass1
-            .Read(2, SET2_BINDING_POINT_SHADOW, 0, builder.GetTexture("Point Shadow Filtered Color [0]"), VIEW_TYPE_CUBE, { TEXTURE_ASPECT_COLOR, 0, 1, 0, 6 })
-            .Read(2, SET2_BINDING_POINT_SHADOW, 1, builder.GetTexture("Point Shadow Filtered Color [1]"), VIEW_TYPE_CUBE, { TEXTURE_ASPECT_COLOR, 0, 1, 0, 6 })
-            .Read(2, SET2_BINDING_POINT_SHADOW, 2, builder.GetTexture("Point Shadow Filtered Color [2]"), VIEW_TYPE_CUBE, { TEXTURE_ASPECT_COLOR, 0, 1, 0, 6 })
-            .Read(2, SET2_BINDING_POINT_SHADOW, 3, builder.GetTexture("Point Shadow Filtered Color [3]"), VIEW_TYPE_CUBE, { TEXTURE_ASPECT_COLOR, 0, 1, 0, 6 })
             .Execute([&](RDGPassContext context) {       
                 
                 auto& dispatches = EngineContext::Render()->GetSurfaceCacheManager()->GetDirectLightingDispatches();

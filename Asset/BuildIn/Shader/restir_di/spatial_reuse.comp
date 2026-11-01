@@ -108,16 +108,16 @@ void main()
 				// 	neighborDiffuse, neighborRoughness, neighborMetallic);
 				// if(newPHatNeighbor <= 0.0) continue;
 
-				PointLight pointLight 	= LIGHTS.pointLights[res.sampl.lightID];
-				float neighborDistance 	= length(neighborWorldPos.xyz - pointLight.pos);
-				vec3 neighborL		 	= normalize(pointLight.pos - neighborWorldPos.xyz);
+				LightStructGPU pointLight = LIGHTS.slot[res.sampl.lightID];
+				float neighborDistance 	= length(neighborWorldPos.xyz - pointLight.pos_range.xyz);
+				vec3 neighborL		 	= normalize(pointLight.pos_range.xyz - neighborWorldPos.xyz);
 				vec3 neighborN 			= normalize(neighborNormal[j]);
-				if(dot(neighborN, neighborL) <= 0.0f || neighborDistance >= pointLight.far)	continue;
+				if(dot(neighborN, neighborL) <= 0.0f || neighborDistance >= pointLight.pos_range.w)	continue;
 
 
 				if(RESTIR_DI_SETTING.visibilityReuse != 0)		// 可见性测试是最主要的性能开销
 				{
-					bool shadowed = RayQueryVisibility(neighborWorldPos.xyz, LIGHTS.pointLights[res.sampl.lightID].pos, GLOBAL_SETTING.rayTracingOffset);
+					bool shadowed = RayQueryVisibility(neighborWorldPos.xyz, LIGHTS.slot[res.sampl.lightID].pos_range.xyz, GLOBAL_SETTING.rayTracingOffset);
 					if(shadowed) continue;
 				}
 						
@@ -126,7 +126,7 @@ void main()
 
 			if(RESTIR_DI_SETTING.visibilityReuse != 0)
 			{
-				bool shadowed = RayQueryVisibility(worldPos.xyz, LIGHTS.pointLights[res.sampl.lightID].pos, GLOBAL_SETTING.rayTracingOffset);
+				bool shadowed = RayQueryVisibility(worldPos.xyz, LIGHTS.slot[res.sampl.lightID].pos_range.xyz, GLOBAL_SETTING.rayTracingOffset);
 				if(shadowed) 
 				{
 					CleanDIReservoir(res);			

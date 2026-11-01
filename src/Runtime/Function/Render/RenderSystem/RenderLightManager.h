@@ -14,7 +14,6 @@ public:
     void Tick();
 
     std::shared_ptr<DirectionalLightComponent> GetDirectionalLight();
-    const std::vector<std::shared_ptr<PointLightComponent>>& GetPointShadowLights();
     const std::vector<std::shared_ptr<VolumeLightComponent>>& GetVolumeLights();
 
 private:
@@ -22,7 +21,6 @@ private:
 
     struct PerFrameLights
     {
-        std::vector<std::shared_ptr<PointLightComponent>> pointShadowLights;
         std::shared_ptr<DirectionalLightComponent> directionalLight;
         std::vector<std::shared_ptr<VolumeLightComponent>> volumeLights;
     };

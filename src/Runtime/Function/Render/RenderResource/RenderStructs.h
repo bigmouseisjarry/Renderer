@@ -154,54 +154,25 @@ struct LightClusterIndex
                
 };
 
-struct DirectionalLightInfo 
+struct DirectionalLightInfo    // 灯布局刀②b：瘦身为翻译层输入（CSM矩阵/分割/PCSS参数退役）
 {
-    Mat4 view;
-    Mat4 proj;
-    Mat4 viewProj;
-    Vec3 pos;
-    float _padding0;
     Vec3 dir;
-    float depth;                // 该级 cascade 的划分深度
-
+    float _padding0;
     Vec3 color;
-    float intencity;            //前三维为颜色，最后一维强度
-    
-    float fogScattering;        //体积雾散射系数
-    float sunTan;               //太阳斜率
-    float ndcZToUV;             // extent.z/extent.x,.x 等于 .y
-    uint32_t castShadow;        //是否投射阴影，非零值有效
-
-    Frustum frustum;            //视锥，用于计算剔除      
-    BoundingSphere sphere;
-
+    float intencity;
+    float fogScattering;
+    uint32_t castShadow;
 };
 
-struct PointLightInfo
+struct PointLightInfo          // 灯布局刀②b：瘦身为翻译层输入（cube矩阵/VSM参数/视锥退役）
 {
-    Mat4 view[6];
-    Mat4 proj;
-    Mat4 viewProj[6];
     Vec3 pos;
     float _padding0;
     Vec3 color;
     float intencity;
-    float near;
-    float far;                             
-    float bias;
-    float _padding1;
-     
-    float c1;                               //EVSM计算时使用的指数系数
-    float c2;
-    union { uint32_t _p0; bool enable; };   //是否启用
-    uint32_t  shadowID;                     //索引点光源阴影的槽位，小于POINT_SHADOW_MAX_COUNT有效，每帧更新
-
-    float fogScattering;                    //体积雾散射系数
-    float _padding2[3];
-
-    Frustum frustum[6];                     //视锥，用于计算剔除
-    BoundingSphere sphere;                  //世界空间包围球，用于计算剔除
-
+    float far;
+    float fogScattering;
+    uint32_t castShadow;
 };
 
 struct DDGISetting
@@ -244,33 +215,50 @@ struct VolumeLightInfo
 struct LightSetting 
 {
     uint32_t directionalLightCnt = 0;
-    uint32_t pointshadowedLightCnt = 0;
     uint32_t pointLightCnt = 0;
-    uint32_t volumeLightCnt = 0;
 
     uint32_t globalIndexOffset = 0;                                     // 创建cluster light时使用，标记全局index缓冲的已分配偏移
     uint32_t _padding[3];
 
     uint32_t pointLightIDs[MAX_POINT_LIGHT_COUNT] = { 0 };          // 等待分簇光照处理的当前帧的全部点光源索引
-    uint32_t pointShadowLightIDs[MAX_POINT_SHADOW_COUNT] = { 0 };   // 标记阴影点光源的lightID，方便剔除时索引
     
-    uint32_t volumeLightIDs[MAX_VOLUME_LIGHT_COUNT] = { 0 };
 
 };
 
-#define DIR_LIGHT_OFFSET        (0)
-#define POINT_LIGHT_OFFSET      (DIR_LIGHT_OFFSET + DIRECTIONAL_SHADOW_CASCADE_LEVEL * sizeof(DirectionalLightInfo))
-#define VOLUME_LIGHT_OFFSET     (POINT_LIGHT_OFFSET + MAX_POINT_LIGHT_COUNT * sizeof(PointLightInfo))
-#define LIGHT_SETTING_OFFSET    (VOLUME_LIGHT_OFFSET + MAX_VOLUME_LIGHT_COUNT * sizeof(VolumeLightInfo))
+// 灯布局刀②：统一64B槽布局（与GPU侧LightStructGPU/LIGHTS严格同构）
+struct LightInfoGPU
+{
+    Vec4 pos_range;          // .xyz=位置(方向光=预留) .w=range
+    Vec4 color_intencity;    // .rgb=颜色 .w=强度
+    Vec4 dir_tan;            // .xyz=主方向 .w=tanHalfAngle
+    Vec4 flags_fog;          // .x=fogScattering .y=位域float{bit0-7类型,bit8=castShadow} .zw=预留
+};
+
+inline float LightFlagsF(uint32_t flags) { float f; memcpy(&f, &flags, sizeof(float)); return f; }
+
+#define LIGHT_SLOT_OFFSET       (0)
+#define LIGHT_SETTING_OFFSET    (LIGHT_SLOT_OFFSET + MAX_POINT_LIGHT_COUNT * sizeof(LightInfoGPU))
 #define LIGHT_OFFSET_MAX        (LIGHT_SETTING_OFFSET + sizeof(LightSetting))
 
 struct LightInfo
 {
-    DirectionalLightInfo directionalLights[DIRECTIONAL_SHADOW_CASCADE_LEVEL];
-    PointLightInfo pointLights[MAX_POINT_LIGHT_COUNT];
-    VolumeLightInfo volumeLights[MAX_VOLUME_LIGHT_COUNT];
-
+    LightInfoGPU slot[MAX_POINT_LIGHT_COUNT];     // [0]=方向光 | [1..]=局部灯（按pointLightID直索引，保留洞；紧凑化待ZBin刀）
     LightSetting lightSetting;
+};
+
+// 灯布局刀①：VOLUME_LIGHT_SETTINGS独立buffer——头部{cnt,pad3,IDs}=416B（VolumeLight[100]随后自然16B对齐），
+// 与GPU侧set1 b26的volume_light_settings声明严格同构
+struct VolumeLightSettingsHeader
+{
+    uint32_t volumeLightCnt = 0;
+    uint32_t _padding[3];
+    uint32_t volumeLightIDs[MAX_VOLUME_LIGHT_COUNT] = { 0 };
+};
+
+struct VolumeLightSettingsInfo
+{
+    VolumeLightSettingsHeader header;
+    VolumeLightInfo volumeLights[MAX_VOLUME_LIGHT_COUNT];
 };
 
 struct LightIndex

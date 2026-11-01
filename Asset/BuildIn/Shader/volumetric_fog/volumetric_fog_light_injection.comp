@@ -38,23 +38,7 @@ float isotropicScattering()
     return 1.0f / (4 * PI);
 }
 
-float LowPointShadow(uint lightID, vec4 worldPos)
-{
-	if(lightID == 0) return 0.0f;	// 0为无效ID
-
-	PointLight pointLight = LIGHTS.pointLights[lightID];
-	if(pointLight.shadowID >= MAX_POINT_SHADOW_COUNT) return 1.0f;	//无效阴影索引
-
-	vec3 pointLightVec = normalize(pointLight.pos - worldPos.xyz);
-	vec3 pointDistance = abs(worldPos.xyz - pointLight.pos);
-
-	float shadowDistance = LinearEyeDepth(texture(samplerCube(POINT_SHADOW[pointLight.shadowID + MAX_POINT_SHADOW_COUNT], SAMPLER[0]), -pointLightVec).r, pointLight.near, pointLight.far);
-
-	float pointShadow = length(pointDistance) - shadowDistance;
-	pointShadow = pointShadow > pointLight.bias ? 0.0f : 1.0f;	//给阴影一点颜色？
-
-    return pointShadow;
-}
+// 阴影转换刀C：LowPointShadow（depth cube直读，含POINT_SHADOW[shadowID+4]越界隐患）删除，调用点改RtPointShadow
 
 #define THREAD_SIZE_X VOLUMETRIC_FOG_SIZE_X / 10	
 #define THREAD_SIZE_Y VOLUMETRIC_FOG_SIZE_Y / 10	
@@ -91,23 +75,23 @@ void main()
 		for(uint i = clusterIndex.x; i < clusterIndex.x + clusterIndex.y; i++)
 		{
 			uint lightID = LIGHT_CLUSTER_INDEX.slot[i].lightID;
-			PointLight pointLight = LIGHTS.pointLights[lightID];
+			LightStructGPU pointLight = LIGHTS.slot[lightID];
 
-			vec3 L 											= normalize(pointLight.pos - worldPos.xyz);
+			vec3 L 											= normalize(pointLight.pos_range.xyz - worldPos.xyz);
 			float VoL 										= dot(V, L);
 			float scattering								= isotropicScattering();
 			if(SETTING.isotropic == 0) scattering 	= henyeyGreensteinPhase(SETTING.henyeyGreensteinG, VoL);
-			scattering *= pointLight.fogScattering;
+			scattering *= pointLight.flags_fog.x;
 
-			float pointDistance = length(worldPos.xyz - pointLight.pos.xyz);
-			float pShadow = LowPointShadow(lightID, worldPos);  
+			float pointDistance = length(worldPos.xyz - pointLight.pos_range.xyz.xyz);
+			float pShadow = RtPointShadow(lightID, worldPos);    // 阴影转换刀C
 			//float pShadow = 1.0f;
 
-			float attenuation   = PointLightFalloff(pointDistance, pointLight.far);
+			float attenuation   = PointLightFalloff(pointDistance, pointLight.pos_range.w);
 
     		vec3 radiance = pShadow *               //辐射率 = 阴影值 * 光强 * 颜色 * 衰减
-							pointLight.color * 
-							pointLight.intencity *
+							pointLight.color_intencity.rgb * 
+							pointLight.color_intencity.w *
 							attenuation;  
 
 			accumulateColor += radiance * scattering * SETTING.scatteringIntencity;
@@ -119,19 +103,19 @@ void main()
 	// 平行光源
 	if(LIGHTS.lightSetting.directionalLightCnt != 0)
 	{
-		DirectionalLight dirLight = LIGHTS.directionalLights[0];
+		LightStructGPU dirLight = LIGHTS.slot[0];
 
-		vec3 L 											= -normalize(dirLight.dir);
+		vec3 L 											= -normalize(dirLight.dir_tan.xyz);
 		float VoL 										= dot(V, L);
 		float scattering								= isotropicScattering();
 		if(SETTING.isotropic == 0) scattering 	= henyeyGreensteinPhase(SETTING.henyeyGreensteinG, VoL);
-		scattering *= dirLight.fogScattering;
+		scattering *= dirLight.flags_fog.x;
 
-		float dirShadow = DirectionalShadow(worldPos, pixel.xy, 2.0);
+		float dirShadow = RtDirectionalShadow(worldPos, GLOBAL_SETTING.rayTracingOffset);    // 阴影转换刀C
 
         vec3 radiance = dirShadow *           //辐射率 = 阴影值 * 光强 * 颜色
-                        dirLight.color * 
-                        dirLight.intencity;     
+                        dirLight.color_intencity.rgb * 
+                        dirLight.color_intencity.w;     
 
 		accumulateColor += radiance * scattering * SETTING.scatteringIntencity;
 	}

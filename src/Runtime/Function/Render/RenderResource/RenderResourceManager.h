@@ -101,6 +101,7 @@ enum PerFrameBindingID
     SET1_BINDING_BINDLESS_TEXTURE_CUBE,
     SET1_BINDING_BINDLESS_TEXTURE_3D,
 
+    SET1_BINDING_DDGI_SETTING,                      // =26 灯布局刀①：VOLUME_LIGHT_SETTINGS独立数组（尾部追加）
     SET1_BINDING_MAX_ENUM,//
 };
 
@@ -113,8 +114,8 @@ enum Set2BindingID
     SET2_BINDING_HISTORY_DEPTH_PYRAMID,              // =3 x2
     SET2_BINDING_HISTORY_VELOCITY,                   // =4
     SET2_BINDING_HISTORY_OBJECT_ID,                  // =5 x2
-    SET2_BINDING_DIRECTIONAL_SHADOW,                 // =6 x4
-    SET2_BINDING_POINT_SHADOW,                       // =7 x8 TEXTURE_CUBE
+    SET2_BINDING_DIRECTIONAL_SHADOW,                 // =6 x4 已退役（阴影转换刀D，槽号保留防移位）
+    SET2_BINDING_POINT_SHADOW,                       // =7 x8 已退役（阴影转换刀D，槽号保留防移位）
     SET2_BINDING_SURFACE_CACHE,                      // =8 x5
     SET2_BINDING_VOLUME_LIGHT_IRRADIANCE,            // =9 xMAX_VOLUME_LIGHT_COUNT
     SET2_BINDING_VOLUME_LIGHT_DEPTH,                 // =10 xMAX_VOLUME_LIGHT_COUNT
@@ -287,9 +288,7 @@ public:
     void ReleaseBindlessID(uint32_t id, BindlessSlot slot);   
   
     RHITextureRef GetLightClusterGridTexture()              { return multiFrameResource.lightClusterGridTexture->texture; }
-    RHITextureRef GetDirectionalShadowTexture(uint32_t id)  { return multiFrameResource.dirShadowTextures[id]->texture; }
-    RHITextureRef GetPointShadowTexture(uint32_t id)        { return multiFrameResource.pointShadowTextures[id]->texture; }
-    RHITextureRef GetPointShadowDepthTexture(uint32_t id)   { return multiFrameResource.pointShadowDepthTextures[id]->texture; }
+    // 阴影转换刀D：GetDirectionalShadowTexture/GetPointShadowTexture/GetPointShadowDepthTexture随光栅阴影退役删除
     RHITextureRef GetIBLTexture(uint32_t id)                { return multiFrameResource.skyboxIBLTexuture[id]->texture; }
     RHITextureRef GetDepthTexture()                         { return multiFrameResource.depthTexture[0]->texture; }
     RHITextureRef GetPrevDepthTexture()                     { return multiFrameResource.depthTexture[1]->texture; }
@@ -308,9 +307,10 @@ public:
     void SetCameraInfo(const CameraInfo& cameraInfo);
     void SetObjectInfo(const ObjectInfo& objectInfo, uint32_t objectID);
     void SetObjectInfos(const std::vector<ObjectInfo>& objectInfos, uint32_t baseObjectID);
-    void SetDirectionalLightInfo(const DirectionalLightInfo& directionalLightInfo, uint32_t cascade);
+    void SetDirectionalLightInfo(const DirectionalLightInfo& directionalLightInfo);
     void SetPointLightInfo(const PointLightInfo& pointLightInfo, uint32_t pointLightID);
     void SetVolumeLightInfo(const VolumeLightInfo& volumeLightInfo, uint32_t volumeLightID);
+    void SetVolumeLightSetting(uint32_t volumeLightCnt, const uint32_t* volumeLightIDs);     // 灯布局刀①：VL独立buffer头部提交
     void SetVolumeLightTextures(const VolumeLightTextures& volumeLightTextures, uint32_t volumeLightID);
     void SetLightSetting(const LightSetting& lightSetting);
     void SetMaterialInfo(const MaterialInfo& materialInfo, uint32_t materialID);
@@ -355,6 +355,7 @@ private:
         ArrayBuffer<ObjectInfo, MAX_PER_FRAME_OBJECT_SIZE> objectBuffer;
         ArrayBuffer<MeshCardInfo, MAX_PER_FRAME_OBJECT_SIZE * 6> meshCardBuffer;
         Buffer<LightInfo> lightBuffer;
+        Buffer<VolumeLightSettingsInfo> volumeLightSettingsBuffer;      // 灯布局刀①：VL独立buffer（头部count/IDs+slots）
         Buffer<GizmoDrawData> gizmoBuffer = Buffer<GizmoDrawData>(RESOURCE_TYPE_RW_BUFFER | RESOURCE_TYPE_INDIRECT_BUFFER);     // GizmoPass
     };
     std::array<PerFrameResource, FRAMES_IN_FLIGHT> perFrameResources;
@@ -374,9 +375,7 @@ private:
         Buffer<MeshCardReadBack> cardReadbackBuffer = Buffer<MeshCardReadBack>(RESOURCE_TYPE_RW_BUFFER, MEMORY_USAGE_GPU_TO_CPU); 
  
         TextureRef lightClusterGridTexture;                                 // 纹理不会有冲突
-        std::array<TextureRef, DIRECTIONAL_SHADOW_CASCADE_LEVEL> dirShadowTextures;        
-        std::array<TextureRef, MAX_POINT_SHADOW_COUNT> pointShadowTextures;   
-        std::array<TextureRef, MAX_POINT_SHADOW_COUNT> pointShadowDepthTextures;   
+        // 阴影转换刀D：dirShadowTextures/pointShadowTextures/pointShadowDepthTextures三族退役删除（回收≈270MB显存）
         std::array<TextureRef, 2> skyboxIBLTexuture;    // diffuse, specular
         std::array<TextureRef, 2> depthTexture;         // 本帧，上一帧
         std::array<TextureRef, 2> depthPyramidTexture;  // MIN, MAX 

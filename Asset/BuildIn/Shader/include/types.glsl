@@ -120,52 +120,20 @@ struct LightClusterIndex
     uint lightID;             
 };
 
-struct DirectionalLight
+struct LightStructGPU
 {
-    mat4 view;
-    mat4 proj;
-    mat4 viewProj;
-    vec3 pos;
-    float _padding0;
-    vec3 dir;
-    float depth;              
-
-    vec3 color;
-    float intencity;            
-    
-    float fogScattering;
-    float sunTan;
-    float ndcZToUV;
-    uint castShadow;        
-
-    Frustum frustum;            
-    BoundingSphere sphere;
+    vec4 pos_range;          // .xyz=位置(方向光段=预留) .w=range(衰减远端)
+    vec4 color_intencity;    // .rgb=辐射度颜色 .w=强度
+    vec4 dir_tan;            // .xyz=主方向(方向光=太阳向;聚光=锥轴) .w=tanHalfAngle(聚光,余预留)
+    vec4 flags_fog;          // .x=fogScattering .y=floatBitsToUint位域{bit0-7类型,bit8=castShadow} .zw=预留(NRD/面光逃生门)
 };
 
-struct PointLight
-{
-    mat4 view[6];
-    mat4 proj;
-    mat4 viewProj[6];
-    vec3 pos;
-    vec3 color;
-    float intencity;
-    float near;
-    float far;                             
-    float bias;
-    float _padding1;
-     
-    float c1;                          
-    float c2;
-    bool enable;
-    uint shadowID;                    
+#define LIGHT_TYPE_DIRECTIONAL 0u
+#define LIGHT_TYPE_POINT      1u
+#define LIGHT_TYPE_SPOT       2u
 
-    float fogScattering;                 
-    float _padding2[3];
-
-    Frustum frustum[6];  
-    BoundingSphere sphere;                
-};
+uint LightType(LightStructGPU l)       { return floatBitsToUint(l.flags_fog.y) & 0xFFu; }
+bool LightCastShadow(LightStructGPU l) { return (floatBitsToUint(l.flags_fog.y) & 0x100u) != 0u; }
 
 struct DDGISetting
 {
@@ -204,17 +172,13 @@ struct VolumeLight
 struct LightSetting 
 {
     uint directionalLightCnt;
-    uint pointshadowedLightCnt;
     uint pointLightCnt;
-    uint volumeLightCnt;
 
     uint globalIndexOffset;                          
     uint _padding[3];
 
     uint pointLightIDs[MAX_POINT_LIGHT_COUNT];
-    uint pointShadowLightIDs[MAX_POINT_SHADOW_COUNT];  
 
-    uint volumeLightIDs[MAX_VOLUME_LIGHT_COUNT];
 };
 
 struct GizmoBoxInfo 

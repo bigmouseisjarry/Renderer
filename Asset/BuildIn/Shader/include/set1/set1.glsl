@@ -26,12 +26,19 @@ layout(set = 1, binding = SET1_BINDING_MATERIAL) readonly buffer materials {
 
 layout(set = 1, binding = SET1_BINDING_LIGHT) buffer lights {
 
-    DirectionalLight directionalLights[DIRECTIONAL_SHADOW_CASCADE_LEVEL];
-    PointLight pointLights[MAX_POINT_LIGHT_COUNT];
-    VolumeLight volumeLights[MAX_VOLUME_LIGHT_COUNT];
+    LightStructGPU slot[MAX_POINT_LIGHT_COUNT];     // 灯布局刀②：[0]=方向光 | [1..1+N]=局部灯
     LightSetting lightSetting;
 
 } LIGHTS;
+
+layout(set = 1, binding = SET1_BINDING_DDGI_SETTING) buffer volume_light_settings {
+
+    uint volumeLightCnt;
+    uint _padding0[3];
+    uint volumeLightIDs[MAX_VOLUME_LIGHT_COUNT];
+    VolumeLight volumeLights[MAX_VOLUME_LIGHT_COUNT];
+
+} VOLUME_LIGHT_SETTINGS;
 
 layout(set = 1, binding = SET1_BINDING_MESH_CARD) readonly buffer mesh_cards {
 

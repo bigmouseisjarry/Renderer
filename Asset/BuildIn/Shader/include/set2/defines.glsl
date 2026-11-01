@@ -8,8 +8,8 @@
 #define SET2_BINDING_HISTORY_DEPTH_PYRAMID              3
 #define SET2_BINDING_HISTORY_VELOCITY                   4
 #define SET2_BINDING_HISTORY_OBJECT_ID                  5
-#define SET2_BINDING_DIRECTIONAL_SHADOW                 6
-#define SET2_BINDING_POINT_SHADOW                       7
+#define SET2_BINDING_DIRECTIONAL_SHADOW                 6   // 已退役（阴影转换刀D，槽号保留）
+#define SET2_BINDING_POINT_SHADOW                       7   // 已退役（阴影转换刀D，槽号保留）
 #define SET2_BINDING_SURFACE_CACHE                      8
 #define SET2_BINDING_VOLUME_LIGHT_IRRADIANCE            9
 #define SET2_BINDING_VOLUME_LIGHT_DEPTH                 10

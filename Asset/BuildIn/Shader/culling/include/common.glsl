@@ -15,8 +15,6 @@
 #include "../../include/surface_cache.glsl"
 
 #define DEPTH_PASS_INDEX 0
-#define POINT_SHADOW_PASS_INDEX 1
-#define DIRECTIONAL_SHADOW_PASS_INDEX 2
 #define G_BUFFER_PASS_INDEX 3
 #define FORWARD_PASS_INDEX 4
 #define TRANSPARENT_PASS_INDEX 5

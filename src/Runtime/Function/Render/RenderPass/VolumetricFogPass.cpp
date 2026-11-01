@@ -75,14 +75,6 @@ void VolumetricFogPass::Build(RDGBuilder& builder)
             .ReadWrite(2, SET2_BINDING_LIGHT_CLUSTER_GRID, 0, builder.GetTexture("Light Cluster Grid"), VIEW_TYPE_3D)
             .ReadWrite(2, SET2_BINDING_LIGHT_CLUSTER_INDEX, 0, builder.GetBuffer("Light Cluster Index"))
             .ReadWrite(2, SET2_BINDING_FOG_VOXEL_CURRENT, 0, voxelRaw, VIEW_TYPE_3D)
-            .Read(2, SET2_BINDING_DIRECTIONAL_SHADOW, 0, builder.GetTexture("Directional Depth [0]"), VIEW_TYPE_2D, { TEXTURE_ASPECT_DEPTH, 0, 1, 0, 1})
-            .Read(2, SET2_BINDING_DIRECTIONAL_SHADOW, 1, builder.GetTexture("Directional Depth [1]"), VIEW_TYPE_2D, { TEXTURE_ASPECT_DEPTH, 0, 1, 0, 1 })
-            .Read(2, SET2_BINDING_DIRECTIONAL_SHADOW, 2, builder.GetTexture("Directional Depth [2]"), VIEW_TYPE_2D, { TEXTURE_ASPECT_DEPTH, 0, 1, 0, 1 })
-            .Read(2, SET2_BINDING_DIRECTIONAL_SHADOW, 3, builder.GetTexture("Directional Depth [3]"), VIEW_TYPE_2D, { TEXTURE_ASPECT_DEPTH, 0, 1, 0, 1 })
-            .Read(2, SET2_BINDING_POINT_SHADOW, 0, builder.GetTexture("Point Shadow Filtered Color [0]"), VIEW_TYPE_CUBE, { TEXTURE_ASPECT_COLOR, 0, 1, 0, 6 })
-            .Read(2, SET2_BINDING_POINT_SHADOW, 1, builder.GetTexture("Point Shadow Filtered Color [1]"), VIEW_TYPE_CUBE, { TEXTURE_ASPECT_COLOR, 0, 1, 0, 6 })
-            .Read(2, SET2_BINDING_POINT_SHADOW, 2, builder.GetTexture("Point Shadow Filtered Color [2]"), VIEW_TYPE_CUBE, { TEXTURE_ASPECT_COLOR, 0, 1, 0, 6 })
-            .Read(2, SET2_BINDING_POINT_SHADOW, 3, builder.GetTexture("Point Shadow Filtered Color [3]"), VIEW_TYPE_CUBE, { TEXTURE_ASPECT_COLOR, 0, 1, 0, 6 })
             .Execute([&](RDGPassContext context) {       
 
                 RHICommandListRef command = context.command; 

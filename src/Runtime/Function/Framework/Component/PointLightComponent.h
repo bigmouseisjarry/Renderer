@@ -28,8 +28,6 @@ public:
 	virtual ComponentType GetType() override	    { return POINT_LIGHT_COMPONENT; }
 
 	inline BoundingSphere GetBoundingSphere() const	{ return sphere; }
-    float GetConstantBias()						    { return constantBias; }
-	float GetSlopeBias()						    { return slopeBias; }
 
 	inline bool CastShadow() const				    { return castShadow; }
 	inline bool Enable() const					    { return enable; }
@@ -38,19 +36,15 @@ public:
 
 private:
     uint32_t pointLightID = 0;
-    uint32_t pointShadowID = MAX_POINT_SHADOW_COUNT;    // 由RenderLightManager负责分配点光源阴影,有效值为[0, MAX_POINT_SHADOW_COUNT - 1]
 
 private:
     float near = 0.1f;          //光源设置
     float far = 25.0f;
     Vec3 color = Vec3::Ones();
     float intencity = 2.0f;
-    float evsm[2] = {10, 15};
     float fogScattering = 0.02f;
 	bool castShadow = true;	        //此光源是否投射阴影
 	bool enable = true;		        //此光源是否启用
-	float constantBias = 0.005f;    //固定偏移
-    float slopeBias = 0.0;
            
 	BoundingSphere sphere;          //包围球
 
@@ -61,15 +55,12 @@ private:
 private:
     BeginSerailize()
     SerailizeBaseClass(Component)
-    SerailizeEntry(near)
     SerailizeEntry(far)
     SerailizeEntry(color)
     SerailizeEntry(intencity)
-    SerailizeEntry(evsm)
     SerailizeEntry(fogScattering)
     SerailizeEntry(castShadow)
     SerailizeEntry(enable)
-    SerailizeEntry(constantBias)
     EndSerailize
 
     EnableComponentEditourUI()

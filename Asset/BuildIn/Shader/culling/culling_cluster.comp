@@ -58,26 +58,7 @@ void main()
 					DEPTH_PYRAMID[1], SAMPLER[3]); 
 			}
 
-			//光源空间绘制，平行光
-			else if(SETTING.passType == DIRECTIONAL_SHADOW_PASS_INDEX)
-			{			
-				// frustumVisible = frustumVisible && FrustumIntersectSphere(LIGHTS.directionalLights[passIndex].frustum, worldSphere);
-				frustumVisible = frustumVisible && SphereIntersectSphere(LIGHTS.directionalLights[passIndex].sphere, worldSphere);
-			}
-
-			//光源空间绘制，点光源
-			else if(SETTING.passType == POINT_SHADOW_PASS_INDEX)
-			{
-				if(passIndex >= LIGHTS.lightSetting.pointshadowedLightCnt * 6)	visible = false;	//没启用的点光源槽位
-				else 
-				{
-					uint pointShadowLightID = passIndex / 6;
-					uint face = passIndex % 6;
-
-					//frustumVisible = frustumVisible && SphereIntersectSphere(worldSphere, LIGHTS.pointLights[LIGHTS.lightSetting.pointShadowLightIDs[pointShadowLightID]].sphere);
-					frustumVisible = frustumVisible && FrustumIntersectSphere(LIGHTS.pointLights[LIGHTS.lightSetting.pointShadowLightIDs[pointShadowLightID]].frustum[face], worldSphere);
-				}
-			}
+			// 光源空间剔除分支已退役（阴影转换刀D：RT阴影后shadow pass不再发dispatch）
 			
 			//TODO INDIRECT_COMMANDS可以放到这里来录制，不只是instanceCount
 

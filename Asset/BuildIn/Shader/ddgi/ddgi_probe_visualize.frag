@@ -19,7 +19,7 @@ layout (location = 0) out vec4 VIS_OUT_COLOR;
 
 void main() 
 {
-	VolumeLight volumeLight = LIGHTS.volumeLights[SETTING.volumeLightID];
+	VolumeLight volumeLight = VOLUME_LIGHT_SETTINGS.volumeLights[SETTING.volumeLightID];
 
 	if(SETTING.visualizeMode == 0)
 	{

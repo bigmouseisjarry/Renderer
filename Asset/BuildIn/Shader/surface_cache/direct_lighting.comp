@@ -51,10 +51,12 @@ void main()
         for(int i = 0; i < LIGHTS.lightSetting.pointLightCnt; i++)
         {
             uint lightID = LIGHTS.lightSetting.pointLightIDs[i];
-            PointLight pointLight = LIGHTS.pointLights[lightID];
-            if(!pointLight.enable) continue;
+            LightStructGPU pointLight = LIGHTS.slot[lightID];
+            // 灯布局刀②：enable位退役
 
-            BoundingSphere sphere = pointLight.sphere;
+            // 灯布局刀②：sphere存储退役，现算
+            BoundingSphere sphere;
+            sphere.centerRadius = vec4(pointLight.pos_range.xyz, pointLight.pos_range.w);
 
             if(BoxIntersectSphere(tileBox, sphere) && sharedPointLightCount < MAX_LIGHTS_PER_CLUSTER)   // 世界空间的包围盒求交
             {
@@ -118,7 +120,7 @@ void main()
     for(int i = 0; i < sharedPointLightCount; i++)
     {
         directLightColor += PointDiffuseLighting(albedo, roughness, metallic, worldPos, N, V, sharedPointLightIDs[i]) *
-                            PointShadow(sharedPointLightIDs[i], worldPos);                                  // 点光源阴影的shadow map是正确的
+                            RtPointShadow(sharedPointLightIDs[i], worldPos);                                // RT阴影（阴影转换刀A：cube VSM退役中）
     }
 
     // vec3 indirectLightColor = IndirectLighting(diffuse, roughness, metallic, worldPos, N, V);            // 间接光照目前使用的是DDGI，之后改成gather

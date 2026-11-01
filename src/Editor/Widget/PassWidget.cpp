@@ -30,8 +30,6 @@ void PassWidget::UI(std::shared_ptr<RenderPass> pass)
         switch (pass->GetType()) {
         case DEPTH_PASS:                                                                                                                break;
         case GPU_CULLING_PASS:          if(auto p = std::dynamic_pointer_cast<GPUCullingPass>(pass))              GPUCullingPassUI(p);             break;
-        case POINT_SHADOW_PASS:                                                                                                         break;
-        case DIRECTIONAL_SHADOW_PASS:                                                                                                   break;
         case CLIPMAP_PASS:              if(auto p = std::dynamic_pointer_cast<ClipmapPass>(pass))                  ClipmapPassUI(p);                 break;
         case G_BUFFER_PASS:             if(auto p = std::dynamic_pointer_cast<GBufferPass>(pass))                  GBufferPassUI(p);                 break;
         case DEFERRED_LIGHTING_PASS:    if(auto p = std::dynamic_pointer_cast<DeferredLightingPass>(pass))         DeferredLightingPassUI(p);        break;
@@ -70,8 +68,6 @@ std::string MeshPassName(MeshPassType type)
 {
     switch (type) {
     case MESH_DEPTH_PASS:               return "Depth";
-    case MESH_POINT_SHADOW_PASS:        return "Point Shadow";
-    case MESH_DIRECTIONAL_SHADOW_PASS:  return "Dir Shadow";
     case MESH_G_BUFFER_PASS:            return "G-Buffer";
     case MESH_G_BUFFER_THIN_PASS:       return "G-Buffer Thin";
     case MESH_FORWARD_PASS:             return "Forward";
