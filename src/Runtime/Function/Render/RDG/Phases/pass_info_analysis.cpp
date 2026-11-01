@@ -12,6 +12,20 @@ void PassInfoAnalysis::on_execute(RDGDependencyGraphRef graph, PerFrameCommonRes
 {
     ENGINE_TIME_SCOPE(PassInfoAnalysis::on_execute);
 
+    // —— 默认值展开站——
+    // 本phase虽名为Analysis，但承担一次性的"声明态→具体态"规范化：资源mipLevels(0=按extent推导)
+    // 与边的subrange(levelCount/layerCount=0=全量、aspect=NONE=按format推导)在此全部展开并写回
+    // 节点/边，此后下游（barrier/binding/execution/RHI发射）一律直读真值，多余的展开全部降级为断言。
+    // aspect推导与物理纹理defaultRange同源（输入同为info.format，见VulkanRHITexture构造），
+    // 不依赖物理资源分配时机。写回幂等（0→N只发生一次），Build已结束、改边安全
+    graph->ForEachTextureNode([](RDGTextureNodeRef texture) {
+        if (texture->info.mipLevels == 0)
+        {
+            assert(texture->info.extent.width != 0 || texture->info.extent.height != 0 || texture->info.extent.depth != 0);
+            texture->info.mipLevels = texture->info.extent.MipSize();
+        }
+    });
+
     auto& passes = get_passes(graph);
     pass_infos.reserve(passes.size());
     resource_infos.reserve(graph->ResourceNodeCount());
@@ -74,7 +88,7 @@ void PassInfoAnalysis::extract_resource_info(RDGPassNodeRef pass, PassResourceIn
         access_info.pass = pass;
         access_info.resource = texture;
         access_info.resource_state = edge->state;
-        access_info.is_output = edge->IsOutput();
+        access_info.frequency = edge->frequency;
 
         // 从 edge flags 推断访问类型
         if (edge->asShaderReadWrite)       access_info.access_type = EResourceAccessType::ReadWrite;
@@ -91,12 +105,35 @@ void PassInfoAnalysis::extract_resource_info(RDGPassNodeRef pass, PassResourceIn
         else                               
             access_info.access_type = EResourceAccessType::Read;
 
-        // 子资源范围
-        access_info.aspect = edge->subresource.aspect;    
-        access_info.mip_base = edge->subresource.baseMipLevel;
-        access_info.mip_count = edge->subresource.levelCount;
-        access_info.array_base = edge->subresource.baseArrayLayer;
-        access_info.array_count = edge->subresource.layerCount;
+        // 子资源范围——默认值展开站（on_execute注释）：count=0→节点全量，aspect=NONE→format推导。
+        // 展开写回边（幂等），后续所有消费者直读真值；例外=generateMip的To边只扩access不写回边（见下方）
+        TextureSubresourceRange& sub = edge->subresource;
+        if (sub.levelCount == 0) sub.levelCount = texture->info.mipLevels;
+        if (sub.layerCount == 0) sub.layerCount = texture->info.arrayLayers;
+        if (sub.aspect == TEXTURE_ASPECT_NONE)
+            sub.aspect = IsDepthStencilFormat(texture->info.format) ? TEXTURE_ASPECT_DEPTH_STENCIL :
+                         IsDepthFormat(texture->info.format)        ? TEXTURE_ASPECT_DEPTH :
+                         IsStencilFormat(texture->info.format)      ? TEXTURE_ASPECT_STENCIL :
+                                                                      TEXTURE_ASPECT_COLOR;
+        access_info.aspect = sub.aspect;
+        access_info.mip_base = sub.baseMipLevel;
+        access_info.mip_count = sub.levelCount;
+        access_info.array_base = sub.baseArrayLayer;
+        access_info.array_count = sub.layerCount;
+
+        // generateMip例外：access扩全链（GenerateMips实际触达0..M-1×全layer，与copy单mip无关），
+        // 边保持单mip冻结（RHI copy族单mip契约，execution侧回转Layers直读边）。不扩则mip 1..M-1
+        // 帧内零屏障，执行期手工mip链屏障（DST→SRC/SRC→DST全纹理声称）对真实旧态
+        // （首帧UNDEFINED/稳态SHADER_READ）撒谎——"expects TRANSFER_DST / current UNDEFINED"报错族病根
+        if (edge->asTransferDst && pass->NodeType() == RDG_PASS_NODE_TYPE_COPY &&
+            static_cast<RDGCopyPassNodeRef>(pass)->IsGenerateMip())
+        {
+            access_info.mip_base = 0;
+            access_info.mip_count = texture->info.mipLevels;
+            access_info.array_base = 0;
+            access_info.array_count = texture->info.arrayLayers;
+        }
+
         info.resource_accesses.push_back(access_info);
 
         // 更新全局资源信息
@@ -123,9 +160,9 @@ void PassInfoAnalysis::extract_resource_info(RDGPassNodeRef pass, PassResourceIn
         access_info.pass = pass;
         access_info.resource = buffer;
         access_info.resource_state = edge->state;
-        access_info.is_output = edge->IsOutput();
+        access_info.frequency = edge->frequency;
 
-        if (edge->asShaderReadWrite || edge->asOutputReadWrite || edge->asOutputIndirectDraw)
+        if (edge->asShaderReadWrite)
             access_info.access_type = EResourceAccessType::ReadWrite;
         else
             access_info.access_type = EResourceAccessType::Read;

@@ -137,14 +137,15 @@ void GizmoPass::Build(RDGBuilder& builder)
         RDGTextureHandle outColor = builder.GetTexture("Final LDR Color");
         RDGTextureHandle depth = builder.GetTexture("Depth");
 
-        // buffer稳态=INDIRECT：末位触碰者是pass1绘制的ReadIndirect（pass0的OutputIndirectDraw之后）
-        RDGBufferHandle dataBuffer = builder.GetOrCreateBuffer("Gizmo Data")   // 复用GPUCullingPass建的节点：同物理buffer双节点=隐形依赖边（Duplicate告警2026-10-26定罪）；同INDIRECT稳态，validationMode断言过
+        // buffer稳态=INDIRECT：末位触碰者是pass1绘制的ReadIndirect（pass1读边需求侧转换）
+        RDGBufferHandle dataBuffer = builder.GetOrCreateBuffer("Gizmo Data")  
             .Import(EngineContext::RenderResource()->GetGizmoDataBuffer(), RESOURCE_STATE_INDIRECT_ARGUMENT)
             .Finish();
 
         RDGComputePassHandle pass0 = builder.CreateComputePass(GetName() + " Init")
             .RootSignature(rootSignature)
-            .ReadWrite(2, SET2_BINDING_GIZMO_DRAW_DATA, 0, dataBuffer)   
+            .Shaders({computeShader.shader})          
+            .ReadWrite(2, SET2_BINDING_GIZMO_DRAW_DATA, 0, dataBuffer)
             .Execute([&](RDGPassContext context) {       
 
                 RHICommandListRef command = context.command; 
@@ -156,15 +157,17 @@ void GizmoPass::Build(RDGBuilder& builder)
                                     1, 
                                     1);
             })
-            .OutputIndirectDraw(dataBuffer)
             .Finish();
 
         RDGRenderPassHandle pass1 = builder.CreateRenderPass(GetName())
-            .RootSignature(rootSignature)   
+            .RootSignature(rootSignature)
+            .Shaders({vertexShader[0].shader, vertexShader[1].shader, vertexShader[2].shader,
+                      geometryShader[0].shader, geometryShader[1].shader,
+                      fragmentShader[0].shader, fragmentShader[1].shader})
             .Color(0, outColor, ATTACHMENT_LOAD_OP_LOAD, ATTACHMENT_STORE_OP_STORE, {0.0f, 0.0f, 0.0f, 0.0f})
             .DepthStencil(depth, ATTACHMENT_LOAD_OP_LOAD, ATTACHMENT_STORE_OP_STORE, 1.0f, 0)
             .ReadIndirect(dataBuffer)
-            .Read(2, SET2_BINDING_GIZMO_DRAW_DATA, 0, dataBuffer, 0, 0, RESOURCE_TYPE_RW_BUFFER)   // 刀3c：绘制侧vert/geom读GIZMO_DRAW_DATA
+            .Read(2, SET2_BINDING_GIZMO_DRAW_DATA, 0, dataBuffer, 0, 0)   
             .Execute([&](RDGPassContext context) {
                 
                 Extent2D windowExtent = EngineContext::Render()->GetWindowsExtent();

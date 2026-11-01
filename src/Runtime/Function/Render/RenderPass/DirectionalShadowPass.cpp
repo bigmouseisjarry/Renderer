@@ -28,7 +28,7 @@ void DirectionalShadowPass::Init()
     rootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetPerFrameRootSignature()->GetInfo())
                      .AddEntry(EngineContext::RenderResource()->GetBindlessRootSignature()->GetInfo())
                      .AddEntry(EngineContext::RenderResource()->GetSet2RootSignature()->GetInfo())       
-                                          .AddPushConstant({128, SHADER_FREQUENCY_GRAPHICS});
+                                          .AddPushConstant({sizeof(uint32_t), SHADER_FREQUENCY_GRAPHICS});
     rootSignature = backend->CreateRootSignature(rootSignatureInfo);
 
     RHIGraphicsPipelineInfo pipelineInfo = {};
@@ -45,11 +45,22 @@ void DirectionalShadowPass::Init()
     clusterPipeline                             = GraphicsPipelineCache::Get()->Allocate(pipelineInfo).pipeline;    // cluster的默认绘制管线
 }   
 
-void DirectionalShadowPass::Build(RDGBuilder& builder) 
+void DirectionalShadowPass::Build(RDGBuilder& builder)
 {
+    // S5-2（ReadIfValid退役第二步）：Directional Depth全量无条件导入（物理纹理Init已建
+    // array<,DIRECTIONAL_SHADOW_CASCADE_LEVEL>；无访问import节点零影响，同S5-1查证）。
+    // 渲染仍按光源开关+ShouldUpdate分帧策略条件走，消费者无条件read [0,LEVEL)
+    for(uint32_t i = 0; i < DIRECTIONAL_SHADOW_CASCADE_LEVEL; i++)
+    {
+        std::string index = " [" + std::to_string(i) + "]";
+        builder.CreateTexture("Directional Depth" + index)
+            .Import(EngineContext::RenderResource()->GetDirectionalShadowTexture(i))
+            .Finish();
+    }
+
     auto directionalLightComponent = EngineContext::Render()->GetLightManager()->GetDirectionalLight();
-    if( directionalLightComponent && 
-        directionalLightComponent->Enable() && 
+    if( directionalLightComponent &&
+        directionalLightComponent->Enable() &&
         directionalLightComponent->CastShadow() &&
         IsEnabled() &&
         !EngineContext::Render()->IsPassEnabled(RESTIR_DI_PASS) &&
@@ -62,10 +73,7 @@ void DirectionalShadowPass::Build(RDGBuilder& builder)
             {
                 std::string index = " [" + std::to_string(i) + "]";
 
-                // 稳态=SRV：末位=光照读（原[0]的TRANSFER_SRC稳态随History copy链2026-10-22删除而取消）
-                RDGTextureHandle depth = builder.CreateTexture("Directional Depth" + index)
-                    .Import(EngineContext::RenderResource()->GetDirectionalShadowTexture(i))
-                    .Finish();
+                RDGTextureHandle depth = builder.GetTexture("Directional Depth" + index);  
 
                 std::string cmdIndex = " [" + std::to_string(MESH_DIRECTIONAL_SHADOW_PASS) + "][" + std::to_string(i) + "]";
 
@@ -75,8 +83,9 @@ void DirectionalShadowPass::Build(RDGBuilder& builder)
                     .DepthStencil(depth, ATTACHMENT_LOAD_OP_CLEAR, ATTACHMENT_STORE_OP_STORE, 1.0f, 0)
                     .ReadIndirect(builder.GetBuffer("Mesh Draw Commands" + cmdIndex))
                     .ReadIndirect(builder.GetBuffer("Clusrter Draw Commands" + cmdIndex))
-                    .RootSignature(rootSignature)     
-                    .Read(2, SET2_BINDING_CLUSTER_DRAW_INFOS_READ, 0, builder.GetBuffer("Cluster Draw Infos" + cmdIndex), 0, 0, RESOURCE_TYPE_BUFFER)
+                    .RootSignature(rootSignature)
+                    .Shaders({vertexShader.shader, clusterVertexShader.shader, fragmentShader.shader})    
+                    .Read(2, SET2_BINDING_CLUSTER_DRAW_INFOS_READ, 0, builder.GetBuffer("Cluster Draw Infos" + cmdIndex), 0, 0)
                     .Execute([&](RDGPassContext context) {
 
                         Extent2D windowExtent = EngineContext::Render()->GetWindowsExtent();
@@ -97,7 +106,6 @@ void DirectionalShadowPass::Build(RDGBuilder& builder)
 
                         meshPassProcessor->Draw(command, index);
                     })
-                    .OutputRead(depth)  // 输出，作为后续阴影绘制的SRV
                     .Finish();
             }
         }

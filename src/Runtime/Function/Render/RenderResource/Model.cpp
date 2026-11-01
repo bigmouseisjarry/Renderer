@@ -184,11 +184,10 @@ void Model::OnLoadAsset()
         blasInfo.triangleNum =  (processSetting.generateVirtualMesh) ?  lod0TriangleNums[i] :                       // 虚拟几何体，用第0层cluster
                                 (processSetting.generateCluster) ?      submeshes[i].indexBuffer->TriangleNum() :   // 分簇，用全部cluster
                                                                         submeshes[i].indexBuffer->TriangleNum();    // 默认
-        // blasInfo.triangleNum = submeshes[i].indexBuffer->TriangleNum();    // 默认
         blasInfo.vertexStride = sizeof(Vec3);
         blasInfo.indexOffset = 0;
         blasInfo.vertexOffset = 0;
-        blasInfo.vertexCount = submeshes[i].vertexBuffer->positionBuffer->GetInfo().size / blasInfo.vertexStride;    // position字节数/步长=真实顶点数(2026-10-28)
+        blasInfo.vertexCount = submeshes[i].vertexBuffer->positionBuffer->GetInfo().size / blasInfo.vertexStride;    // position字节数/步长=真实顶点数
 
         submeshes[i].blas = EngineContext::RHI()->CreateBottomLevelAccelerationStructure(blasInfo);
     }

@@ -6,7 +6,6 @@
 #include "include/common.glsl"
 
 // 临时形态：本pass一个render pass画6个面（j=光源*6+面），数组化按face取块——
-// 刀7b-3：声明已入set2胖头（槽13，MESH_CLUSTER_DRAW_INFOS_READ[6]），本地删除
 layout(push_constant) uniform point_light_setting {
     uint index;
     uint face;

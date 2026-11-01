@@ -169,11 +169,11 @@ void RHICommandList::GenerateMips(RHITextureRef src)
     else ADD_COMMAND(GenerateMips, src);
 }
 
-void RHICommandList::BuildTopLevelAccelerationStructure(RHITopLevelAccelerationStructureRef tlas)
+void RHICommandList::BuildTopLevelAccelerationStructure(RHITopLevelAccelerationStructureRef tlas, const std::vector<RHIAccelerationStructureInstanceInfo>& instances)
 {
     COMMANDLIST_DEBUG_OUTPUT();
-    if(info.byPass) info.context->BuildTopLevelAccelerationStructure(tlas);
-    else ADD_COMMAND(BuildTLAS, tlas);
+    if(info.byPass) info.context->BuildTopLevelAccelerationStructure(tlas, instances);
+    else ADD_COMMAND(BuildTLAS, tlas, instances);
 }
 
 void RHICommandList::PushEvent(const std::string& name, Color3 color) 
@@ -419,7 +419,7 @@ void RHICommandCopyTexture::Execute(RHICommandContextRef context) { context->Cop
 
 void RHICommandGenerateMips::Execute(RHICommandContextRef context) { context->GenerateMips(src); }
 
-void RHICommandBuildTLAS::Execute(RHICommandContextRef context) { context->BuildTopLevelAccelerationStructure(tlas); }
+void RHICommandBuildTLAS::Execute(RHICommandContextRef context) { context->BuildTopLevelAccelerationStructure(tlas, instances); }
 
 void RHICommandPushEvent::Execute(RHICommandContextRef context) { context->PushEvent(name, color); }
 

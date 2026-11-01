@@ -29,7 +29,7 @@ void DDGIPass::Init()
     rootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetPerFrameRootSignature()->GetInfo())
                      .AddEntry(EngineContext::RenderResource()->GetBindlessRootSignature()->GetInfo())
                      .AddEntry(EngineContext::RenderResource()->GetSet2RootSignature()->GetInfo())       
-                                                                                                                                                                                                                                                                                                      .AddPushConstant({128, SHADER_FREQUENCY_ALL});
+                                                                                                                                                                                                                                                                                                      .AddPushConstant({sizeof(DDGIComputeSetting), SHADER_FREQUENCY_ALL});
     rootSignature = backend->CreateRootSignature(rootSignatureInfo);
 
     {
@@ -87,7 +87,7 @@ void DDGIPass::Build(RDGBuilder& builder)
                 .Finish();
 
             // 名字与消费者严格一致（DDGI ProbeRelocate/DeferredLighting/SurfaceCache用单空格形式）：
-            // index自带前导空格，多拼一个空格=双名字双节点同物理图（物理守卫2026-10-26定罪）
+            // index自带前导空格，多拼一个空格=双名字双节点同物理图
             RDGTextureHandle irradianceTex = builder.GetOrCreateTexture("Volume Light Irradiance" + index)
                 .Import(volumeLight->GetTextres().irradianceTex->texture)
                 .Finish();
@@ -139,12 +139,14 @@ void DDGIPass::Build(RDGBuilder& builder)
                     .RootSignature(rootSignature)
                     .Shaders({computeShader[0].shader})
                     .ReadWrite(2, SET2_BINDING_DDGI_TRACE_ALBEDO_METALLIC, 0, diffuseTex)
-                    .ReadIfValid(2, SET2_BINDING_DIRECTIONAL_SHADOW, 0, "Directional Depth [0]", VIEW_TYPE_2D, { TEXTURE_ASPECT_DEPTH, 0, 1, 0, 1})
-                    .ReadIfValid(2, SET2_BINDING_DIRECTIONAL_SHADOW, 1, "Directional Depth [1]", VIEW_TYPE_2D, { TEXTURE_ASPECT_DEPTH, 0, 1, 0, 1})
-                    .ReadIfValid(2, SET2_BINDING_DIRECTIONAL_SHADOW, 2, "Directional Depth [2]", VIEW_TYPE_2D, { TEXTURE_ASPECT_DEPTH, 0, 1, 0, 1})
-                    .ReadIfValid(2, SET2_BINDING_DIRECTIONAL_SHADOW, 3, "Directional Depth [3]", VIEW_TYPE_2D, { TEXTURE_ASPECT_DEPTH, 0, 1, 0, 1})
-                    .ReadIfValid(2, SET2_BINDING_POINT_SHADOW, 0, "Point Shadow Filtered Color [0]", VIEW_TYPE_CUBE, { TEXTURE_ASPECT_COLOR, 0, 1, 0, 6})
-                    .ReadIfValid(2, SET2_BINDING_POINT_SHADOW, 1, "Point Shadow Filtered Color [1]", VIEW_TYPE_CUBE, { TEXTURE_ASPECT_COLOR, 0, 1, 0, 6})
+                    .Read(2, SET2_BINDING_DIRECTIONAL_SHADOW, 0, builder.GetTexture("Directional Depth [0]"), VIEW_TYPE_2D, { TEXTURE_ASPECT_DEPTH, 0, 1, 0, 1})
+                    .Read(2, SET2_BINDING_DIRECTIONAL_SHADOW, 1, builder.GetTexture("Directional Depth [1]"), VIEW_TYPE_2D, { TEXTURE_ASPECT_DEPTH, 0, 1, 0, 1})
+                    .Read(2, SET2_BINDING_DIRECTIONAL_SHADOW, 2, builder.GetTexture("Directional Depth [2]"), VIEW_TYPE_2D, { TEXTURE_ASPECT_DEPTH, 0, 1, 0, 1})
+                    .Read(2, SET2_BINDING_DIRECTIONAL_SHADOW, 3, builder.GetTexture("Directional Depth [3]"), VIEW_TYPE_2D, { TEXTURE_ASPECT_DEPTH, 0, 1, 0, 1})
+                    .Read(2, SET2_BINDING_POINT_SHADOW, 0, builder.GetTexture("Point Shadow Filtered Color [0]"), VIEW_TYPE_CUBE, { TEXTURE_ASPECT_COLOR, 0, 1, 0, 6})
+                    .Read(2, SET2_BINDING_POINT_SHADOW, 1, builder.GetTexture("Point Shadow Filtered Color [1]"), VIEW_TYPE_CUBE, { TEXTURE_ASPECT_COLOR, 0, 1, 0, 6})
+                    .Read(2, SET2_BINDING_POINT_SHADOW, 2, builder.GetTexture("Point Shadow Filtered Color [2]"), VIEW_TYPE_CUBE, { TEXTURE_ASPECT_COLOR, 0, 1, 0, 6})
+                    .Read(2, SET2_BINDING_POINT_SHADOW, 3, builder.GetTexture("Point Shadow Filtered Color [3]"), VIEW_TYPE_CUBE, { TEXTURE_ASPECT_COLOR, 0, 1, 0, 6})
                     .ReadWrite(2, SET2_BINDING_DDGI_TRACE_NORMAL_ROUGHNESS, 0, normalTex)
                     .ReadWrite(2, SET2_BINDING_DDGI_TRACE_EMISSION, 0, emissionTex)
                     .ReadWrite(2, SET2_BINDING_DDGI_TRACE_POSITION, 0, positionTex)
@@ -282,8 +284,6 @@ void DDGIPass::Build(RDGBuilder& builder)
                                             volumeLight->GetProbeCounts().z(), 
                                             1);  
                     })
-                    .OutputRead(irradianceTex)
-                    .OutputRead(depthTex)
                     .Finish();
             }
 		}

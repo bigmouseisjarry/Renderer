@@ -1,8 +1,6 @@
 #include "pass_binding_phase.h"
-
 #include "Function/Global/EngineContext.h"
 #include "Function/Render/RDG/RDGPool.h"
-
 #include <algorithm>
 #include <cassert>
 #include <utility>
@@ -56,18 +54,11 @@ const PassBindInfo* PassBindingPhase::get_pass_bind_info(RDGPassNodeRef pass) co
     return nullptr;
 }
 
-bool PassBindingPhase::is_last_use(RDGResourceNodeRef resource, RDGPassNodeRef pass, bool output) const
+bool PassBindingPhase::is_last_use(RDGResourceNodeRef resource, RDGPassNodeRef pass) const
 {
     auto found = lifecycle_.last_use.find(resource);
     if (found == lifecycle_.last_use.end()) return false;
-
-    const ResourceLifecycleInfo::LastUse& last_use = found->second;
-    if (last_use.pass != pass) return false;
-
-    // 旧 IsLastUsedPass 的规则：同一pass内先读后写（读边释放时本pass还有output边）不算最后使用
-    if (!output && last_use.pass_has_output_edge) return false;
-
-    return true;
+    return found->second.pass == pass;
 }
 
 const void PassBindingPhase::debug_info() const
@@ -110,7 +101,7 @@ const void PassBindingPhase::debug_info() const
             resource->NodeType() == RDG_RESOURCE_NODE_TYPE_TEXTURE ? "texture" : "buffer",
             resource->Name().c_str(),
             last_use.pass != nullptr ? last_use.pass->Name().c_str() : "null",
-            last_use.pass_has_output_edge);
+            last_use.pass != nullptr);
     }
 
     ENGINE_LOG_INFO("end PassBindingPhase");
@@ -185,11 +176,6 @@ void PassBindingPhase::analyze_resource_lifetime(RDGDependencyGraphRef graph)
             {
                 best_position = found->second;
                 last_use.pass = pass;
-                last_use.pass_has_output_edge = edge->IsOutput();
-            }
-            else if (pass == last_use.pass && edge->IsOutput())
-            {
-                last_use.pass_has_output_edge = true;   // 同一pass内的output边（先读后写）
             }
         });
 
@@ -209,11 +195,6 @@ void PassBindingPhase::analyze_resource_lifetime(RDGDependencyGraphRef graph)
             {
                 best_position = found->second;
                 last_use.pass = pass;
-                last_use.pass_has_output_edge = edge->IsOutput();
-            }
-            else if (pass == last_use.pass && edge->IsOutput())
-            {
-                last_use.pass_has_output_edge = true;
             }
         });
 
@@ -241,13 +222,8 @@ void PassBindingPhase::prepare_descriptor_sets(RDGDependencyGraphRef graph)
 
         PassBindInfo& bind_info = pass_bind_infos_[pass];
 
-        // 预置显式传入的描述符集（RDGRenderPassBuilder::DescriptorSet 等），保持与旧路径一致：
-        // 显式提供的set不参与池化分配，也不在本阶段更新
-        for (uint32_t set = 0; set < MAX_DESCRIPTOR_SETS; set++)
-        {
-            if (pass->descriptorSets[set] != nullptr)
-                bind_info.descriptor_sets[set] = pass->descriptorSets[set];
-        }
+        // （显式描述符集预置循环已随Builder::DescriptorSet()退役删除——零调用者，
+        //   descriptorSets数组恒空；所有set一律走下方池化惰性分配）
 
         // 惰性分配指定set的池化描述符集
         auto ensure_descriptor_set = [&](uint32_t set) -> RHIDescriptorSetRef {
@@ -257,8 +233,6 @@ void PassBindingPhase::prepare_descriptor_sets(RDGDependencyGraphRef graph)
             if (pass->rootSignature == nullptr)
                 return nullptr;
 
-            // set2=足迹键(used entities分桶,S4定案);set0/1=旧键(★set1巨型bindless必须单桶,见RDGPool.h)
-            // 10-27晚消融已毕:两种键均与Xid概率崩无关(案件转环境假说)
             RHIDescriptorSetRef descriptor = RDGDescriptorSetPool::Get(EngineContext::ThreadPool()->ThreadFrameIndex())
                 ->Allocate(set == 2 ? RDGDescriptorSetPool::Key::MakeKey(pass->set2Entries, set)
                                     : RDGDescriptorSetPool::Key::MakeLegacyKey(pass->rootSignature->GetInfo(), set),
@@ -268,15 +242,11 @@ void PassBindingPhase::prepare_descriptor_sets(RDGDependencyGraphRef graph)
             return descriptor;
         };
 
-        // ——悬空槽自查器（2026-10-28悬空槽案产物，常驻哨兵勿删）——
-        // set2声明槽 vs 实际写入元素对账（数组元素粒度）：Finish补齐门只查"条目有边"（一条即
-        // done），元素粒度是VVL/校验器/GPU-AV全盲区（本案两现行犯=culling HiZ与ReSTIR深度的
-        // 索引错位，噪声+设备死）。新pass/新shader回归时此处当场报缺失。纯日志零行为改动
+        // ——悬空槽自查器——
         std::unordered_map<uint32_t, std::unordered_set<uint32_t>> set2Written;
 
         graph->ForEachTexture(pass, [&](RDGTextureEdgeRef edge, RDGTextureNodeRef texture) {
 
-            if (edge->IsOutput()) return;    // 作为output声明时不需要view
             if (edge->set == NO_DESCRIPTOR_SET && !edge->asColor && !edge->asDepthStencil) return;
 
             RHITextureViewRef view = RDGTextureViewPool::Get(EngineContext::ThreadPool()->ThreadFrameIndex())->Allocate({
@@ -295,7 +265,7 @@ void PassBindingPhase::prepare_descriptor_sets(RDGDependencyGraphRef graph)
                 renderingInfo.multiviewCount = static_cast<RDGRenderPassNodeRef>(pass)->multiviewCount;
                 renderingInfo.extent = { texture->info.extent.width, texture->info.extent.height };
                 renderingInfo.layers = renderingInfo.multiviewCount > 0 ? 1 :                  // 启用 multiview时，textureview的layer还是多个，framebuffer强制为1
-                    edge->subresource.layerCount > 0 ? edge->subresource.layerCount : 1;
+                    edge->subresource.layerCount;    // Analysis展开站已具体
 
                 if (edge->asColor)
                 {
@@ -359,8 +329,8 @@ void PassBindingPhase::prepare_descriptor_sets(RDGDependencyGraphRef graph)
             }
         });
 
-        // 悬空槽自查器·判定段：声明count(size)内每个未写元素报一次（进程内去重，双帧槽编译并发下
-        // 最坏重复一条日志，无害）。healthy常见路径（全写/单元素）在首判早退零开销
+        // 悬空槽自查器·判定段：声明count(size)内每个未写元素报一次（进程内去重，双帧槽编译并发下最坏重复一条日志，无害）。
+        // healthy常见路径（全写/单元素）在首判早退零开销
         if (!pass->set2Entries.empty())
         {
             static std::unordered_set<std::string> reported;
@@ -375,7 +345,7 @@ void PassBindingPhase::prepare_descriptor_sets(RDGDependencyGraphRef graph)
                     {
                         std::string key = pass->Name() + ":" + std::to_string(e.binding) + ":" + std::to_string(i);
                         if (reported.insert(std::move(key)).second)
-                            ENGINE_LOG_WARN("[DanglingSlot] pass[{}] set2 b{}[{}]: 声明count={} 未写入（池化陈旧/悬空元素）",
+                            ENGINE_LOG_WARN("[DanglingSlot] pass[{}] set2 b{}[{}]: declared count={} never written (pooled stale / dangling element)",
                                 pass->Name().c_str(), e.binding, i, e.size);
                     }
             }

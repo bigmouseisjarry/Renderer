@@ -15,7 +15,7 @@ void IBLPass::Init()
     rootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetPerFrameRootSignature()->GetInfo())
                      .AddEntry(EngineContext::RenderResource()->GetBindlessRootSignature()->GetInfo())
                      .AddEntry(EngineContext::RenderResource()->GetSet2RootSignature()->GetInfo())       
-                     .AddPushConstant({128, SHADER_FREQUENCY_COMPUTE});
+                     .AddPushConstant({sizeof(IBLSetting), SHADER_FREQUENCY_COMPUTE});
     rootSignature = backend->CreateRootSignature(rootSignatureInfo);
 
     RHIComputePipelineInfo pipelineInfo     = {};
@@ -37,17 +37,17 @@ void IBLPass::Build(RDGBuilder& builder)
         .Import(brdfTex->texture, RESOURCE_STATE_SHADER_RESOURCE)   // bornState特案：PNG文件加载、RDG外出生带内容，首见不可UNDEFINED（丢内容风险）
         .Finish();
 
+    RDGTextureHandle diffuseTex = builder.CreateTexture("Skybox IBL diffuse")
+        .Import(EngineContext::RenderResource()->GetIBLTexture(0))
+        .Finish();
+
+    RDGTextureHandle specularTex = builder.CreateTexture("Skybox IBL specular")
+        .Import(EngineContext::RenderResource()->GetIBLTexture(1))
+        .Finish();
+
     if(IsEnabled())
     {
         SetEnable(false);   // 只执行一次
-
-        RDGTextureHandle diffuseTex = builder.CreateTexture("Skybox IBL diffuse")
-            .Import(EngineContext::RenderResource()->GetIBLTexture(0))
-            .Finish();
-
-        RDGTextureHandle specularTex = builder.CreateTexture("Skybox IBL specular")
-            .Import(EngineContext::RenderResource()->GetIBLTexture(1))
-            .Finish();
 
         for(uint32_t i = 0; i < 6; i++)
         {
@@ -73,11 +73,8 @@ void IBLPass::Build(RDGBuilder& builder)
                     command->Dispatch(  DIFFUSE_IBL_SIZE / 16, 
                                         DIFFUSE_IBL_SIZE / 16, 
                                         1);
-                });
-                
-            if(i == 5) // 最后一级手动屏障 TODO
-                passBuilder.OutputRead(diffuseTex);
-            passBuilder.Finish();
+                })
+                .Finish();
         }   
 
         mip = (int)(floor(log2(SPECULAR_IBL_SIZE))) + 1;
@@ -90,7 +87,7 @@ void IBLPass::Build(RDGBuilder& builder)
                 auto passBuilder = builder.CreateComputePass(GetName() + " specular" + index)
                     .PassIndex(i, j)
                     .RootSignature(rootSignature)
-                    .Shaders({computeShader[1].shader})  // 刀7b-3：严格边校验
+                    .Shaders({computeShader[1].shader})  
                     .ReadWrite(2, SET2_BINDING_IBL_A, 0, specularTex, VIEW_TYPE_2D, { TEXTURE_ASPECT_COLOR, j, 1, i, 1})
                     .Execute([&](RDGPassContext context) {       
 
@@ -108,17 +105,14 @@ void IBLPass::Build(RDGBuilder& builder)
                         RHICommandListRef command = context.command; 
                         command->SetComputePipeline(computePipeline[1]);
                         command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);
-                command->BindDescriptorSet(EngineContext::RenderResource()->GetPoolDescriptorSet(), 1);   
+                        command->BindDescriptorSet(EngineContext::RenderResource()->GetPoolDescriptorSet(), 1);   
                         command->BindDescriptorSet(context.descriptors[2], 2);
                         command->PushConstants(&setting, sizeof(IBLSetting), SHADER_FREQUENCY_COMPUTE);
                         command->Dispatch(  extent.width, 
                                             extent.height, 
                                             1);
-                    });
-                 
-                if(i == 5 && j == mip - 1) // 最后一级手动屏障 TODO
-                    passBuilder.OutputRead(specularTex);
-                passBuilder.Finish();
+                    })
+                    .Finish();
             }
         }   
     }

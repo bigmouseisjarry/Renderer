@@ -147,7 +147,7 @@ void QueueSchedule::assign_passes_to_queues(RDGDependencyGraphRef graph)
 
 // HEFT调度 /////////////////////////////////////////////////////////////////////////
 //
-// 取代classify（NodeType+白名单）+同层注册序的三重偶然分派（2026-09-11）：
+// 取代classify（NodeType+白名单）+同层注册序的三重偶然分派：
 //   ranku（关键链优先）+ EFT（各合格队列最早完成时间）+ 资源所有权表（EXCLUSIVE纹理跨族
 //   访问的互斥排队——异族访问须等当前持有者完成+同步开销）。
 // 调度完成后所有权链的相邻异族访问者对回写为SchedulingOrderEdge（RDGCompiler协调进Phase2
@@ -162,20 +162,12 @@ void QueueSchedule::schedule_with_heft(RDGDependencyGraphRef graph)
     const uint32_t queueCount = static_cast<uint32_t>(all_queues.size());
     if (queueCount == 0 || passes.empty()) return;
 
-    // ---- 调度数据：后继表（原lemon图遗迹已删——dag/passOf建成后零消费，算法全程手搓）----
-    // successors=Phase2反向依赖表（dependent_by_passes）逐pass拷贝：ranku DP与就绪集解锁用。
-    // 调度宇宙=本帧全量pass（含culled伪占位——isCulled对QueueSchedule不可见，Step A过滤；
-    // Phase2依赖边只引用本帧pass，入度直接取dependent_passes.size()无须成员过滤）
+    // ---- 调度数据：后继表
     std::unordered_map<RDGPassNodeRef, std::vector<RDGPassNodeRef>> successors; // pass到后继pass
     for (RDGPassNodeRef pass : passes)
         successors[pass] = dependency_analysis.get_dependent_by_passes(pass);
 
     // ---- 权重（快照化的历史耗时）----
-    // 快照法保证帧间决策确定——工程品质而非正确性必需：跨帧正确性已由结构保证（created=分槽
-    // 池只在N↔N+2复用+Tick帧栅栏挡住+帧末归巢回graphics族；imported=跨帧注册表细链wait上帧
-    // per-queue末触点+归巢点prologue承接），队列分配翻转不再有正确性后果。2026-09-12定案
-    // "分配无关，罪在隐形依赖边"，旧的"分配稳定性兜底跨帧WAR"叙事已推翻。
-    // 同图+同权重⇒ranku序/EFT/tie-break全确定性⇒同调度：可复现调试、QFO链/SSIS点不逐帧抖。
     // 快照每300帧刷新一次（刷新帧存在一次性重排迁移开销）
     static std::unordered_map<std::string, double> s_weightSnapshot;
     static uint32_t s_snapshotAge = 0;
@@ -337,9 +329,6 @@ void QueueSchedule::schedule_with_heft(RDGDependencyGraphRef graph)
         }
 
         // 分配滞后（跨帧槽共享的上帧分配表，主线程串行访问）：EFT差在阈值内保持上帧队列——
-        // 抑制EMA波动导致的分配逐帧翻转churn。纯稳定性选择，与正确性无关（created=槽池+
-        // 帧栅栏+帧末归巢、imported=注册表细链，分配翻转无正确性后果——2026-09-12
-        // "分配无关"定案的延伸）
         static std::unordered_map<std::string, uint32_t> s_lastAssignment;
         const std::string passName(v->Name());
         const auto lastIt = s_lastAssignment.find(passName);

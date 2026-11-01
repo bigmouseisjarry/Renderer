@@ -71,9 +71,9 @@ void RDGTexturePool::Release(const RDGTexturePool::PooledTexture& pooledTexture)
 }
 
 RDGTextureViewPool::PooledTextureView RDGTextureViewPool::Allocate(const RHITextureViewInfo& info)
-{   
-    RHITextureViewInfo actualInfo = info;   // RHI计算的时候也会用默认subresource替换，需要避免分配和返回的info不一致
-    if(actualInfo.subresource.aspect == TEXTURE_ASPECT_NONE)  actualInfo.subresource = actualInfo.texture->GetDefaultSubresourceRange();    
+{
+    RHITextureViewInfo actualInfo = info;
+    assert(actualInfo.subresource.aspect != TEXTURE_ASPECT_NONE);
 
     RDGTextureViewPool::PooledTextureView ret;
 

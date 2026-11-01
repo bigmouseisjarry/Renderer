@@ -35,11 +35,6 @@ public:
 
     void compile_and_execute(RDGDependencyGraphRef graph, RDGPerFrameResource* executor);
 
-    // 是否执行阶段6-8（绑定/屏障/录制，有真实副作用：池分配与命令录制）。
-    // 关闭时退回纯分析模式（阶段1-5，无副作用），由 RenderSystem 走旧路径 rdgBuilder->Execute()——
-    // 注意两条路径不能同时开启，否则同一命令流被录制两遍且描述符集泄漏
-    //bool enablePhaseExecution = true;
-
     const PassInfoAnalysis& GetPassInfoAnalysis() const { return passInfoAnalysis; }
     const PassDependencyAnalysis& GetPassDependencyAnalysis() const { return passDependencyAnalysis; }
     const QueueSchedule& GetQueueSchedule() const { return queueSchedule; }
@@ -49,8 +44,7 @@ public:
     const PassExecutionPhase& GetPassExecutionPhase() const { return passExecution; }
 
 private:
-    // 跨帧注册表（RenderSystem拥有，所有帧槽编译器共享同一实例——跨帧数据不能做编译器成员，
-    // 每槽一个实例会读到同槽上上帧（=帧N-1）的旧数据）。声明于各Phase之前：引用先于使用初始化
+    // 跨帧注册表（RenderSystem拥有，所有帧槽编译器共享同一实例
     RDGCrossFrameRegistry& crossFrameRegistry_;
 
     // pass历史耗时（EMA，RenderSystem的renderQuery；HEFT调度权重。跨帧槽共享——声明先于使用）

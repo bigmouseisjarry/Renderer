@@ -10,6 +10,8 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 class RDGBlackBoard
@@ -61,7 +63,6 @@ public:
     RDGCopyPassBuilder CreateCopyPass(std::string name);  
 
     RDGTextureHandle GetTexture(std::string name);
-    RDGTextureHandle FindTexture(const std::string& name);   // 静默查找：不存在返回无效句柄不告警（ReadIfValid配套，条件性资源的合法缺席）
     RDGBufferHandle GetBuffer(std::string name);
     RDGRenderPassHandle GetRenderPass(std::string name)             { return GetPass<RDGRenderPassNodeRef, RDGRenderPassHandle>(name); }
     RDGComputePassHandle GetComputePass(std::string name)           { return GetPass<RDGComputePassNodeRef, RDGComputePassHandle>(name); }
@@ -101,10 +102,10 @@ public:
     , texture(texture)
     , validationMode(validationMode) {};
 
-    // 布局动态记载制（2026-10-26）：Import不再声明稳态布局——Phase 7种子优先取registry记录
+    // 布局动态记载制：Import不再声明稳态布局——Phase 7种子优先取registry记录
     //（上帧末真实布局，逐子资源），initState仅作【首见兜底】（registry未命中=进程首见）。
     // 默认UNDEFINED（RDG出生纹理的真实初态）；RDG外出生带内容的资源用bornState重载
-    //（文件加载/预烘焙，如BRDF LUT）。旧"稳态声明契约"退役（调用点的末位触碰者考古注释作废）
+    //（文件加载/预烘焙，如BRDF LUT）。
     RDGTextureBuilder& Import(RHITextureRef texture);                                            // 首见兜底UNDEFINED
     RDGTextureBuilder& Import(RHITextureRef texture, RHIResourceState bornState);                // 首见兜底bornState（外部出生特案）
     RDGTextureBuilder& Exetent(Extent3D extent);
@@ -151,6 +152,8 @@ private:
     bool validationMode = false;
 };
 
+void AuditSet2ElementCoverage(RDGDependencyGraphRef graph, RDGPassNodeRef pass,const std::vector<ShaderResourceEntry>& entries, const std::string& passName);
+
 class RDGRenderPassBuilder
 {
 public:
@@ -162,18 +165,11 @@ public:
     RDGRenderPassBuilder& PassIndex(uint32_t x = 0, uint32_t y = 0, uint32_t z = 0);        // 给一个index设置函数方便给Execute传参
     RDGRenderPassBuilder& RootSignature(RHIRootSignatureRef rootSignature);                 // 若提供根签名未提供描述符，使用池化创建
     RDGRenderPassBuilder& Shaders(std::initializer_list<RHIShaderRef> shaders);
-    RDGRenderPassBuilder& Conditional(uint32_t set, uint32_t binding);                             // 刀7b-5：手动条件槽留痕（动态分支守护的静态访问，如view_z.comp的SETTING.side）              // 刀7b-5：声明本子pass的shader（严格边校验；共享RS多子pass形态必须声明，否则走RS聚合弱语义）
-    RDGRenderPassBuilder& DescriptorSet(uint32_t set, RHIDescriptorSetRef descriptorSet);   // 若提供了描述符，直接用相应的描述符
-    RDGRenderPassBuilder& Read(uint32_t set, uint32_t binding, uint32_t index, RDGBufferHandle buffer, uint32_t offset = 0, uint32_t size = 0, ResourceType type = RESOURCE_TYPE_UNIFORM_BUFFER);
+    // 仅服务NRD set0/1
     RDGRenderPassBuilder& Read(uint32_t set, uint32_t binding, uint32_t index, RDGTextureHandle texture, TextureViewType viewType = VIEW_TYPE_2D, TextureSubresourceRange subresource = {});
-    RDGRenderPassBuilder& ReadIfValid(uint32_t set, uint32_t binding, uint32_t index, const std::string& name, TextureViewType viewType = VIEW_TYPE_2D, TextureSubresourceRange subresource = {});  // 条件性资源：名字缺席则静默跳过
-    RDGRenderPassBuilder& ReadWrite(uint32_t set, uint32_t binding, uint32_t index, RDGBufferHandle buffer, uint32_t offset = 0, uint32_t size = 0);   // 好像和read也没什么区别？
     RDGRenderPassBuilder& ReadWrite(uint32_t set, uint32_t binding, uint32_t index, RDGTextureHandle texture, TextureViewType viewType = VIEW_TYPE_2D, TextureSubresourceRange subresource = {});
-    // S3:反射驱动描述符边——type/frequency由.Shaders()反射条目回填并校验(旧slotted Read/ReadWrite族仍在,S5b删)
-    RDGRenderPassBuilder& ReadTexture(uint32_t set, uint32_t binding, RDGTextureHandle texture, uint32_t index = 0, TextureViewType viewType = VIEW_TYPE_2D, TextureSubresourceRange subresource = {});
-    RDGRenderPassBuilder& ReadWriteTexture(uint32_t set, uint32_t binding, RDGTextureHandle texture, uint32_t index = 0, TextureViewType viewType = VIEW_TYPE_2D, TextureSubresourceRange subresource = {});
-    RDGRenderPassBuilder& ReadBuffer(uint32_t set, uint32_t binding, RDGBufferHandle buffer, uint32_t offset = 0, uint32_t size = 0, uint32_t index = 0);
-    RDGRenderPassBuilder& ReadWriteBuffer(uint32_t set, uint32_t binding, RDGBufferHandle buffer, uint32_t offset = 0, uint32_t size = 0, uint32_t index = 0);
+    RDGRenderPassBuilder& Read(uint32_t set, uint32_t binding, uint32_t index, RDGBufferHandle buffer, uint32_t offset = 0, uint32_t size = 0);
+    RDGRenderPassBuilder& ReadWrite(uint32_t set, uint32_t binding, uint32_t index, RDGBufferHandle buffer, uint32_t offset = 0, uint32_t size = 0);
     RDGRenderPassBuilder& Color(uint32_t binding, RDGTextureHandle texture,
                                 AttachmentLoadOp load = ATTACHMENT_LOAD_OP_DONT_CARE, 
                                 AttachmentStoreOp store = ATTACHMENT_STORE_OP_DONT_CARE, 
@@ -186,26 +182,19 @@ public:
 	                                    uint32_t clearStencil = 0,
                                         TextureSubresourceRange subresource = {});
     RDGRenderPassBuilder& Multiview(uint32_t multiviewCount);                                
-    RDGRenderPassBuilder& OutputRead(RDGBufferHandle buffer, uint32_t offset = 0, uint32_t size = 0);             // 在执行完Pass后作为输出，自动屏障，可能还会在其他地方使用
-    RDGRenderPassBuilder& OutputRead(RDGTextureHandle texture, TextureSubresourceRange subresource = {});    
     
     RDGRenderPassBuilder& Read(RDGBufferHandle buffer);                        // 图外buffer读取（shader读类别）
     RDGRenderPassBuilder& Read(RDGTextureHandle texture);                      // 图外纹理采样（per-frame set等）
-    RDGRenderPassBuilder& ReadIndirect(RDGBufferHandle buffer);                // 间接命令buffer（DrawIndirect固定功能抓取，与GPU Culling的OutputIndirectDraw产出状态对齐）
+    RDGRenderPassBuilder& ReadIndirect(RDGBufferHandle buffer);                // 间接命令buffer（DrawIndirect固定功能抓取，与GPU Culling的间接buffer产出状态对齐）
     RDGRenderPassBuilder& ReadAccelerationStructure(RDGBufferHandle buffer);   // ray query读AS
-    RDGRenderPassBuilder& OutputReadWrite(RDGBufferHandle buffer, uint32_t offset = 0, uint32_t size = 0);
-    RDGRenderPassBuilder& OutputReadWrite(RDGTextureHandle texture, TextureSubresourceRange subresource = {});  
     RDGRenderPassBuilder& Execute(const RDGPassExecuteFunc& execute);
     RDGRenderPassBuilder& AddFlag(const RDGPassFlags flag);
 
     RDGRenderPassHandle Finish()
     {
-        // 构建期完备性检查:set2反射入口必须全部被描述符边补齐
-        // (S3-S5过渡:仅对新边API已启用的pass生效,防止存量旧式边全库误杀;S5b拆门)
-        if (pass->bindingApiMigrated)
-            for (size_t i = 0; i < pass->set2Entries.size(); i++)
-                if (!pass->set2EntryDone[i])
-                    LOG_FATAL("pass[%s]: set2入口未补齐 binding=%u size=%u type=0x%x frequency=0x%x(着色器静态使用该槽位但无边)", pass->Name().c_str(), pass->set2Entries[i].binding, pass->set2Entries[i].size, pass->set2Entries[i].type, pass->set2Entries[i].frequency);
+        // S5-D（议题#2）：元素粒度覆盖对账接管本门（原条目级migrated-FATAL退役——WARN制取代）
+        if (pass->shadersDeclared)
+            AuditSet2ElementCoverage(graph, pass, pass->set2Entries, pass->Name());
         return pass->GetHandle();
     }
 
@@ -227,23 +216,15 @@ public:
     RDGComputePassBuilder& PassIndex(uint32_t x = 0, uint32_t y = 0, uint32_t z = 0);        // 给一个index设置函数方便给Execute传参
     RDGComputePassBuilder& RootSignature(RHIRootSignatureRef rootSignature);                 // 若提供根签名未提供描述符，使用池化创建
     RDGComputePassBuilder& Shaders(std::initializer_list<RHIShaderRef> shaders);
-    RDGComputePassBuilder& Conditional(uint32_t set, uint32_t binding);                             // 刀7b-5：手动条件槽留痕（动态分支守护的静态访问，如view_z.comp的SETTING.side）              // 刀7b-5：同上（严格边校验声明）
-    RDGComputePassBuilder& DescriptorSet(uint32_t set, RHIDescriptorSetRef descriptorSet);   // 若提供了描述符，直接用相应的描述符
-    RDGComputePassBuilder& Read(uint32_t set, uint32_t binding, uint32_t index, RDGBufferHandle buffer, uint32_t offset = 0, uint32_t size = 0, ResourceType type = RESOURCE_TYPE_UNIFORM_BUFFER);
-    RDGComputePassBuilder& Read(uint32_t set, uint32_t binding, uint32_t index, RDGTextureHandle texture, TextureViewType viewType = VIEW_TYPE_2D, TextureSubresourceRange subresource = {}); 
-    RDGComputePassBuilder& ReadIfValid(uint32_t set, uint32_t binding, uint32_t index, const std::string& name, TextureViewType viewType = VIEW_TYPE_2D, TextureSubresourceRange subresource = {});   // 条件性资源：名字缺席则静默跳过
-    RDGComputePassBuilder& ReadWrite(uint32_t set, uint32_t binding, uint32_t index, RDGBufferHandle buffer, uint32_t offset = 0, uint32_t size = 0);   // 好像和read也没什么区别？
+    RDGComputePassBuilder& ReadBuffer(uint32_t set, uint32_t binding, uint32_t index, RDGBufferHandle buffer, uint32_t offset = 0, uint32_t size = 0, ResourceType type = RESOURCE_TYPE_UNIFORM_BUFFER);
+    RDGComputePassBuilder& ReadTexture(uint32_t set, uint32_t binding, uint32_t index, RDGTextureHandle texture, TextureViewType viewType = VIEW_TYPE_2D, TextureSubresourceRange subresource = {});
+    RDGComputePassBuilder& ReadWriteTexture(uint32_t set, uint32_t binding, uint32_t index, RDGTextureHandle texture, TextureViewType viewType = VIEW_TYPE_2D, TextureSubresourceRange subresource = {});
+    
+    // 反射驱动描述符边——type/frequency由.Shaders()反射条目回填并校验
+    RDGComputePassBuilder& Read(uint32_t set, uint32_t binding, uint32_t index, RDGTextureHandle texture, TextureViewType viewType = VIEW_TYPE_2D, TextureSubresourceRange subresource = {});
     RDGComputePassBuilder& ReadWrite(uint32_t set, uint32_t binding, uint32_t index, RDGTextureHandle texture, TextureViewType viewType = VIEW_TYPE_2D, TextureSubresourceRange subresource = {});
-    // S3:反射驱动描述符边——type/frequency由.Shaders()反射条目回填并校验(旧slotted Read/ReadWrite族仍在,S5b删)
-    RDGComputePassBuilder& ReadTexture(uint32_t set, uint32_t binding, RDGTextureHandle texture, uint32_t index = 0, TextureViewType viewType = VIEW_TYPE_2D, TextureSubresourceRange subresource = {});
-    RDGComputePassBuilder& ReadWriteTexture(uint32_t set, uint32_t binding, RDGTextureHandle texture, uint32_t index = 0, TextureViewType viewType = VIEW_TYPE_2D, TextureSubresourceRange subresource = {});
-    RDGComputePassBuilder& ReadBuffer(uint32_t set, uint32_t binding, RDGBufferHandle buffer, uint32_t offset = 0, uint32_t size = 0, uint32_t index = 0);
-    RDGComputePassBuilder& ReadWriteBuffer(uint32_t set, uint32_t binding, RDGBufferHandle buffer, uint32_t offset = 0, uint32_t size = 0, uint32_t index = 0);
-    RDGComputePassBuilder& OutputRead(RDGBufferHandle buffer, uint32_t offset = 0, uint32_t size = 0);             // 在执行完Pass后作为输出，自动屏障，可能还会在其他地方使用
-    RDGComputePassBuilder& OutputRead(RDGTextureHandle texture, TextureSubresourceRange subresource = {});      
-    RDGComputePassBuilder& OutputReadWrite(RDGBufferHandle buffer, uint32_t offset = 0, uint32_t size = 0);
-    RDGComputePassBuilder& OutputReadWrite(RDGTextureHandle texture, TextureSubresourceRange subresource = {});  
-    RDGComputePassBuilder& OutputIndirectDraw(RDGBufferHandle buffer, uint32_t offset = 0, uint32_t size = 0);
+    RDGComputePassBuilder& Read(uint32_t set, uint32_t binding, uint32_t index, RDGBufferHandle buffer, uint32_t offset = 0, uint32_t size = 0);
+    RDGComputePassBuilder& ReadWrite(uint32_t set, uint32_t binding, uint32_t index, RDGBufferHandle buffer, uint32_t offset = 0, uint32_t size = 0);
     RDGComputePassBuilder& AddFlag(const RDGPassFlags flag);
 
     RDGComputePassBuilder& Read(RDGBufferHandle buffer);
@@ -255,12 +236,9 @@ public:
 
     RDGComputePassHandle Finish()
     {
-        // 构建期完备性检查:set2反射入口必须全部被描述符边补齐
-        // (S3-S5过渡:仅对新边API已启用的pass生效,防止存量旧式边全库误杀;S5b拆门)
-        if (pass->bindingApiMigrated)
-            for (size_t i = 0; i < pass->set2Entries.size(); i++)
-                if (!pass->set2EntryDone[i])
-                    LOG_FATAL("pass[%s]: set2入口未补齐 binding=%u size=%u type=0x%x frequency=0x%x(着色器静态使用该槽位但无边)", pass->Name().c_str(), pass->set2Entries[i].binding, pass->set2Entries[i].size, pass->set2Entries[i].type, pass->set2Entries[i].frequency);
+        // S5-D（议题#2）：元素粒度覆盖对账接管本门（原条目级migrated-FATAL退役——WARN制取代）
+        if (pass->shadersDeclared)
+            AuditSet2ElementCoverage(graph, pass, pass->set2Entries, pass->Name());
         return pass->GetHandle();
     }
 
@@ -282,39 +260,24 @@ public:
     RDGRayTracingPassBuilder& PassIndex(uint32_t x = 0, uint32_t y = 0, uint32_t z = 0);        // 给一个index设置函数方便给Execute传参
     RDGRayTracingPassBuilder& RootSignature(RHIRootSignatureRef rootSignature);                 // 若提供根签名未提供描述符，使用池化创建
     RDGRayTracingPassBuilder& Shaders(std::initializer_list<RHIShaderRef> shaders);
-    RDGRayTracingPassBuilder& Conditional(uint32_t set, uint32_t binding);                             // 刀7b-5：手动条件槽留痕（动态分支守护的静态访问，如view_z.comp的SETTING.side）              // 刀7b-5：同上（严格边校验声明）
-    RDGRayTracingPassBuilder& DescriptorSet(uint32_t set, RHIDescriptorSetRef descriptorSet);   // 若提供了描述符，直接用相应的描述符
-    RDGRayTracingPassBuilder& Read(uint32_t set, uint32_t binding, uint32_t index, RDGBufferHandle buffer, uint32_t offset = 0, uint32_t size = 0);
-    RDGRayTracingPassBuilder& Read(uint32_t set, uint32_t binding, uint32_t index, RDGTextureHandle texture, TextureViewType viewType = VIEW_TYPE_2D, TextureSubresourceRange subresource = {}); 
-    RDGRayTracingPassBuilder& ReadIfValid(uint32_t set, uint32_t binding, uint32_t index, const std::string& name, TextureViewType viewType = VIEW_TYPE_2D, TextureSubresourceRange subresource = {});  // 条件性资源：名字缺席则静默跳过
-    RDGRayTracingPassBuilder& ReadWrite(uint32_t set, uint32_t binding, uint32_t index, RDGBufferHandle buffer, uint32_t offset = 0, uint32_t size = 0);   // 好像和read也没什么区别？
+    RDGRayTracingPassBuilder& Read(uint32_t set, uint32_t binding, uint32_t index, RDGTextureHandle texture, TextureViewType viewType = VIEW_TYPE_2D, TextureSubresourceRange subresource = {});
     RDGRayTracingPassBuilder& ReadWrite(uint32_t set, uint32_t binding, uint32_t index, RDGTextureHandle texture, TextureViewType viewType = VIEW_TYPE_2D, TextureSubresourceRange subresource = {});
-    // S3:反射驱动描述符边——type/frequency由.Shaders()反射条目回填并校验(旧slotted Read/ReadWrite族仍在,S5b删)
-    RDGRayTracingPassBuilder& ReadTexture(uint32_t set, uint32_t binding, RDGTextureHandle texture, uint32_t index = 0, TextureViewType viewType = VIEW_TYPE_2D, TextureSubresourceRange subresource = {});
-    RDGRayTracingPassBuilder& ReadWriteTexture(uint32_t set, uint32_t binding, RDGTextureHandle texture, uint32_t index = 0, TextureViewType viewType = VIEW_TYPE_2D, TextureSubresourceRange subresource = {});
-    RDGRayTracingPassBuilder& ReadBuffer(uint32_t set, uint32_t binding, RDGBufferHandle buffer, uint32_t offset = 0, uint32_t size = 0, uint32_t index = 0);
-    RDGRayTracingPassBuilder& ReadWriteBuffer(uint32_t set, uint32_t binding, RDGBufferHandle buffer, uint32_t offset = 0, uint32_t size = 0, uint32_t index = 0);
-    RDGRayTracingPassBuilder& OutputRead(RDGBufferHandle buffer, uint32_t offset = 0, uint32_t size = 0);             // 在执行完Pass后作为输出，自动屏障，可能还会在其他地方使用
-    RDGRayTracingPassBuilder& OutputRead(RDGTextureHandle texture, TextureSubresourceRange subresource = {});
-    RDGRayTracingPassBuilder& OutputReadWrite(RDGBufferHandle buffer, uint32_t offset = 0, uint32_t size = 0);
-    RDGRayTracingPassBuilder& OutputReadWrite(RDGTextureHandle texture, TextureSubresourceRange subresource = {});
+    RDGRayTracingPassBuilder& Read(uint32_t set, uint32_t binding, uint32_t index, RDGBufferHandle buffer, uint32_t offset = 0, uint32_t size = 0);
+    RDGRayTracingPassBuilder& ReadWrite(uint32_t set, uint32_t binding, uint32_t index, RDGBufferHandle buffer, uint32_t offset = 0, uint32_t size = 0);
 
     RDGRayTracingPassBuilder& Read(RDGBufferHandle buffer);
     RDGRayTracingPassBuilder& Read(RDGTextureHandle texture);                  // 图外纹理采样（如阴影图）
     RDGRayTracingPassBuilder& ReadIndirect(RDGBufferHandle buffer);
     RDGRayTracingPassBuilder& ReadAccelerationStructure(RDGBufferHandle buffer);
+    RDGRayTracingPassBuilder& Write(RDGBufferHandle buffer, RHIResourceState state = RESOURCE_STATE_UNORDERED_ACCESS);
     RDGRayTracingPassBuilder& AddFlag(const RDGPassFlags flag);
 
     RDGRayTracingPassBuilder& Execute(const RDGPassExecuteFunc& execute);
 
     RDGRayTracingPassHandle Finish()
     {
-        // 构建期完备性检查:set2反射入口必须全部被描述符边补齐
-        // (S3-S5过渡:仅对新边API已启用的pass生效,防止存量旧式边全库误杀;S5b拆门)
-        if (pass->bindingApiMigrated)
-            for (size_t i = 0; i < pass->set2Entries.size(); i++)
-                if (!pass->set2EntryDone[i])
-                    LOG_FATAL("pass[%s]: set2入口未补齐 binding=%u size=%u type=0x%x frequency=0x%x(着色器静态使用该槽位但无边)", pass->Name().c_str(), pass->set2Entries[i].binding, pass->set2Entries[i].size, pass->set2Entries[i].type, pass->set2Entries[i].frequency);
+        if (pass->shadersDeclared)
+            AuditSet2ElementCoverage(graph, pass, pass->set2Entries, pass->Name());
         return pass->GetHandle();
     }
 
@@ -361,10 +324,6 @@ public:
     RDGCopyPassBuilder& To(RDGTextureHandle texture, TextureSubresourceLayers subresource = {});
     
     RDGCopyPassBuilder& GenerateMips();
-    RDGCopyPassBuilder& OutputRead(RDGBufferHandle buffer, uint32_t offset = 0, uint32_t size = 0);
-    RDGCopyPassBuilder& OutputRead(RDGTextureHandle texture, TextureSubresourceLayers subresource = {});
-    RDGCopyPassBuilder& OutputReadWrite(RDGBufferHandle buffer, uint32_t offset = 0, uint32_t size = 0);
-    RDGCopyPassBuilder& OutputReadWrite(RDGTextureHandle texture, TextureSubresourceLayers subresource = {});
     RDGCopyPassBuilder& AddFlag(const RDGPassFlags flag);
 
 private:

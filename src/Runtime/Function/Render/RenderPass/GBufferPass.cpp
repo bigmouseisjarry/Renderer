@@ -123,15 +123,15 @@ void GBufferPass::Build(RDGBuilder& builder)
         .Finish();
 
     RDGTextureHandle velocity = builder.CreateTexture("G-Buffer Velocity")
-        .Import(EngineContext::RenderResource()->GetVelocityTexture())    // 末位=thin的OutputRead（NRD读UAV）
+        .Import(EngineContext::RenderResource()->GetVelocityTexture())    // 末位=thin写，NRD读边收敛（需求侧）
         .Finish();
 
     RDGTextureHandle objectID = builder.CreateTexture("G-Buffer Object ID")
-        .Import(EngineContext::RenderResource()->GetObjectIDTexture())    // 末位=thin的OutputRead
+        .Import(EngineContext::RenderResource()->GetObjectIDTexture())    // 末位=thin写，读者边收敛
         .Finish();
 
     RDGTextureHandle historyObjectID = builder.CreateTexture("History G-Buffer Object ID")
-        .Import(EngineContext::RenderResource()->GetPrevObjectIDTexture()) // copy+OutputRead后全程只读（Reprojection）
+        .Import(EngineContext::RenderResource()->GetPrevObjectIDTexture()) // copy后全程只读（Reprojection读边收敛）
         .Finish();
 
     RDGTextureHandle historyNormal = builder.CreateTexture("History G-Buffer Normal/Roughness")
@@ -159,7 +159,7 @@ void GBufferPass::Build(RDGBuilder& builder)
         .Finish();
 
     RDGTextureHandle ior = builder.CreateTexture("G-Buffer IOR")
-        .Import(EngineContext::RenderResource()->GetIORTexture())          // 末位=DeferredLighting读（thin的OutputRead之后）
+        .Import(EngineContext::RenderResource()->GetIORTexture())          // 末位=DeferredLighting读（读者边收敛）
         .Finish();
 
     RDGTextureHandle depth = builder.GetTexture("Depth");
@@ -169,7 +169,6 @@ void GBufferPass::Build(RDGBuilder& builder)
         RDGCopyPassHandle copyPass0 = builder.CreateCopyPass(GetName() + " Copy Object ID")
             .From(objectID)
             .To(historyObjectID)
-            .OutputRead(historyObjectID)
             .Finish();
 
         RDGCopyPassHandle copyPass1 = builder.CreateCopyPass(GetName() + " Copy Normal")
@@ -192,7 +191,8 @@ void GBufferPass::Build(RDGBuilder& builder)
             .ReadIndirect(builder.GetBuffer("Mesh Draw Commands" + cmdIndex))
             .ReadIndirect(builder.GetBuffer("Clusrter Draw Commands" + cmdIndex))
             .RootSignature(rootSignature)     // 带根签名才会为下方set1声明生成池化描述符
-            .Read(2, SET2_BINDING_CLUSTER_DRAW_INFOS_READ, 0, builder.GetBuffer("Cluster Draw Infos" + cmdIndex), 0, 0, RESOURCE_TYPE_BUFFER)
+            .Shaders({vertexShader.shader, clusterVertexShader.shader, fragmentShader.shader})     // S5-C：聚合补声明（检测锚=引用shader使用面vs实际边）
+            .Read(2, SET2_BINDING_CLUSTER_DRAW_INFOS_READ, 0, builder.GetBuffer("Cluster Draw Infos" + cmdIndex), 0, 0)
             .Execute([&](RDGPassContext context) {
 
                 Extent2D windowExtent = EngineContext::Render()->GetWindowsExtent();
@@ -209,10 +209,6 @@ void GBufferPass::Build(RDGBuilder& builder)
                 // 这里吃掉Commands，所以gl_InstanceIndex = objectID
                 meshPassProcessor->Draw(command);
             })
-            .OutputRead(depth)  // 后续处理需要读深度
-            .OutputRead(velocity)
-            .OutputRead(objectID)
-            .OutputRead(ior)
             .Finish();
     }
 }

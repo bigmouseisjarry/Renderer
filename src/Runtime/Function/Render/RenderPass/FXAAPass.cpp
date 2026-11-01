@@ -12,7 +12,7 @@ void FXAAPass::Init()
     RHIRootSignatureInfo rootSignatureInfo = {};
     rootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetBindlessRootSignature()->GetInfo())   
                      .AddEntry(EngineContext::RenderResource()->GetSet2RootSignature()->GetInfo())       
-                     .AddPushConstant({128, SHADER_FREQUENCY_COMPUTE});
+                     .AddPushConstant({sizeof(uint32_t), SHADER_FREQUENCY_COMPUTE});
     rootSignature = backend->CreateRootSignature(rootSignatureInfo);
 
     RHIComputePipelineInfo pipelineInfo     = {};

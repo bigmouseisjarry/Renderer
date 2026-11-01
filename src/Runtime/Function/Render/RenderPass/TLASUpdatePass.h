@@ -7,7 +7,7 @@
 // 每帧一次的流水线停顿消失，TLAS成为图的真实依赖节点——目标B多队列时自动获得跨队列同步点）。
 //
 // 存储/实例/scratch buffer均为TLAS对象的持久成员，仅存储buffer以imported形式进图：
-//   本pass OutputReadWrite（产出边）+ RT pass的Dependency（虚拟读边）→
+//   本pass Write（产出边）+ RT pass的Dependency（虚拟读边）→
 //   拓扑排序保证本pass先于RT pass，屏障链自动生成为 [after] AS→UAV（等构建写）→ RT pass [before] UAV→SRV
 //
 // 注意：本pass必须在所有RT pass之前Build（PassType枚举序保证），RT pass经blackboard的

@@ -88,8 +88,8 @@ public:
 
     void GenerateMips(RHITextureRef src);
 
-	// TLAS构建录制（需先经RHI层PrepareUpdate完成CPU侧准备），录进当前命令流
-	void BuildTopLevelAccelerationStructure(RHITopLevelAccelerationStructureRef tlas);
+	// TLAS帧内构建/更新的唯一入口：instance写入+乒乓mode推导+构建录制一步完成（录进当前命令流）
+	void BuildTopLevelAccelerationStructure(RHITopLevelAccelerationStructureRef tlas, const std::vector<RHIAccelerationStructureInstanceInfo>& instances);
 
 	void PushEvent(const std::string& name, Color3 color = {0.0f, 0.0f, 0.0f});
 
@@ -340,9 +340,11 @@ struct RHICommandGenerateMips : public RHICommand
 struct RHICommandBuildTLAS : public RHICommand
 {
     RHITopLevelAccelerationStructureRef tlas;
+    std::vector<RHIAccelerationStructureInstanceInfo> instances;    // 按值持有：回放时manager侧数据可能已被下帧重写
 
-    RHICommandBuildTLAS(RHITopLevelAccelerationStructureRef tlas)
+    RHICommandBuildTLAS(RHITopLevelAccelerationStructureRef tlas, const std::vector<RHIAccelerationStructureInstanceInfo>& instances)
     : tlas(tlas)
+    , instances(instances)
     {}
 
     virtual void Execute(RHICommandContextRef context) override final;

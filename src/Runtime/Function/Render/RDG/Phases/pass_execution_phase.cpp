@@ -175,7 +175,7 @@ void PassExecutionPhase::build_queue_streams(RDGDependencyGraphRef graph, PerFra
 
     activeQueues_.clear();
     for (uint32_t q = 0; q < streams_.size(); q++)
-        // 刀2b：有pass，或为某悬空起点的挂靠队列（owner队列本帧无pass时也须激活——QFO release
+        // 有pass，或为某悬空起点的挂靠队列（owner队列本帧无pass时也须激活——QFO release
         // 必须发在owner族的队列上，Step B会给它一条空prologue批）
         if (!streams_[q].passes.empty() || queue_has_dangling(q, executor))
             activeQueues_.push_back(q);
@@ -222,7 +222,7 @@ void PassExecutionPhase::split_submit_batches(PerFrameCommonResourceRef executor
             continue;
         }
 
-        // 刀C防御补全：流首pass含帧首跨族acquire且本队列有悬空——先垫一条空prologue批承载
+        // 流首pass含帧首跨族acquire且本队列有悬空——先垫一条空prologue批承载
         // 悬空release。主循环的guard-acquire-dangling守卫只对i>0生效（i==0无法"切批前移"），
         // 不垫批则该acquire落在sortKey=0段、与对方prologue批互序无定义（审计②当场断言）
         if (queue_has_dangling(q, executor))
@@ -250,10 +250,10 @@ void PassExecutionPhase::split_submit_batches(PerFrameCommonResourceRef executor
         auto foldNodeWaits = [&waitedMax](const RDGSyncNode* node)
         {
             if (node == nullptr) return;
-            for (const auto& [timeline, value] : node->waits)
+            for (const RDGSyncNode::WaitEntry& wait : node->waits)
             {
-                uint64_t& slot = waitedMax[timeline.get()];
-                slot = std::max(slot, value);
+                uint64_t& slot = waitedMax[wait.timeline.get()];
+                slot = std::max(slot, wait.value);
             }
         };
 
@@ -285,13 +285,13 @@ void PassExecutionPhase::split_submit_batches(PerFrameCommonResourceRef executor
                     // 执行序，等不过=读到未写完的数据）
                     if (node != nullptr)
                     {
-                        for (const auto& [timeline, value] : node->waits)
+                        for (const RDGSyncNode::WaitEntry& wait : node->waits)
                         {
-                            auto it = waitedMax.find(timeline.get());
-                            if (it == waitedMax.end() || value > it->second)
+                            auto it = waitedMax.find(wait.timeline.get());
+                            if (it == waitedMax.end() || wait.value > it->second)
                             {
                                 mustOpen = true;
-                                reason = (timeline == executor->queueSlots[q].timeline) ? "guard-own-timeline" : "guard-wait";
+                                reason = (wait.timeline == executor->queueSlots[q].timeline) ? "guard-own-timeline" : "guard-wait";
                                 break;
                             }
                         }
@@ -466,8 +466,16 @@ void PassExecutionPhase::build_submit_plan(PerFrameCommonResourceRef executor)
             RHIQueueSubmitBatch submitBatch;
             submitBatch.queue = executor->queueSlots[q].queue;
 
-            // 聚合：批内全体pass（b==0时含悬空起点）——waits逐时间线max / signal逐时间线max
-            std::unordered_map<RHISemaphoreRef, uint64_t> batchWaits;
+            // 聚合：批内全体pass（b==0时含悬空起点）——waits逐时间线{max值,usages并集} /
+            // signal逐时间线max。usages并集=批级wait窄化账目（同state按位OR frequency，推导线性
+            // 合并精确）；任一贡献节点usages为空（悬空registry种子）→该线unknown=回退宽掩码
+            struct BatchWait
+            {
+                uint64_t value = 0;
+                bool unknown = false;
+                std::vector<std::pair<RHIResourceState, uint32_t>> usages;
+            };
+            std::unordered_map<RHISemaphoreRef, BatchWait> batchWaits;
             std::unordered_map<RHISemaphoreRef, uint64_t> batchSignals;
             auto foldNode = [&](const RDGSyncNode& node)
             {
@@ -476,10 +484,18 @@ void PassExecutionPhase::build_submit_plan(PerFrameCommonResourceRef executor)
                     uint64_t& s = batchSignals[node.signal.first];
                     s = std::max(s, node.signal.second);
                 }
-                for (const auto& [timeline, value] : node.waits)
+                for (const RDGSyncNode::WaitEntry& entry : node.waits)
                 {
-                    uint64_t& w = batchWaits[timeline];
-                    w = std::max(w, value);
+                    BatchWait& bw = batchWaits[entry.timeline];
+                    bw.value = std::max(bw.value, entry.value);
+                    if (entry.usages.empty()) { bw.unknown = true; continue; }
+                    for (const auto& [state, frequency] : entry.usages)
+                    {
+                        bool merged = false;
+                        for (auto& usage : bw.usages)
+                            if (usage.first == state) { usage.second |= frequency; merged = true; break; }
+                        if (!merged) bw.usages.emplace_back(state, frequency);
+                    }
                 }
             };
             for (uint32_t i = batch.begin; i < batch.end; i++)
@@ -490,10 +506,6 @@ void PassExecutionPhase::build_submit_plan(PerFrameCommonResourceRef executor)
                     foldNode(*dangling);
 
 #if ENABLE_RDG_AUDIT
-            // 刀B：吞批禁令断言——批内含本队列时间线的signal工作（有pass/悬空要公示完成）但
-            // own值≤此前已发射值 = 值序与提交序倒挂（前批发射值越过本批工作的值，等待者会被
-            // 提前放行——syncval 980条hazard案的病根形态，2026-10-28）。构造上已被悬空signal
-            // 低位预分配（prebuild_dangling_starts）杜绝，此断言为该不变量的永久防线
             {
                 const RHISemaphoreRef& ownTl = executor->queueSlots[q].timeline;
                 auto ownIt = batchSignals.find(ownTl);
@@ -507,17 +519,21 @@ void PassExecutionPhase::build_submit_plan(PerFrameCommonResourceRef executor)
             }
 #endif
 
-            // waits：值级支配去重后发射。宽掩码：wait聚合自多资源多用途，stage无从收窄（窄化是性能债）
-            for (const auto& [timeline, value] : batchWaits)
+            // waits：值级支配去重后发射。：waitUsages=批内贡献者(state,frequency)
+            // 并集→后端逐对展开精确stage掩码；unknown(悬空种子贡献)或空集→waitState=UNDEFINED宽展开旧路
+            for (auto& [timeline, bw] : batchWaits)
             {
                 uint64_t& maxWaited = waitedMax[timeline];
-                if (value <= maxWaited) continue;
-                maxWaited = value;
+                if (bw.value <= maxWaited) continue;
+                maxWaited = bw.value;
                 RHISemaphoreWaitInfo wait{};
                 wait.semaphore = timeline;
-                wait.value = value;
+                wait.value = bw.value;
                 wait.isTimeline = true;
                 wait.waitState = RESOURCE_STATE_UNDEFINED;
+                if (!bw.unknown)
+                    for (const auto& [state, frequency] : bw.usages)
+                        wait.waitUsages.push_back({ state, frequency });
                 submitBatch.waits.push_back(wait);
             }
 
@@ -825,7 +841,7 @@ void PassExecutionPhase::record_all(RDGDependencyGraphRef graph, PerFrameCommonR
         const uint32_t begin = pieces[p].begin;
         const uint32_t end = pieces[p].end;
         // 对照实验：恢复piece0的悬空emit（合批形态——(a)验收绿版结构）
-        // 刀C：归属改判"该队列首条批"（batchIndex==0）——空prologue垫批后首条实批begin同为0，
+        // 归属改判"该队列首条批"（batchIndex==0）——空prologue垫批后首条实批begin同为0，
         // 旧begin==0判定会双发release（第二条无配对acquire）
         const bool prologuePiece = pieces[p].batchIndex == 0 && queue_has_dangling(q, executor);
         EngineContext::ThreadPool()->AddQueuedWork([this, graph, executor, q, begin, end, command, prologuePiece]()
@@ -834,7 +850,6 @@ void PassExecutionPhase::record_all(RDGDependencyGraphRef graph, PerFrameCommonR
             if (prologuePiece)
                 if (const RDGSyncNode* dangling = queue_dangling_node(q, executor))
                 {
-                    // [DanglingEmit]取证日志已删（2026-10-28收尾：布局案结案）
                     for (const auto& barrierBatch : dangling->batches)
                         for (const RDGBarrier& barrier : barrierBatch.barriers)
                             emit_barrier(command, barrier);
@@ -852,7 +867,7 @@ void PassExecutionPhase::record_all(RDGDependencyGraphRef graph, PerFrameCommonR
     for (uint32_t q : activeQueues_)
     {
         uint32_t serialCursor = 0;
-        for (uint32_t b = 0; b < batches_[q].size(); b++)   // 刀C：悬空emit归属=首条批（b==0），begin==0在垫批后会双发
+        for (uint32_t b = 0; b < batches_[q].size(); b++)   
         {
             StreamBatch& batch = batches_[q][b];
             if (!batch.serial) continue;
@@ -862,7 +877,6 @@ void PassExecutionPhase::record_all(RDGDependencyGraphRef graph, PerFrameCommonR
             if (b == 0 && queue_has_dangling(q, executor))
                 if (const RDGSyncNode* dangling = queue_dangling_node(q, executor))
                 {
-                    // [DanglingEmit]取证日志已删（2026-10-28收尾：布局案结案）
                     for (const auto& barrierBatch : dangling->batches)
                         for (const RDGBarrier& barrier : barrierBatch.barriers)
                             emit_barrier(command, barrier);
@@ -1046,15 +1060,18 @@ void PassExecutionPhase::execute_present_pass(RDGDependencyGraphRef graph, PerFr
     {
         presentTexture = edges[0].node;
         texture = edges[1].node;
-        subresource = edges[1].edge->subresource.aspect == TEXTURE_ASPECT_NONE ?
-            binding_phase_.get_texture(texture)->GetDefaultSubresourceLayers() : edges[1].edge->subresourceLayer;
+        // 边subrange已统一Range并在Analysis期展开——回转Layers（RHI copy族单mip契约）供CopyTexture
+        const TextureSubresourceRange& sub = edges[1].edge->subresource;
+        assert(sub.levelCount == 1);
+        subresource = { sub.aspect, sub.baseMipLevel, sub.baseArrayLayer, sub.layerCount };
     }
     else
     {
         presentTexture = edges[1].node;
         texture = edges[0].node;
-        subresource = edges[0].edge->subresource.aspect == TEXTURE_ASPECT_NONE ?
-            binding_phase_.get_texture(texture)->GetDefaultSubresourceLayers() : edges[0].edge->subresourceLayer;
+        const TextureSubresourceRange& sub = edges[0].edge->subresource;
+        assert(sub.levelCount == 1);
+        subresource = { sub.aspect, sub.baseMipLevel, sub.baseArrayLayer, sub.layerCount };
     }
 
     // swapchain图像的手工屏障循环（pass内动态屏障，通用屏障由阶段7生成）
@@ -1093,15 +1110,18 @@ void PassExecutionPhase::execute_copy_pass(RDGDependencyGraphRef graph, PerFrame
     });
 
     graph->ForEachTexture(pass, [&](RDGTextureEdgeRef edge, RDGTextureNodeRef texture) {
+        // 边subrange已统一Range（levelCount=1冻结单mip）并在Analysis期展开——回转Layers供RHI copy族
+        const TextureSubresourceRange& sub = edge->subresource;
+        assert(sub.levelCount == 1);
         if (edge->asTransferSrc)
         {
             textureFrom = texture;
-            fromSubresource = edge->subresourceLayer;
+            fromSubresource = { sub.aspect, sub.baseMipLevel, sub.baseArrayLayer, sub.layerCount };
         }
         else if (edge->asTransferDst)
         {
             textureTo = texture;
-            toSubresource = edge->subresourceLayer;
+            toSubresource = { sub.aspect, sub.baseMipLevel, sub.baseArrayLayer, sub.layerCount };
         }
     });
 
@@ -1140,7 +1160,7 @@ void PassExecutionPhase::execute_copy_pass(RDGDependencyGraphRef graph, PerFrame
 
 // 屏障发射 /////////////////////////////////////////////////////////////////////
 
-// 悬空起点辅助（刀2b）：挂靠判定=时间线对象匹配（悬空节点的signal发在其挂靠队列的时间线上）
+// 悬空起点辅助：挂靠判定=时间线对象匹配（悬空节点的signal发在其挂靠队列的时间线上）
 bool PassExecutionPhase::queue_has_dangling(uint32_t q, PerFrameCommonResourceRef executor) const
 {
     return queue_dangling_node(q, executor) != nullptr;
@@ -1168,7 +1188,9 @@ void PassExecutionPhase::emit_barrier(RHICommandListRef command, const RDGBarrie
             barrier.after_state,
             barrier.subresource,
             barrier.src_family,
-            barrier.dst_family });
+            barrier.dst_family,
+            barrier.src_frequency,
+            barrier.dst_frequency });
     }
     else
     {
@@ -1177,7 +1199,11 @@ void PassExecutionPhase::emit_barrier(RHICommandListRef command, const RDGBarrie
             barrier.before_state,
             barrier.after_state,
             barrier.buffer_offset,
-            barrier.buffer_size });
+            barrier.buffer_size,
+            barrier.src_family,
+            barrier.dst_family,
+            barrier.src_frequency,
+            barrier.dst_frequency });
     }
     recording_result_.total_barriers_inserted.fetch_add(1, std::memory_order_relaxed);
 }
@@ -1206,7 +1232,7 @@ void PassExecutionPhase::collect_in_frame_acquire_guards(RDGPassNodeRef pass,std
     // 帧内acquire（after_pass=false且source_pass有效）：source_pass即配对release的挂载pass
     //（发射侧：release挂tracker.last_pass之后、acquire挂消费者之前，二者source_pass同源），
     // source_queue即release所在队列。帧首acquire（source_pass==nullptr，配对release=悬空
-    // 节点的prologue屏障，刀C起import同走此路）以哨兵(nullptr,queue)上报——StepB据此把
+    // 节点的prologue屏障以哨兵(nullptr,queue)上报——StepB据此把
     // 含它的pass切出sortKey=0的prologue批（prologue批间互序无定义，acquire须在topo+1段）
     for (const auto& batch : node->batches)
         for (const RDGBarrier& barrier : batch.barriers)
@@ -1228,13 +1254,13 @@ void PassExecutionPhase::release_sweep(RDGDependencyGraphRef graph, const std::v
 
 void PassExecutionPhase::release_at_last_use(RDGDependencyGraphRef graph, RDGPassNodeRef pass)
 {
-    // 归还族=tracker终态真末族（池化悬空承接制 2026-10-26，Q4记族）：下帧首触同族零转移、
+    // 归还族=tracker终态真末族：下帧首触同族零转移、
     // 跨族由悬空起点承接（种子族=池记族）。import不在此路径（release_texture短路IsImported）。
     // CONCURRENT恒IGNORED
     graph->ForEachTexture(pass, [&](RDGTextureEdgeRef edge, RDGTextureNodeRef texture) {
         // 记录tracker终态（GPU实际布局）而非边声明状态——池化跨帧状态必须与实际一致，
         // 否则下一帧initState错位会漏屏障（layout错误）
-        if (binding_phase_.is_last_use(texture, pass, edge->IsOutput()))
+        if (binding_phase_.is_last_use(texture, pass))
         {
             const uint32_t fam = texture->info.sharingMode == RESOURCE_SHARING_TYPE_CONCURRENT
                 ? RHI_QUEUE_FAMILY_IGNORED : barrier_generation_phase_.get_final_texture_family(texture);
@@ -1243,7 +1269,7 @@ void PassExecutionPhase::release_at_last_use(RDGDependencyGraphRef graph, RDGPas
         });
 
     graph->ForEachBuffer(pass, [&](RDGBufferEdgeRef edge, RDGBufferNodeRef buffer) {
-        if (binding_phase_.is_last_use(buffer, pass, edge->IsOutput()))
+        if (binding_phase_.is_last_use(buffer, pass))
             release_buffer(buffer, barrier_generation_phase_.get_final_buffer_state(buffer));
         });
 

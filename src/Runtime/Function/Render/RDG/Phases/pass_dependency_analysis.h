@@ -13,7 +13,7 @@ struct ResourceDependency {
     RHIResourceState previous_state;                // 上一个pass时该资源处于的state
 };
 
-// 逻辑拓扑分析结果。注意两个生产点的分工（2026-10-24瘦身定案）：
+// 逻辑拓扑分析结果。注意两个生产点的分工：
 //   预排序（perform_logical_topological_sort_optimized）只产出logical_topological_order——
 //   反正调度后apply_schedule_order会整套覆盖，预排序阶段的级别/关键路径纯属白算，
 //   唯一预调度消费者是HEFT ranku的逆拓扑DP；
@@ -93,9 +93,6 @@ public:
     // ---- HEFT回写接口（QueueSchedule.on_execute末尾调用——调度完成后立即回写）----
     // 追加所有权链序边（幂等：pass对+资源去重；边的state对从pass_info_analysis的实际访问取）
     void add_scheduling_order_edges(const std::vector<SchedulingOrderEdge>& edges);
-    // 按HEFT全局调度序重建拓扑（序本身合法——就绪集保证前驱在前）。下游生命期/tracker/SSIS
-    // 均假设"拓扑序=执行序"：Kahn重算的同层哈希序与调度序不一致会造成生命期区间错位
-    //（间歇竞态），故以调度序为唯一权威序
     void apply_schedule_order(const std::vector<RDGPassNodeRef>& order);
 
     // Debug 输出

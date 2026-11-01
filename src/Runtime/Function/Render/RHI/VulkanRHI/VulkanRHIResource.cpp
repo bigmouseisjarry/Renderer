@@ -95,7 +95,7 @@ void VulkanRHIRenderQuery::ResolveFrame(uint32_t slot)
 		chainNames[q].assign(count, {});
 		for (uint32_t i = 0; i < count; i++) chainNames[q][i] = names[base + i];
 
-		// per-pass执行时长EMA（HEFT调度权重，2026-09-11）：exec对=ts[2i+1]-ts[2i]（不含等待，
+		// per-pass执行时长EMA：exec对=ts[2i+1]-ts[2i]（不含等待，
 		// 等待由调度器自己建模）。首采样直接采纳，之后alpha=0.25滑动；名字含实例index帧间稳定
 		for (uint32_t i = 0; i * 2 + 1 < count; i++)
 		{
@@ -680,6 +680,7 @@ void VulkanRHITexture::Destroy()
 VulkanRHITextureView::VulkanRHITextureView(const RHITextureViewInfo& info, VulkanRHIBackend& backend)
 : RHITextureView(info)
 {
+    //bindless/材质等非RDG路径，{}=合法"整纹理view"声明语义；RDG边路径已在PassInfoAnalysis展开具体值，不再走到本兜底
     if(info.subresource.aspect == TEXTURE_ASPECT_NONE)  this->info.subresource = info.texture->GetDefaultSubresourceRange();
 
     if((info.viewType == VIEW_TYPE_1D || info.viewType == VIEW_TYPE_2D || info.viewType == VIEW_TYPE_3D) &&
@@ -1073,47 +1074,46 @@ VulkanRHITopLevelAccelerationStructure::VulkanRHITopLevelAccelerationStructure(c
         .size = sizeof(VkAccelerationStructureInstanceKHR) * info.maxInstance,
         .memoryUsage = MEMORY_USAGE_CPU_TO_GPU,
         .type = RESOURCE_TYPE_RW_BUFFER | RESOURCE_TYPE_RAY_TRACING,
-        .creationFlag = BUFFER_CREATION_PERSISTENT_MAP}); 
+        .creationFlag = BUFFER_CREATION_PERSISTENT_MAP});
 
-    // 0. 数据结构
+    // 0. 数据结构（局部量：单函数构建后无跨阶段状态，不再作为成员保存）
     // 填充顶层加速结构使用的几何信息（只有一个），使用的图元是VK_GEOMETRY_TYPE_INSTANCES_KHR
-    accelerationStructureGeometry = {};
-    accelerationStructureGeometry.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
-    accelerationStructureGeometry.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
-    accelerationStructureGeometry.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
-    accelerationStructureGeometry.geometry.instances.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
-    accelerationStructureGeometry.geometry.instances.arrayOfPointers = VK_FALSE;
-    accelerationStructureGeometry.geometry.instances.data.deviceAddress = VulkanUtil::GetBufferDeviceAddress(ResourceCast(instanceBuffer)->GetHandle(), Backend()->GetLogicalDevice());
+    VkAccelerationStructureGeometryKHR geometry = {};
+    geometry.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+    geometry.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
+    geometry.flags = 0;
+    geometry.geometry.instances.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
+    geometry.geometry.instances.arrayOfPointers = VK_FALSE;
+    geometry.geometry.instances.data.deviceAddress = VulkanUtil::GetBufferDeviceAddress(ResourceCast(instanceBuffer)->GetHandle(), backend.GetLogicalDevice());
 
-    // 构建加速结构的信息
-    accelerationStructureBuildGeometryInfo = {};
-    accelerationStructureBuildGeometryInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
-    accelerationStructureBuildGeometryInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;			// 顶层
-    accelerationStructureBuildGeometryInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR | VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_BUILD_BIT_KHR;
-    accelerationStructureBuildGeometryInfo.geometryCount = 1;											// 只有一个几何信息，就是顶层的
-    accelerationStructureBuildGeometryInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;       // 构建
-    accelerationStructureBuildGeometryInfo.pGeometries = &accelerationStructureGeometry;
-    accelerationStructureBuildGeometryInfo.srcAccelerationStructure = VK_NULL_HANDLE;
-    accelerationStructureBuildGeometryInfo.dstAccelerationStructure = VK_NULL_HANDLE;
+    // 构建加速结构的信息（flags为UPDATE契约值，逐帧不可变）
+    VkAccelerationStructureBuildGeometryInfoKHR buildGeometryInfo = {};
+    buildGeometryInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+    buildGeometryInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;			// 顶层
+    buildGeometryInfo.flags = VulkanUtil::RHIBuildFlagsToVk(info.flags);
+    buildGeometryInfo.geometryCount = 1;											// 只有一个几何信息，就是顶层的
+    buildGeometryInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;       // 构建
+    buildGeometryInfo.pGeometries = &geometry;
+    buildGeometryInfo.srcAccelerationStructure = VK_NULL_HANDLE;
+    buildGeometryInfo.dstAccelerationStructure = VK_NULL_HANDLE;
 
-    // 1. 获取需要分配的buffer的尺寸信息
+    // 1. 获取需要分配的buffer的尺寸信息（按maxInstance超额分配）
     VkAccelerationStructureBuildSizesInfoKHR buildSize = {};
     buildSize.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
-    {    
+    {
         uint32_t primitiveCount = info.maxInstance;
 
-        //获取buffer尺寸，在下面进行分配
         vkGetAccelerationStructureBuildSizesKHR(
-            Backend()->GetLogicalDevice(),
+            backend.GetLogicalDevice(),
             VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR,
-            &accelerationStructureBuildGeometryInfo,
-            &primitiveCount,			
+            &buildGeometryInfo,
+            &primitiveCount,
             &buildSize);
     }
 
     // 2. 创建加速结构
     {
-        accelerationStructureBuffer = Backend()->CreateBuffer({
+        accelerationStructureBuffer = backend.CreateBuffer({
             .size = buildSize.accelerationStructureSize,
             .memoryUsage = MEMORY_USAGE_GPU_ONLY,
             .type = RESOURCE_TYPE_RAY_TRACING,
@@ -1127,7 +1127,7 @@ VulkanRHITopLevelAccelerationStructure::VulkanRHITopLevelAccelerationStructure(c
         createInfo.offset = 0;
 
         // 此处仅创建了加速结构，并没有实际构建（分配了空间，还没往里填数据）
-        if (vkCreateAccelerationStructureKHR(Backend()->GetLogicalDevice(), &createInfo, nullptr, &handle) != VK_SUCCESS)
+        if (vkCreateAccelerationStructureKHR(backend.GetLogicalDevice(), &createInfo, nullptr, &handle) != VK_SUCCESS)
         {
             LOG_FATAL("Failed to create Acceleration Structure!");
         }
@@ -1136,91 +1136,48 @@ VulkanRHITopLevelAccelerationStructure::VulkanRHITopLevelAccelerationStructure(c
         VkAccelerationStructureDeviceAddressInfoKHR accelerationDeviceAddressInfo{};
         accelerationDeviceAddressInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
         accelerationDeviceAddressInfo.accelerationStructure = handle;
-        address = vkGetAccelerationStructureDeviceAddressKHR(Backend()->GetLogicalDevice(), &accelerationDeviceAddressInfo);
+        address = vkGetAccelerationStructureDeviceAddressKHR(backend.GetLogicalDevice(), &accelerationDeviceAddressInfo);
     }
 
-    // 3. 创建构建过程需要使用的scratch buffer
+    // 3. 创建构建过程需要使用的scratch buffer（UPDATE的scratch可大于BUILD的，取大者）
     {
-        scratchBuffer = Backend()->CreateBuffer({
-            .size = buildSize.buildScratchSize,
+        uint32_t scratchSize = buildSize.updateScratchSize > buildSize.buildScratchSize ?
+                                buildSize.updateScratchSize : buildSize.buildScratchSize;
+        scratchBuffer = backend.CreateBuffer({
+            .size = scratchSize,
             .memoryUsage = MEMORY_USAGE_CPU_TO_GPU,
             .type = RESOURCE_TYPE_RW_BUFFER,
             .creationFlag = BUFFER_CREATION_PERSISTENT_MAP | BUFFER_CREATION_FORCE_ALIGNMENT}); // scratch buffer有内存对齐的要求
     }
 
-    Update(this->info.instanceInfos, true);
-    this->info.instanceInfos.clear();
-}
-
-void VulkanRHITopLevelAccelerationStructure::Update(const std::vector<RHIAccelerationStructureInstanceInfo>& instanceInfos, bool build)
-{
-    // 立即路径：准备 + immediate录制 + 独立提交（仅构造期的一次性空构建等场景；
-    // 帧内路径用 PrepareUpdate + RecordBuild 经RDG命令流录制，不再有独立提交）
-    PrepareUpdate(instanceInfos, build);
-
-    auto immediateCommandContest = Backend()->GetImmediateCommandContest();
-    RecordBuild(immediateCommandContest->GetHandle());
-    immediateCommandContest->Flush();
-}
-
-void VulkanRHITopLevelAccelerationStructure::PrepareUpdate(const std::vector<RHIAccelerationStructureInstanceInfo>& instanceInfos, bool build)
-{
-    bool update = (handle == VK_NULL_HANDLE || build) ? false : true;   // 这个build标志位可不可以在内部自动推导？TODO
-
-    std::vector<VkAccelerationStructureInstanceKHR> blasInstances;
-    for(int i = 0; i < instanceInfos.size(); i++)
+    // 4. 空instance BUILD（inline原始录制，BLAS构造同构姿势）：占住"已构建"合法态，
+    //    禁用TLASUpdatePass时描述符绑定的AS仍有效；首帧行为与无空BUILD等价（instance数≠0必降级BUILD）
     {
-        blasInstances.push_back(VulkanUtil::AccelerationStructureInstanceInfoToVk(instanceInfos[i]));
+        buildGeometryInfo.dstAccelerationStructure = handle;
+        buildGeometryInfo.scratchData.deviceAddress = VulkanUtil::GetBufferDeviceAddress(ResourceCast(scratchBuffer)->GetHandle(), backend.GetLogicalDevice());
+
+        VkAccelerationStructureBuildRangeInfoKHR buildRangeInfo = {};
+        buildRangeInfo.primitiveCount = 0;
+        buildRangeInfo.primitiveOffset = 0;
+        buildRangeInfo.firstVertex = 0;
+        buildRangeInfo.transformOffset = 0;
+        const VkAccelerationStructureBuildRangeInfoKHR* pBuildRange = &buildRangeInfo;
+
+        auto immediateCommandContest = backend.GetImmediateCommandContest();
+        vkCmdBuildAccelerationStructuresKHR(
+            immediateCommandContest->GetHandle(),
+            1,
+            &buildGeometryInfo,
+            &pBuildRange);     //在这个指令处真正完成构建
+        immediateCommandContest->Flush();
+
+        hasContent = true;     // lastBuildCount = 0
     }
-    memcpy(instanceBuffer->Map(), blasInstances.data(), blasInstances.size() * sizeof(VkAccelerationStructureInstanceKHR));
-
-    // 补齐构建所需的信息（构建模式、目标加速结构、scratch buffer地址、实例数量）
-    accelerationStructureBuildGeometryInfo.mode = update ?
-                                                    VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR :
-                                                    VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
-    accelerationStructureBuildGeometryInfo.srcAccelerationStructure = update ?
-                                                                            handle:
-                                                                            VK_NULL_HANDLE;
-    accelerationStructureBuildGeometryInfo.dstAccelerationStructure = handle;
-    accelerationStructureBuildGeometryInfo.scratchData.deviceAddress = VulkanUtil::GetBufferDeviceAddress(ResourceCast(scratchBuffer)->GetHandle(), Backend()->GetLogicalDevice());
-
-    accelerationStructureBuildRangeInfo = {};
-    accelerationStructureBuildRangeInfo.primitiveCount = instanceInfos.size();
-    accelerationStructureBuildRangeInfo.primitiveOffset = 0;
-    accelerationStructureBuildRangeInfo.firstVertex = 0;
-    accelerationStructureBuildRangeInfo.transformOffset = 0;
 }
 
-void VulkanRHITopLevelAccelerationStructure::RecordBuild(VkCommandBuffer commandBuffer)
+void VulkanRHITopLevelAccelerationStructure::SetPeer(RHITopLevelAccelerationStructureRef peerRef)
 {
-    // 刀5定罪修复（2026-10-19晚）：scratch buffer跨帧复用的WAW——同队列submit间无隐式执行序，
-    // 帧N/N+1的build可并发写同一scratch（sync validation 175/175实锤）→TLAS损坏→RT噪点+nvlddmkm fault。
-    // refit模式下帧N+1还读帧N写的AS本体，故另加全局memory barrier覆盖opaque AS内存。
-    VkBufferMemoryBarrier scratchBarrier{};
-    scratchBarrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
-    scratchBarrier.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
-    scratchBarrier.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
-    scratchBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    scratchBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    scratchBarrier.buffer = ResourceCast(scratchBuffer)->GetHandle();
-    scratchBarrier.offset = 0;
-    scratchBarrier.size = VK_WHOLE_SIZE;
-
-    VkMemoryBarrier asBodyBarrier{};
-    asBodyBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-    asBodyBarrier.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
-    asBodyBarrier.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
-
-    vkCmdPipelineBarrier(commandBuffer,
-        VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
-        VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
-        0, 1, &asBodyBarrier, 1, &scratchBarrier, 0, nullptr);
-
-    VkAccelerationStructureBuildRangeInfoKHR* rangeInfo = &accelerationStructureBuildRangeInfo;
-    vkCmdBuildAccelerationStructuresKHR(commandBuffer,
-        1,
-        &accelerationStructureBuildGeometryInfo,
-        &rangeInfo);     // 在这条指令处真正完成构建
+    peer = ResourceCast(peerRef).get();
 }
 
 void VulkanRHITopLevelAccelerationStructure::Destroy()
@@ -1239,13 +1196,13 @@ VulkanRHIBottomLevelAccelerationStructure::VulkanRHIBottomLevelAccelerationStruc
     // 填充底层加速结构使用的几何信息，使用的图元是VK_GEOMETRY_TYPE_TRIANGLES_KHR
     VkAccelerationStructureGeometryKHR accelerationStructureGeometry{};
     accelerationStructureGeometry.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
-    accelerationStructureGeometry.flags = VK_GEOMETRY_OPAQUE_BIT_KHR | VK_GEOMETRY_NO_DUPLICATE_ANY_HIT_INVOCATION_BIT_KHR;   //暂时都假定不透明
+    accelerationStructureGeometry.flags = VulkanUtil::RHIGeometryFlagsToVk(info.geometryFlags);    // 默认OPAQUE
     accelerationStructureGeometry.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
     accelerationStructureGeometry.geometry.triangles.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
 
     accelerationStructureGeometry.geometry.triangles.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
     accelerationStructureGeometry.geometry.triangles.vertexData = vertexBufferDeviceAddress;
-    accelerationStructureGeometry.geometry.triangles.maxVertex = info.vertexOffset / info.vertexStride + (info.vertexCount > 0 ? info.vertexCount - 1 : 0);    // 2026-10-28:修复硬编码3(须≥firstVertex+最大索引值,VUID-09156)
+    accelerationStructureGeometry.geometry.triangles.maxVertex = info.vertexOffset / info.vertexStride + (info.vertexCount > 0 ? info.vertexCount - 1 : 0);   
     accelerationStructureGeometry.geometry.triangles.vertexStride = info.vertexStride;
 
     accelerationStructureGeometry.geometry.triangles.indexType = VK_INDEX_TYPE_UINT32;
@@ -1269,7 +1226,7 @@ VulkanRHIBottomLevelAccelerationStructure::VulkanRHIBottomLevelAccelerationStruc
     buildGeometryInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
     buildGeometryInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
     buildGeometryInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
-    buildGeometryInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+    buildGeometryInfo.flags = VulkanUtil::RHIBuildFlagsToVk(info.buildFlags);
     buildGeometryInfo.geometryCount = 1;
     buildGeometryInfo.pGeometries = &accelerationStructureGeometry;
 
@@ -1401,8 +1358,6 @@ VulkanRHIRootSignature::VulkanRHIRootSignature(const RHIRootSignatureInfo& info,
         else
         {
             // 稀疏签名（如只声明set1/set2的pass根签名）：空set也创建空layout占位。
-            // 否则setInfos按set号稠密索引，管线构造直接push set.layout，会把NULL句柄塞进
-            // VkPipelineLayoutCreateInfo.pSetLayouts造成set编号错位（刀0的set0清退首次踩中）
             VkDescriptorSetLayoutCreateInfo emptyLayoutInfo = {};
             emptyLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
             emptyLayoutInfo.bindingCount = 0;
@@ -1493,7 +1448,6 @@ RHIDescriptorSet& VulkanRHIDescriptorSet::UpdateDescriptor(const RHIDescriptorUp
     case RESOURCE_TYPE_TEXTURE_CUBE:
         imageDescriptor.imageView = ResourceCast(descriptorUpdateInfo.textureView)->GetHandle();
         imageDescriptor.imageLayout = VulkanUtil::DescriptorToImageLayout(descriptorUpdateInfo.state, descriptorUpdateInfo.resourceType);
-        // [DescBake]取证日志已删（2026-10-28收尾：S4池键案结案，元素粒度监管已由[DanglingSlot]自查器接管）
         descriptorWrite.pImageInfo = &imageDescriptor;
         break;
 

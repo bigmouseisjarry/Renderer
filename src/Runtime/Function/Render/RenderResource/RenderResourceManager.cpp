@@ -29,7 +29,7 @@ uint32_t RenderResourceManager::AllocateBindlessID(const BindlessResourceInfo& r
     // 全局Bindless分配id
     uint32_t index = bindlessIDAlloctor[slot].Allocate();
 
-    // 更新所有帧（e.g.当前的全部两个帧）的对应描述符绑定信息（刀2b：bindless池在set1池集）
+    // 更新所有帧（e.g.当前的全部两个帧）的对应描述符绑定信息
     for(auto& resource : perFrameResources)
     {
         resource.poolDescriptorSet->UpdateDescriptor({
@@ -58,16 +58,13 @@ void RenderResourceManager::SetRenderGlobalSetting(const RenderGlobalSetting& gl
     multiFrameResource.globalSettingBuffer.SetData(setting);
 }
 
-void RenderResourceManager::SetTLAS(const RHITopLevelAccelerationStructureRef& tlas)
+void RenderResourceManager::SetTLAS(uint32_t slot, const RHITopLevelAccelerationStructureRef& tlas)
 {
-    for(auto& resource : perFrameResources)
-    {
-        resource.poolDescriptorSet->UpdateDescriptor({
-            .binding = SET1_BINDING_TLAS,
-            .index = 0,
-            .resourceType = RESOURCE_TYPE_RAY_TRACING,
-            .tlas = tlas});
-    }
+    perFrameResources[slot].poolDescriptorSet->UpdateDescriptor({
+        .binding = SET1_BINDING_TLAS,
+        .index = 0,
+        .resourceType = RESOURCE_TYPE_RAY_TRACING,
+        .tlas = tlas});
 }
 
 void RenderResourceManager::SetCameraInfo(const CameraInfo& cameraInfo)
@@ -111,7 +108,6 @@ void RenderResourceManager::SetVolumeLightInfo(const VolumeLightInfo& volumeLigh
 
 void RenderResourceManager::SetVolumeLightTextures(const VolumeLightTextures& volumeLightTextures, uint32_t volumeLightID)
 {
-    // 刀5：烘焙纹理改经RDG入图（DDGI以"Volume Light Irradiance/Depth [id]"导入，消费者走set2 b25/b26 typed边）——set0描述符写入退役
 }
 
 void RenderResourceManager::SetLightSetting(const LightSetting& lightSetting)
@@ -219,11 +215,10 @@ void RenderResourceManager::InitGlobalResources()
 {
     Extent2D windowExtent = EngineContext::Render()->GetWindowsExtent();
 
-    // 刀2b：set0瘦身——数据表/bindless池/TLAS迁往set1资源池集（BindlessRS），set0只留视图常量+反馈+阴影+历史帧
     RHIRootSignatureInfo info = {};
     info.AddEntry({0, SET0_BINDING_GLOBAL_SETTING, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})
         //.AddEntry({0, SET1_BINDING_TLAS, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RAY_TRACING})
-        .AddEntry({0, SET0_BINDING_CAMERA, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_UNIFORM_BUFFER});     // 刀5：set0定型=视图集双槽（GLOBAL_SETTING+CAMERA）；volume light→set2 b25/26，readback→SC域b27
+        .AddEntry({0, SET0_BINDING_CAMERA, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_UNIFORM_BUFFER});     
 
 
     perFrameRootSignature = EngineContext::RHI()->CreateRootSignature(info);
@@ -269,7 +264,6 @@ void RenderResourceManager::InitGlobalResources()
         MIPMAP_MODE_NEAREST,
         0.0f));
 
-    // 刀2b：set1资源池集——数据表+顶点/纹理bindless池+SAMPLER+TLAS（槽位号沿用旧set0编号，仅set号0→1）
     RHIRootSignatureInfo bindlessInfo = {};
     bindlessInfo.AddEntry({1, SET1_BINDING_OBJECT, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})
                 .AddEntry({1, SET1_BINDING_MESH_CLUSTER, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})
@@ -309,10 +303,6 @@ void RenderResourceManager::InitGlobalResources()
     bindlessRootSignature = EngineContext::RHI()->CreateRootSignature(bindlessInfo);
     for(auto& resource : perFrameResources) resource.poolDescriptorSet = bindlessRootSignature->CreateDescriptorSet(1);
 
-    // 刀7b-2：set2全局统一RS——pass IO集全量槽位（终态v2表0-92共93槽，规划见Asset/BuildIn/Shader/include/set2/PLANNING.md）。
-    // 7b-3起各pass的Init收敛为三行拼装：AddEntry(set0)+AddEntry(set1)+AddEntry(set2本RS)，
-    // RDG按边逐pass填槽（虚拟边不填槽铁律），槽号一律用Set2BindingID宏。
-    // 本RS不常驻CreateDescriptorSet——set2描述符集由RDG描述符池按{RS info, set}逐pass池化分配
     RHIRootSignatureInfo set2Info = {};
     set2Info
         // 共享域 0-13（跨pass语义槽）
@@ -323,7 +313,7 @@ void RenderResourceManager::InitGlobalResources()
         .AddEntry({2, SET2_BINDING_HISTORY_VELOCITY,            1,     SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})       // 原b14
         .AddEntry({2, SET2_BINDING_HISTORY_OBJECT_ID,           2,     SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})       // 原b15
         .AddEntry({2, SET2_BINDING_DIRECTIONAL_SHADOW,          4,     SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})       // 原b22（=DIRECTIONAL_SHADOW_CASCADE_LEVEL）
-        .AddEntry({2, SET2_BINDING_POINT_SHADOW,                8,     SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE_CUBE})  // 原b23（filtered0-3+depth4-7）
+        .AddEntry({2, SET2_BINDING_POINT_SHADOW,                4,     SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE_CUBE})  // 原b23（S5-1收缩8→4:filtered0-3,depth半区死设计+物理纹理仅4张）
         .AddEntry({2, SET2_BINDING_SURFACE_CACHE,               5,     SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})       // 原b24
         .AddEntry({2, SET2_BINDING_VOLUME_LIGHT_IRRADIANCE,     MAX_VOLUME_LIGHT_COUNT, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})   // 原b25
         .AddEntry({2, SET2_BINDING_VOLUME_LIGHT_DEPTH,          MAX_VOLUME_LIGHT_COUNT, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})   // 原b26
@@ -592,9 +582,6 @@ void RenderResourceManager::InitGlobalResources()
             1, 1);
     }
 
-    // 刀2b：SamplerRS已删除（双sampler池合一）。内置sampler对池集SAMPLER槽的写入在下方
-    // init循环内（原set0 b34写入随bindless槽一并迁池）
-
     for(auto& resource : perFrameResources)
     {
         resource.descriptorSet->UpdateDescriptor({
@@ -687,8 +674,6 @@ void RenderResourceManager::InitGlobalResources()
             .resourceType = RESOURCE_TYPE_RW_BUFFER,
             .buffer = multiFrameResource.vertexBuffer.buffer});
 
-        // 刀3：方向/点光源阴影描述符写入已删——阴影纹理经RDG边绑至消费者set2阴影域（shadows.glsl b0/b1）
-        // 全局采样器：已迁bindless RS静态采样器声明（set1创建期播种），手动写入循环已删
     }
 }
 

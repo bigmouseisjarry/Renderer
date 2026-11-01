@@ -68,14 +68,11 @@ enum BindlessSlot
 
 enum PerFrameBindingID
 {
-    // 刀7a（2026-10-20）：set0/set1重排连续化——shader侧镜像见 Asset/BuildIn/Shader/include/set0|set1/defines.glsl。
-    // 死宏（LIGHT_CLUSTER_GRID/INDEX、DIRECTIONAL/POINT_SHADOW、VOLUME_LIGHT×2、MESH_CARD_READBACK、
-    // SURFACE_CACHE、DEPTH、DEPTH_PYRAMID、VELOCITY、OBJECT_ID、GIZMO——已随刀3-5下放set2或废弃）本轮退役。
-    // set0 = 视图集（原GLOBAL_SETTING=0/CAMERA=2，TLAS迁set1后b1空位，本轮CAMERA收紧为1）
+    // set0 = 视图集
     SET0_BINDING_GLOBAL_SETTING = 0,
     SET0_BINDING_CAMERA,
 
-    // set1 = bindless资源池集（原沿用set0旧号稀疏1,3,4,5,12-15,21,23,25-40，本轮重排连续0-25）
+    // set1 = bindless资源池集
     // 分组：数据表(0-7) / 静态资源(8-9) / 顶点流bindless池(10-18) / 采样器与纹理池(19-25)
     SET1_BINDING_TLAS = 0,
     SET1_BINDING_OBJECT,
@@ -107,13 +104,6 @@ enum PerFrameBindingID
     SET1_BINDING_MAX_ENUM,//
 };
 
-// 刀7b-1（2026-10-20）：set2=pass IO集全局统一槽位表（v3契约对账版，0-97共98槽）。
-// shader侧镜像=Asset/BuildIn/Shader/include/set2/defines.glsl；施工图/契约表=同目录PLANNING.md。
-// v3变更：拆POSTPROCESS_OUT(40,rgba8)、拆ReSTIR为DI/GI两域(47-50/51-54,block异构)、
-// FINAL_COLOR(28)="Noisy HDR Color"四号归一。
-// 数组槽count：2=HISTORY_DEPTH/PYRAMID/OBJECT_ID、4=DIRECTIONAL_SHADOW、5=SURFACE_CACHE、
-// 6=CLUSTER_DRAW_INFOS_READ/IN_TEX_ARRAY/OUT_TEX_ARRAY、8=POINT_SHADOW、100=VOLUME_LIGHT×2、
-// 1024=剔除域写侧、2=IN_COLOR/SVGF_CURRENT_COLOR_VARIANCE，其余=1
 enum Set2BindingID
 {
     // 共享域 0-13（跨pass语义槽）
@@ -147,7 +137,7 @@ enum Set2BindingID
     SET2_BINDING_GBUFFER_SPECULAR_F0_ROUGHNESS,      // =23
     SET2_BINDING_GBUFFER_GEOMETRIC_NORMAL_AO,        // =24
     SET2_BINDING_GBUFFER_IOR,                        // =25
-    SET2_BINDING_DIRECTIONAL_DEPTH_HISTORY,          // =26 已退役（DDH特性2026-10-22删除，槽号保留防错位，勿删勿用）
+    SET2_BINDING_DIRECTIONAL_DEPTH_HISTORY,          // =26 已退役
     SET2_BINDING_REPROJECTION_RESULT,                // =27
     SET2_BINDING_FINAL_COLOR,                        // =28 RW rgba16f（"Noisy HDR Color"归一）
     SET2_BINDING_DI_DIFFUSE_COLOR,                   // =29 RW
@@ -314,7 +304,7 @@ public:
     TextureRef GetSurfaceCacheTexture(uint32_t id)          { return multiFrameResource.surfaceCacheTexture[id]; }
 
     void SetRenderGlobalSetting(const RenderGlobalSetting& globalSetting);
-    void SetTLAS(const RHITopLevelAccelerationStructureRef& tlas);
+    void SetTLAS(uint32_t slot, const RHITopLevelAccelerationStructureRef& tlas);    // 槽i的池set绑槽i的TLAS（乒乓句柄永不变，一次写死）
     void SetCameraInfo(const CameraInfo& cameraInfo);
     void SetObjectInfo(const ObjectInfo& objectInfo, uint32_t objectID);
     void SetObjectInfos(const std::vector<ObjectInfo>& objectInfos, uint32_t baseObjectID);
@@ -340,9 +330,9 @@ public:
 
     RHIRootSignatureRef GetPerFrameRootSignature()  { return perFrameRootSignature; }
     RHIDescriptorSetRef GetPerFrameDescriptorSet();
-    RHIRootSignatureRef GetBindlessRootSignature()   { return bindlessRootSignature; }      // 刀2b：set1资源池集签名
+    RHIRootSignatureRef GetBindlessRootSignature()   { return bindlessRootSignature; }      
     RHIDescriptorSetRef GetPoolDescriptorSet();       
-    RHIRootSignatureRef GetSet2RootSignature()       { return set2RootSignature; }         // 刀7b-2：set2全局统一RS（pass IO集全量93槽）
+    RHIRootSignatureRef GetSet2RootSignature()       { return set2RootSignature; }         
 
 private:
     std::unordered_map<std::string, RHIShaderRef> shaderMap;    // 全局统一的着色器创建，假定文件路径唯一索引一个着色器
@@ -352,7 +342,7 @@ private:
     struct PerFrameResource
     {
         RHIDescriptorSetRef descriptorSet;
-        RHIDescriptorSetRef poolDescriptorSet;        // 刀2b：set1资源池集（数据表/bindless池/TLAS）
+        RHIDescriptorSetRef poolDescriptorSet;        
 
         // 每帧都完全重构的buffer
         // 上一帧还在渲染时下一帧也可能在录制了，因此对每一帧有单独的buffer
@@ -408,8 +398,8 @@ private:
 
     // 逐帧资源的根签名
     RHIRootSignatureRef perFrameRootSignature;
-    RHIRootSignatureRef bindlessRootSignature;       // 刀2b：set1资源池集（数据表+bindless池+SAMPLER+TLAS）
-    RHIRootSignatureRef set2RootSignature;           // 刀7b-2：set2全局统一RS（pass IO集，7b-3起各pass拼装进自己的RS）
+    RHIRootSignatureRef bindlessRootSignature;       
+    RHIRootSignatureRef set2RootSignature;           
 
     // 图标纹理
     std::vector<TextureRef> icons;

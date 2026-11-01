@@ -34,7 +34,6 @@ public:
 
 	// 边相连的pass节点对边相连的资源节点做了产出操作并且该资源节点还会被后续的pass节点使用。
     // 则为输出边，返回true。
-    virtual bool IsOutput() { return false; }
 
     RDGEdgeType EdgeType() { return edgeType; }
 
@@ -54,18 +53,14 @@ public:
     {}
 
     TextureSubresourceRange subresource = {};
-    TextureSubresourceLayers subresourceLayer = {};
     bool asColor = false;
     bool asDepthStencil = false;
     bool asShaderRead = false;
     bool asShaderReadWrite = false;
-    bool asOutputRead = false;
-    bool asOutputReadWrite = false;
     bool asPresent = false;
     bool asTransferSrc = false;
     bool asTransferDst = false;
 
-    virtual bool IsOutput() override { return asOutputRead || asOutputReadWrite; }
 
     uint32_t set = 0;       // 描述符使用
     uint32_t binding = 0;   // 描述符/color attachment使用
@@ -95,13 +90,9 @@ public:
     uint32_t size = 0;
     bool asShaderRead = false;
     bool asShaderReadWrite = false;
-    bool asOutputRead = false;
-    bool asOutputReadWrite = false;
-    bool asOutputIndirectDraw = false;
     bool asTransferSrc = false;
     bool asTransferDst = false;
 
-    virtual bool IsOutput() override { return asOutputRead || asOutputReadWrite || asOutputIndirectDraw; }
 
     uint32_t set = 0;       // 描述符使用
     uint32_t binding = 0;

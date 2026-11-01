@@ -14,7 +14,7 @@ void DepthPyramidPass::Init()
     RHIRootSignatureInfo rootSignatureInfo = {};
     rootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetSet2RootSignature()->GetInfo())       
                      .AddEntry(EngineContext::RenderResource()->GetBindlessRootSignature()->GetInfo())
-                     .AddPushConstant({128, SHADER_FREQUENCY_COMPUTE});
+                     .AddPushConstant({sizeof(DepthPyramidSetting), SHADER_FREQUENCY_COMPUTE});
     rootSignature = backend->CreateRootSignature(rootSignatureInfo);
 
     RHIComputePipelineInfo pipelineInfo     = {};
@@ -77,7 +77,6 @@ void DepthPyramidPass::Build(RDGBuilder& builder, uint32_t mode, RDGTextureHandl
                                     1);
             });
 
-        passBuilder.OutputRead(depthMip, { TEXTURE_ASPECT_COLOR, (uint32_t)i, 1, 0, 1 });
         passBuilder.Finish();
     }
 }

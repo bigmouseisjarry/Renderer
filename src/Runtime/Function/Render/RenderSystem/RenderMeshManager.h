@@ -1,24 +1,26 @@
 #pragma once
 
+#include "Function/Global/Definations.h"
 #include "Function/Render/RHI/RHIResource.h"
+#include <array>
+
 class RenderMeshManager
 {
 public:
     void Init();
     void Tick();
 
-    // TLAS的CPU侧准备（instance写入+构建信息填充），由RDG的TLASUpdatePass在Build期调用；
-    // 构建命令的录制由该pass在帧命令流内完成（原独立提交的UpdateTLAS已收编进图）
-    void PrepareTLASUpdate();
+    // TLAS按帧槽乒乓持有（槽i构建dst=槽i、UPDATE的src=对端槽i^1）；句柄永不变，描述符Init期一次写死
+    RHITopLevelAccelerationStructureRef GetTLAS(uint32_t slot)            { return tlas[slot]; }
+    RHIBufferRef GetTLASStorageBuffer(uint32_t slot)                      { return tlas[slot]->GetStorageBuffer(); }
 
-    RHITopLevelAccelerationStructureRef GetTLAS()            { return tlas; }
-    RHIBufferRef GetTLASStorageBuffer()                      { return tlas->GetStorageBuffer(); }
+    // 本帧收集的instance数据（TLASUpdatePass在Build期取副本按值捕入Execute）
+    const std::vector<RHIAccelerationStructureInstanceInfo>& GetInstances() const { return instances; }
 
 private:
     void PrepareMeshPass();
     void PrepareRayTracePass();
 
     std::vector<RHIAccelerationStructureInstanceInfo> instances;
-    RHITopLevelAccelerationStructureRef tlas;
-    bool init = false;
+    std::array<RHITopLevelAccelerationStructureRef, FRAMES_IN_FLIGHT> tlas;
 };

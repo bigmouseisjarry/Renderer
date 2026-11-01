@@ -3,22 +3,27 @@
 
 #if(ENABLE_RAY_TRACING != 0)
 
-bool RayQueryVisibility(vec3 from, vec3 to, float minDist) 
+// instance mask位规划（与RHI侧RHIAccelerationStructureInstanceMaskBits一致，TLAS构建侧按材质填充；
+// Ray Mask Culling语义=instance.mask & cullMask == 0则丢弃交点）
+#define INSTANCE_MASK_SCENE          (1u << 0)      // bit0=场景/GI可见
+#define INSTANCE_MASK_SHADOW_CASTER  (1u << 1)      // bit1=阴影投射体（材质CastShadow）
+
+bool RayQueryVisibility(vec3 from, vec3 to, float minDist, uint cullMask)
 {
 	float tmin = MIN_RAY_TRACING_DISTANCE;
-    //float tmax = MAX_RAY_TRACING_DISTANCE;  
+    //float tmax = MAX_RAY_TRACING_DISTANCE;
 	float tmax = max(length(to - from) - minDist - 1e-3, tmin);
 	vec3 dir = normalize(to - from);
 
     rayQueryEXT query;
     rayQueryInitializeEXT(
-        query, 
-        TLAS, 
+        query,
+        TLAS,
         gl_RayFlagsOpaqueEXT,  // gl_RayFlagsCullBackFacingTrianglesEXT gl_RayFlagsTerminateOnFirstHitEXT?
-        0xFF, 
-        from + dir * minDist, 
-        tmin, 
-        dir, 
+        cullMask,
+        from + dir * minDist,
+        tmin,
+        dir,
         tmax);
 
     rayQueryProceedEXT(query);
@@ -32,6 +37,12 @@ bool RayQueryVisibility(vec3 from, vec3 to, float minDist)
 
     // return dist < tmax;
     return false;
+}
+
+// 无mask版本（兼容存量调用）：全可见
+bool RayQueryVisibility(vec3 from, vec3 to, float minDist)
+{
+    return RayQueryVisibility(from, to, minDist, 0xFF);
 }
 
 bool RayQueryHitObject(vec3 from, vec3 to, float minDist,

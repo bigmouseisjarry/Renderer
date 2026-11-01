@@ -200,17 +200,19 @@ void MeshRendererComponent::CollectAccelerationStructureInstance(std::vector<RHI
     if(!transformComponent) return;
 
     for(uint32_t i = 0; i < model->GetSubmeshCount(); i++)
-    {   
-        auto& submesh = model->Submesh(i);
+    {
+        const SubmeshData& submesh = model->Submesh(i);
 
         if(materials[i] != nullptr)
         {
             RHIAccelerationStructureInstanceInfo info = {};
             info.instanceIndex = objectIDs[i];
-            info.mask = 0xFF;
+            // mask下放submesh材质驱动：bit0=场景/GI可见恒置；bit1=shadow caster按材质（flags默认CULL_DISABLE，见结构体）
+            info.mask = RHI_INSTANCE_MASK_SCENE |
+                        (materials[i]->CastShadow() ? RHI_INSTANCE_MASK_SHADOW_CASTER : 0);
             info.shaderBindingTableOffset = 0;
             info.blas = submesh.blas;
-            Math::Mat3x4(currentModels[i], &info.transform[0][0]);   
+            Math::Mat3x4(currentModels[i], &info.transform[0][0]);
 
             instances.push_back(info);
         }
@@ -224,7 +226,7 @@ void MeshRendererComponent::CollectSurfaceCacheTask(std::vector<SurfaceCacheTask
 
     for(uint32_t i = 0; i < model->GetSubmeshCount(); i++)
     {   
-        auto& submesh = model->Submesh(i);
+        const SubmeshData& submesh = model->Submesh(i);
 
         if(materials[i] != nullptr)
         {

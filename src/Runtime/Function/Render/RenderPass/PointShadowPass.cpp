@@ -33,8 +33,8 @@ void PointShadowPass::Init()
         RHIRootSignatureInfo rootSignatureInfo = {};
         rootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetPerFrameRootSignature()->GetInfo())
                          .AddEntry(EngineContext::RenderResource()->GetBindlessRootSignature()->GetInfo())
-                         .AddEntry(EngineContext::RenderResource()->GetSet2RootSignature()->GetInfo())       // 刀7b-3：set2全局统一RS
-                                                  .AddPushConstant({128, SHADER_FREQUENCY_GRAPHICS});
+                         .AddEntry(EngineContext::RenderResource()->GetSet2RootSignature()->GetInfo())       
+                                                  .AddPushConstant({sizeof(uint32_t) * 2, SHADER_FREQUENCY_GRAPHICS});
         rootSignature0 = backend->CreateRootSignature(rootSignatureInfo);
 
         RHIGraphicsPipelineInfo pipelineInfo = {};
@@ -61,8 +61,8 @@ void PointShadowPass::Init()
 
         RHIRootSignatureInfo rootSignatureInfo = {};
         rootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetBindlessRootSignature()->GetInfo())
-                         .AddEntry(EngineContext::RenderResource()->GetSet2RootSignature()->GetInfo())       // 刀7b-3：set2全局统一RS（IN_TEX_ARRAY/OUT_TEX_ARRAY=42/43）
-                         .AddPushConstant({128, SHADER_FREQUENCY_COMPUTE});
+                         .AddEntry(EngineContext::RenderResource()->GetSet2RootSignature()->GetInfo())       
+                         .AddPushConstant({sizeof(KawaseSetting), SHADER_FREQUENCY_COMPUTE});
         rootSignature1 = backend->CreateRootSignature(rootSignatureInfo);
 
         RHIComputePipelineInfo pipelineInfo     = {};
@@ -73,8 +73,16 @@ void PointShadowPass::Init()
 
 }   
 
-void PointShadowPass::Build(RDGBuilder& builder) 
+void PointShadowPass::Build(RDGBuilder& builder)
 {
+    for(uint32_t i = 0; i < MAX_POINT_SHADOW_COUNT; i++)
+    {
+        std::string index = " [" + std::to_string(i) + "]";
+        builder.CreateTexture("Point Shadow Filtered Color" + index)
+            .Import(EngineContext::RenderResource()->GetPointShadowTexture(i))
+            .Finish();
+    }
+
     if( IsEnabled() &&
         // !EngineContext::Render()->IsPassEnabled(RESTIR_DI_PASS) &&
         // !EngineContext::Render()->IsPassEnabled(RAY_TRACING_BASE_PASS) &&    //Surface cache有使用
@@ -93,10 +101,8 @@ void PointShadowPass::Build(RDGBuilder& builder)
                 .AllowRenderTarget()
                 .Finish();
 
-            // 两纹理稳态均=SRV：filtered末位=filter的OutputRead后光照读；depth末位=渲染OutputRead后无人触碰
-            RDGTextureHandle filteredColor = builder.CreateTexture("Point Shadow Filtered Color" + index)
-                .Import(EngineContext::RenderResource()->GetPointShadowTexture(i))
-                .Finish();
+            // 两纹理稳态均=SRV：filtered末位=filter写后光照读边收敛；depth末位=渲染写后无人触碰（动态记载承接）
+            RDGTextureHandle filteredColor = builder.GetTexture("Point Shadow Filtered Color" + index);   // S5-1: 帧首已无条件导入
 
             RDGTextureHandle depth = builder.CreateTexture("Point Shadow Depth" + index)
                 .Import(EngineContext::RenderResource()->GetPointShadowDepthTexture(i))
@@ -133,13 +139,13 @@ void PointShadowPass::Build(RDGBuilder& builder)
                 .ReadIndirect(builder.GetBuffer("Mesh Draw Commands" + cmdIndex + std::to_string(i * 6 + 5) + "]"))
                 .ReadIndirect(builder.GetBuffer("Clusrter Draw Commands" + cmdIndex + std::to_string(i * 6 + 5) + "]"))
                 .RootSignature(rootSignature0)     // 带根签名才会为下方set1声明生成池化描述符
-                .Shaders({vertexShader.shader, clusterVertexShader.shader, fragmentShader.shader})     // 刀7b-3：严格边校验
-                .Read(2, SET2_BINDING_CLUSTER_DRAW_INFOS_READ, 0, builder.GetBuffer("Cluster Draw Infos" + cmdIndex + std::to_string(i * 6 + 0) + "]"), 0, 0, RESOURCE_TYPE_BUFFER)
-                .Read(2, SET2_BINDING_CLUSTER_DRAW_INFOS_READ, 1, builder.GetBuffer("Cluster Draw Infos" + cmdIndex + std::to_string(i * 6 + 1) + "]"), 0, 0, RESOURCE_TYPE_BUFFER)
-                .Read(2, SET2_BINDING_CLUSTER_DRAW_INFOS_READ, 2, builder.GetBuffer("Cluster Draw Infos" + cmdIndex + std::to_string(i * 6 + 2) + "]"), 0, 0, RESOURCE_TYPE_BUFFER)
-                .Read(2, SET2_BINDING_CLUSTER_DRAW_INFOS_READ, 3, builder.GetBuffer("Cluster Draw Infos" + cmdIndex + std::to_string(i * 6 + 3) + "]"), 0, 0, RESOURCE_TYPE_BUFFER)
-                .Read(2, SET2_BINDING_CLUSTER_DRAW_INFOS_READ, 4, builder.GetBuffer("Cluster Draw Infos" + cmdIndex + std::to_string(i * 6 + 4) + "]"), 0, 0, RESOURCE_TYPE_BUFFER)
-                .Read(2, SET2_BINDING_CLUSTER_DRAW_INFOS_READ, 5, builder.GetBuffer("Cluster Draw Infos" + cmdIndex + std::to_string(i * 6 + 5) + "]"), 0, 0, RESOURCE_TYPE_BUFFER)
+                .Shaders({vertexShader.shader, clusterVertexShader.shader, fragmentShader.shader})     
+                .Read(2, SET2_BINDING_CLUSTER_DRAW_INFOS_READ, 0, builder.GetBuffer("Cluster Draw Infos" + cmdIndex + std::to_string(i * 6 + 0) + "]"), 0, 0)
+                .Read(2, SET2_BINDING_CLUSTER_DRAW_INFOS_READ, 1, builder.GetBuffer("Cluster Draw Infos" + cmdIndex + std::to_string(i * 6 + 1) + "]"), 0, 0)
+                .Read(2, SET2_BINDING_CLUSTER_DRAW_INFOS_READ, 2, builder.GetBuffer("Cluster Draw Infos" + cmdIndex + std::to_string(i * 6 + 2) + "]"), 0, 0)
+                .Read(2, SET2_BINDING_CLUSTER_DRAW_INFOS_READ, 3, builder.GetBuffer("Cluster Draw Infos" + cmdIndex + std::to_string(i * 6 + 3) + "]"), 0, 0)
+                .Read(2, SET2_BINDING_CLUSTER_DRAW_INFOS_READ, 4, builder.GetBuffer("Cluster Draw Infos" + cmdIndex + std::to_string(i * 6 + 4) + "]"), 0, 0)
+                .Read(2, SET2_BINDING_CLUSTER_DRAW_INFOS_READ, 5, builder.GetBuffer("Cluster Draw Infos" + cmdIndex + std::to_string(i * 6 + 5) + "]"), 0, 0)
                 .Execute([&](RDGPassContext context) {
 
                     Extent2D windowExtent = EngineContext::Render()->GetWindowsExtent();
@@ -167,13 +173,11 @@ void PointShadowPass::Build(RDGBuilder& builder)
                         meshPassProcessor->Draw(command, index * 6 + face);
                     }
                 })
-                .OutputRead(depth)
-                .OutputRead(color)  // 手动屏障
                 .Finish();
 
             RDGComputePassHandle filterPass = builder.CreateComputePass(GetName() + " Filter" + index)  //TODO 多轮？(级联卷积)
                 .RootSignature(rootSignature1)
-                .Shaders({computeShader.shader})           // 刀7b-3：严格边校验
+                .Shaders({computeShader.shader})           
                 .Read(2, SET2_BINDING_IN_TEX_ARRAY, 0, color, VIEW_TYPE_2D, {TEXTURE_ASPECT_COLOR, 0, 1, 0, 1})
                 .Read(2, SET2_BINDING_IN_TEX_ARRAY, 1, color, VIEW_TYPE_2D, {TEXTURE_ASPECT_COLOR, 0, 1, 1, 1})
                 .Read(2, SET2_BINDING_IN_TEX_ARRAY, 2, color, VIEW_TYPE_2D, {TEXTURE_ASPECT_COLOR, 0, 1, 2, 1})
@@ -197,7 +201,6 @@ void PointShadowPass::Build(RDGBuilder& builder)
                                         POINT_SHADOW_SIZE / 16, 
                                         1);
                 })
-                .OutputRead(filteredColor)
                 .Finish();
         }
     }

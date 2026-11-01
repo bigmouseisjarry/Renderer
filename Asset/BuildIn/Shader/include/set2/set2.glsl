@@ -1,16 +1,6 @@
 #ifndef SET2_GLSL
 #define SET2_GLSL
 
-// 刀7b-4（2026-10-20）：set2胖头=pass IO集全量声明（98槽v3表）+域访问器。
-// 契约：槽号宏见defines.glsl（单源）；RW槽镜像格式/block结构=PLANNING.md契约表（拆分为主裁决版）。
-// 基石（探针实证）：spirv-reflect accessed=main可达调用图内指令引用，纯声明/死访问器均不计
-// ——本文件可被任意shader随意include，未引用的槽零成本（无需描述符、不进校验）。
-// 命名过渡债（7b-3迁移时shader侧同步改名，见PLANNING待定项）：
-//   读侧MESH_CLUSTER_DRAW_INFOS_READ/写侧MESH_CLUSTER_DRAW_INFOS、RESTIR_DI/GI_RESERVOIRS族、
-//   TAA_REPROJECTION_RESULT/TAA_OUT_COLOR、REPROJECTION_RESULT_OUT、CLIPMAP_VISUALIZE_OUT、
-//   RTB_OUT/PT_OUT/PT_HISTORY/IBL_OUT、DI_DIFFUSE_COLOR/DI_SPECULAR_COLOR
-// include set1（SAMPLER[]供访问器采样；set1自带defines/types/math/intersection链）——
-// 层级单向：set0 → set1 → set2，set2不自引用set0
 #include "defines.glsl"
 #include "../set1/set1.glsl"
 
@@ -32,9 +22,10 @@ layout(set = 2, binding = SET2_BINDING_HISTORY_DEPTH_PYRAMID)  uniform texture2D
 layout(set = 2, binding = SET2_BINDING_HISTORY_VELOCITY)       uniform texture2D VELOCITY;
 layout(set = 2, binding = SET2_BINDING_HISTORY_OBJECT_ID)      uniform utexture2D OBJECT_ID[2];
 
-// 阴影域：POINT_SHADOW[8]=filtered0-3+depth4-7
+// 阴影域：POINT_SHADOW[4]=filtered0-3（S5-1收缩：depth4-7半区=死设计,RtPointShadow走ray
+// query不碰数组,唯一数组访问[shadowID]守卫<4;物理纹理也仅4张,8声明=悬空元素永生）
 layout(set = 2, binding = SET2_BINDING_DIRECTIONAL_SHADOW)     uniform texture2D DIRECTIONAL_SHADOW[4];
-layout(set = 2, binding = SET2_BINDING_POINT_SHADOW)           uniform textureCube POINT_SHADOW[8];
+layout(set = 2, binding = SET2_BINDING_POINT_SHADOW)           uniform textureCube POINT_SHADOW[4];
 
 // SC域：atlas
 layout(set = 2, binding = SET2_BINDING_SURFACE_CACHE)          uniform texture2D SURFACE_CACHE[5];

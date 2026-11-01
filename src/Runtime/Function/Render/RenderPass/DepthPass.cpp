@@ -58,7 +58,6 @@ void DepthPass::Build(RDGBuilder& builder)
     RDGCopyPassHandle copyPass = builder.CreateCopyPass(GetName() + " Copy")
         .From(depth)
         .To(prevDepth)
-        .OutputRead(prevDepth)
         .Finish();
 
     std::string cmdIndex = " [" + std::to_string(MESH_DEPTH_PASS) + "][0]";
@@ -67,8 +66,9 @@ void DepthPass::Build(RDGBuilder& builder)
         .DepthStencil(depth, ATTACHMENT_LOAD_OP_CLEAR, ATTACHMENT_STORE_OP_STORE, 1.0f, 0)
         .ReadIndirect(builder.GetBuffer("Mesh Draw Commands" + cmdIndex))
         .ReadIndirect(builder.GetBuffer("Clusrter Draw Commands" + cmdIndex))
-        .RootSignature(rootSignature)     
-        .Read(2, SET2_BINDING_CLUSTER_DRAW_INFOS_READ, 0, builder.GetBuffer("Cluster Draw Infos" + cmdIndex), 0, 0, RESOURCE_TYPE_BUFFER)
+        .RootSignature(rootSignature)
+        .Shaders({vertexShader.shader, clusterVertexShader.shader, fragmentShader.shader})     // S5-C：聚合补声明（检测锚=引用shader使用面vs实际边）
+        .Read(2, SET2_BINDING_CLUSTER_DRAW_INFOS_READ, 0, builder.GetBuffer("Cluster Draw Infos" + cmdIndex), 0, 0)
         .Execute([&](RDGPassContext context) {
 
             Extent2D windowExtent = EngineContext::Render()->GetWindowsExtent();

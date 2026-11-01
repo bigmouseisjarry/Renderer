@@ -12,8 +12,8 @@ void TAAPass::Init()
     RHIRootSignatureInfo rootSignatureInfo = {};
     rootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetPerFrameRootSignature()->GetInfo())
                      .AddEntry(EngineContext::RenderResource()->GetBindlessRootSignature()->GetInfo())
-                     .AddEntry(EngineContext::RenderResource()->GetSet2RootSignature()->GetInfo())       // 刀7b-3：set2全局统一RS（98槽；b36已死——taa.comp的imageStore(HISTORY_OUT)已删）
-                     .AddPushConstant({128, SHADER_FREQUENCY_COMPUTE});
+                     .AddEntry(EngineContext::RenderResource()->GetSet2RootSignature()->GetInfo())       
+                     .AddPushConstant({sizeof(TAASetting), SHADER_FREQUENCY_COMPUTE});
     rootSignature = backend->CreateRootSignature(rootSignatureInfo);
 
     RHIComputePipelineInfo pipelineInfo     = {};
@@ -44,8 +44,8 @@ void TAAPass::Build(RDGBuilder& builder)
     RDGComputePassHandle pass = builder.CreateComputePass(GetName())
         .AddFlag(RDGPassFlags::ForceGraphicsQueue)
         .RootSignature(rootSignature)
-        .Shaders({computeShader.shader})             // 刀7b-3：严格边校验
-        .ReadIfValid(2, SET2_BINDING_HISTORY_VELOCITY, 0, "G-Buffer Velocity")
+        .Shaders({computeShader.shader})             
+        .Read(2, SET2_BINDING_HISTORY_VELOCITY, 0, builder.GetTexture("G-Buffer Velocity"))
         .Read(2, SET2_BINDING_TAA_CURRENT_COLOR, 0, inColor)
         .Read(2, SET2_BINDING_TAA_HISTORY_COLOR, 0, historyColor)
         .Read(2, SET2_BINDING_TAA_REPROJECTION_RESULT, 0, reprojectionOut)

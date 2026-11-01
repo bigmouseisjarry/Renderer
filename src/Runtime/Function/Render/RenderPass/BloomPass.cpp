@@ -17,9 +17,9 @@ void BloomPass::Init()
     computeShader[3] = Shader(EngineContext::File()->ShaderPath() + "bloom/bloom_combine.comp.spv", SHADER_FREQUENCY_COMPUTE);
 
     RHIRootSignatureInfo rootSignatureInfo = {};
-    rootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetBindlessRootSignature()->GetInfo())   // 刀7b-3：set1资源池集
-                     .AddEntry(EngineContext::RenderResource()->GetSet2RootSignature()->GetInfo())       // 刀7b-3：set2全局统一RS（98槽）
-                     .AddPushConstant({128, SHADER_FREQUENCY_COMPUTE});
+    rootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetBindlessRootSignature()->GetInfo())   
+                     .AddEntry(EngineContext::RenderResource()->GetSet2RootSignature()->GetInfo())       
+                     .AddPushConstant({sizeof(BloomSetting), SHADER_FREQUENCY_COMPUTE});
     rootSignature = backend->CreateRootSignature(rootSignatureInfo);
 
     RHIComputePipelineInfo pipelineInfo     = {};
@@ -78,7 +78,7 @@ void BloomPass::Build(RDGBuilder& builder)
         // pass0 根据mesh pass的输出结果选取阈值
         RDGComputePassHandle pass0 = builder.CreateComputePass(GetName() + " Threshold")
             .RootSignature(rootSignature)
-            .Shaders({computeShader[0].shader})          // 刀7b-3：严格边校验
+            .Shaders({computeShader[0].shader})          
             .Read(2, SET2_BINDING_IN_COLOR, 0, inputColor)
             .ReadWrite(2, SET2_BINDING_OUT_COLOR, 0, downSampleMip, VIEW_TYPE_2D, { TEXTURE_ASPECT_COLOR, 0, 1, 0, 1})
             .Execute([&](RDGPassContext context) {       
@@ -102,7 +102,7 @@ void BloomPass::Build(RDGBuilder& builder)
             auto pass1Builder = builder.CreateComputePass(GetName() + " Down Sample" + index)
                 .PassIndex(i)
                 .RootSignature(rootSignature)
-                .Shaders({computeShader[1].shader})  // 刀7b-3：严格边校验
+                .Shaders({computeShader[1].shader})  
                 .Read(2, SET2_BINDING_IN_COLOR, 0, downSampleMip, VIEW_TYPE_2D, { TEXTURE_ASPECT_COLOR, (uint32_t)(i - 1), 1, 0, 1})
                 .ReadWrite(2, SET2_BINDING_OUT_COLOR, 0, downSampleMip, VIEW_TYPE_2D, { TEXTURE_ASPECT_COLOR, (uint32_t)i, 1, 0, 1})
                 .Execute([&](RDGPassContext context) {       
@@ -125,8 +125,6 @@ void BloomPass::Build(RDGBuilder& builder)
                                         1);
                 });
 
-            if(i == mipLevels - 1) // 最后一级手动屏障 TODO
-                pass1Builder.OutputRead(downSampleMip, { TEXTURE_ASPECT_COLOR, (uint32_t)i, 1, 0, 1 });
             pass1Builder.Finish();
         }
 
@@ -138,7 +136,7 @@ void BloomPass::Build(RDGBuilder& builder)
             RDGComputePassHandle pass2 = builder.CreateComputePass(GetName() + " Up Sample" + index)
                 .PassIndex(i)
                 .RootSignature(rootSignature)
-                .Shaders({computeShader[2].shader})  // 刀7b-3：严格边校验
+                .Shaders({computeShader[2].shader})  
                 .Read(2, SET2_BINDING_IN_COLOR, 0, upSampleMip, VIEW_TYPE_2D, { TEXTURE_ASPECT_COLOR, (uint32_t)(i + 1), 1, 0, 1})
                 .Read(2, SET2_BINDING_IN_COLOR, 1, downSampleMip, VIEW_TYPE_2D, {})   // 读整个下采样mip
                 .ReadWrite(2, SET2_BINDING_OUT_COLOR, 0, upSampleMip, VIEW_TYPE_2D, { TEXTURE_ASPECT_COLOR, (uint32_t)i, 1, 0, 1})
@@ -167,7 +165,7 @@ void BloomPass::Build(RDGBuilder& builder)
         // pass3 合并结果
         RDGComputePassHandle pass3 = builder.CreateComputePass(GetName() + " Combine")
             .RootSignature(rootSignature)
-            .Shaders({computeShader[3].shader})      // 刀7b-3：严格边校验
+            .Shaders({computeShader[3].shader})      
             .Read(2, SET2_BINDING_IN_COLOR, 0, inputColor)
             .Read(2, SET2_BINDING_IN_COLOR, 1, upSampleMip, VIEW_TYPE_2D, { TEXTURE_ASPECT_COLOR, 0, 1, 0, 1})
             .ReadWrite(2, SET2_BINDING_OUT_COLOR, 0, outColor)

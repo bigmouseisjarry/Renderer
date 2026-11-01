@@ -209,7 +209,8 @@ float RtDirectionalShadow(vec4 worldPos, float bias)
         vec3 L = -normalize(dirLight.dir);
 
         vec3 origin = worldPos.xyz + bias * L;
-		if(dirLight.castShadow > 0)  dirShadow = RayQueryVisibility(origin, origin + L * MAX_RAY_TRACING_DISTANCE, 0) ? 0.0f : 1.0f; 
+		// cullMask=shadow caster位：只被"材质CastShadow"的instance遮挡，与光栅CSM/点光阴影的语义对齐
+		if(dirLight.castShadow > 0)  dirShadow = RayQueryVisibility(origin, origin + L * MAX_RAY_TRACING_DISTANCE, 0, INSTANCE_MASK_SHADOW_CASTER) ? 0.0f : 1.0f;
     }
     return dirShadow;
 }
@@ -221,7 +222,7 @@ float RtPointShadow(uint lightID, vec4 worldPos)
 	PointLight pointLight = LIGHTS.pointLights[lightID];
 
     if(pointLight.shadowID >= MAX_POINT_SHADOW_COUNT) return 1.0f;	//无效阴影索引
-    float pointShadow = RayQueryVisibility(worldPos.xyz, pointLight.pos, 0) ? 0.0f : 1.0f; 
+    float pointShadow = RayQueryVisibility(worldPos.xyz, pointLight.pos, 0, INSTANCE_MASK_SHADOW_CASTER) ? 0.0f : 1.0f;
     return pointShadow;	     // 光追就不考虑点光源是否开启投射阴影了
 }
 

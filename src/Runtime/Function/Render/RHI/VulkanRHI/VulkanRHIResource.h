@@ -221,19 +221,16 @@ private:
 
 class VulkanRHITopLevelAccelerationStructure : public RHITopLevelAccelerationStructure
 {
+	friend class VulkanRHICommandContext;
+
 public:
 	VulkanRHITopLevelAccelerationStructure(const RHITopLevelAccelerationStructureInfo& info, VulkanRHIBackend& backend);
 
 	const VkAccelerationStructureKHR& GetHandle() 	{ return handle; }
 	VkDeviceAddress GetAddress() 					{ return address; }
 
-	virtual void Update(const std::vector<RHIAccelerationStructureInstanceInfo>& instanceInfos, bool build = false) override final;
-	virtual void PrepareUpdate(const std::vector<RHIAccelerationStructureInstanceInfo>& instanceInfos, bool build = false) override final;
+	virtual void SetPeer(RHITopLevelAccelerationStructureRef peer) override final;
 	virtual RHIBufferRef GetStorageBuffer() const override final { return accelerationStructureBuffer; }
-
-	// 纯录制：把构建命令录进给定命令缓冲（帧内路径由VulkanRHICommandContext调用，
-	// 与PrepareUpdate配对使用，不再有独立提交）
-	void RecordBuild(VkCommandBuffer commandBuffer);	
 
 	virtual void Destroy() override final;
 	virtual void* RawHandle() override final { return handle; };
@@ -243,11 +240,12 @@ private:
 	VkDeviceAddress address;
 	RHIBufferRef accelerationStructureBuffer;	// 加速结构占用的内存
 	RHIBufferRef instanceBuffer;				// 实例信息内存
-	RHIBufferRef scratchBuffer;					// 构建过程使用的临时内存
+	RHIBufferRef scratchBuffer;					// 构建临时内存
 
-	VkAccelerationStructureGeometryKHR accelerationStructureGeometry;
-	VkAccelerationStructureBuildGeometryInfoKHR accelerationStructureBuildGeometryInfo;
-	VkAccelerationStructureBuildRangeInfoKHR accelerationStructureBuildRangeInfo;	// PrepareUpdate填充，RecordBuild使用
+	// 帧槽乒乓状态机（mode推导在VulkanRHICommandContext::BuildTopLevelAccelerationStructure）
+	VulkanRHITopLevelAccelerationStructure* peer = nullptr;	// 另一帧槽（持有方持两槽shared_ptr、生命同步）
+	bool hasContent = false;		// 本槽是否已有可用内容
+	uint32_t lastBuildCount = 0;	// 本槽上次构建的instance数
 };
 
 class VulkanRHIBottomLevelAccelerationStructure : public RHIBottomLevelAccelerationStructure

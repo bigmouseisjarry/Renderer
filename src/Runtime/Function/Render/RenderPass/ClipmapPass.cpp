@@ -25,7 +25,7 @@ void ClipmapPass::Init()
     rootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetPerFrameRootSignature()->GetInfo())
                      .AddEntry(EngineContext::RenderResource()->GetBindlessRootSignature()->GetInfo())
                      .AddEntry(EngineContext::RenderResource()->GetSet2RootSignature()->GetInfo())       
-                     .AddPushConstant({128, SHADER_FREQUENCY_RAY_TRACING});
+                     .AddPushConstant({sizeof(VXGISetting), SHADER_FREQUENCY_RAY_TRACING});
     rootSignature = backend->CreateRootSignature(rootSignatureInfo);
 
     RHIRayTracingPipelineInfo pipelineInfo  = {};
@@ -97,7 +97,7 @@ void ClipmapPass::Build(RDGBuilder& builder)
             RDGRayTracingPassHandle pass = builder.CreateRayTracingPass(GetName() + index)
                 .PassIndex(i)
                 .RootSignature(rootSignature)
-                .Shaders({rayGenShader.shader, rayMissShader.shader, closestHitShader.shader})   // 刀7b-3：严格边校验（RT三stage）
+                .Shaders({rayGenShader.shader, rayMissShader.shader, closestHitShader.shader})   
                 .ReadWrite(2, SET2_BINDING_MESH_CARD_READBACK, 0, cardUpdate)
                 .Read(2, SET2_BINDING_SURFACE_CACHE, 0, builder.GetTexture("Surface Cache Diffuse/Metallic"))
                 .Read(2, SET2_BINDING_SURFACE_CACHE, 1, builder.GetTexture("Surface Cache Normal/Roughness"), VIEW_TYPE_2D, {})
@@ -106,7 +106,7 @@ void ClipmapPass::Build(RDGBuilder& builder)
                 .Read(2, SET2_BINDING_SURFACE_CACHE, 4, builder.GetTexture("Surface Cache Depth"), VIEW_TYPE_2D, {})
                 .ReadAccelerationStructure(builder.GetBuffer("TLAS Storage"))
                 .ReadWrite(2, SET2_BINDING_CLIPMAP_A, 0, clipmapTex, VIEW_TYPE_3D)
-                .ReadWrite(2, SET2_BINDING_CLIPMAP_B, 0, clipmapBuf, 0, 0)
+                .ReadWrite(2, SET2_BINDING_CLIPMAP_B, 0, clipmapBuf)
                 .Execute([&](RDGPassContext context) {       
 
                     auto region = updateRegions[context.passIndex[0]];

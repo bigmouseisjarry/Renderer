@@ -144,7 +144,7 @@ void PassDependencyAnalysis::perform_logical_topological_sort_optimized()
 
     // Kahn拓扑排序——唯一产出logical_topological_order（HEFT ranku的逆序DP基准，
     // 调度后由apply_schedule_order重建为调度序）。级别分组/关键路径/逐pass索引产出
-    // 已随消费者清退删除（2026-10-24瘦身，消费者仅剩HEFT与barrier的拓扑序）
+    // 已随消费者清退删除
     std::unordered_map<RDGPassNodeRef, uint32_t> inDegrees;
     inDegrees.reserve(pass_dependencies_.size());
     std::vector<RDGPassNodeRef> queue;
@@ -475,7 +475,7 @@ void PassDependencyAnalysis::apply_schedule_order(const std::vector<RDGPassNodeR
     // 按HEFT调度序直接重建拓扑（合法序：就绪集保证前驱先于后继调度）。级别=前驱最大级别+1
     // 按序一次遍历（前驱必已计算）。关键路径照旧（高度DP按dependent_by_passes，遍历序无关）。
     // 本函数是级别分组/关键路径/逐pass索引的唯一权威生产点——预排序只产出拓扑序（ranku输入），
-    // 这些字段调度前不存在（2026-10-24瘦身定案）
+    // 这些字段调度前不存在
     logical_topology_.logical_topological_order.clear();
     logical_topology_.logical_levels.clear();
     logical_topology_.logical_critical_path.clear();

@@ -8,20 +8,25 @@ void TLASUpdatePass::Build(RDGBuilder& builder)
     if(!IsEnabled()) return;    // 禁用时RT pass的Dependency按无效句柄跳过，读到的将是上一帧的TLAS
 
     auto meshManager = EngineContext::Render()->GetMeshManager();
-
-    // CPU侧准备：instance数据写入持久映射buffer + 构建信息填充。
-    // manager的tick在BuildRDG之前已WaitIdle，instances已就绪
-    meshManager->PrepareTLASUpdate();
+    uint32_t slot = EngineContext::CurrentFrameIndex();     // Build期在主线程，帧槽已定
 
     auto storage = builder.GetOrCreateBuffer("TLAS Storage")
-        .Import(meshManager->GetTLASStorageBuffer(), RESOURCE_STATE_ACCELERATION_STRUCTURE)
+        .Import(meshManager->GetTLASStorageBuffer(slot), RESOURCE_STATE_ACCELERATION_STRUCTURE)
         .Finish();
 
+    auto srcStorage = builder.GetOrCreateBuffer("TLAS Storage Src")
+        .Import(meshManager->GetTLASStorageBuffer(slot ^ 1), RESOURCE_STATE_ACCELERATION_STRUCTURE)
+        .Finish();
+
+    auto tlas = meshManager->GetTLAS(slot);
+    auto instances = meshManager->GetInstances();     // 按值捕获：Execute期并行录制安全；manager的instances下帧即被worker重写
+
     builder.CreateRayTracingPass("TLAS Update")
-        .OutputReadWrite(storage)      
-        .Execute([meshManager](RDGPassContext context)
+        .Write(storage, RESOURCE_STATE_ACCELERATION_STRUCTURE)          
+        .ReadAccelerationStructure(srcStorage)
+        .Execute([tlas, instances](RDGPassContext context)
         {
-            // 构建命令录进帧命令流（首帧BUILD、之后refit，由PrepareUpdate填充的模式决定）
-            context.command->BuildTopLevelAccelerationStructure(meshManager->GetTLAS());
+            // 一步构建：instance写入+乒乓mode推导（count门控降级BUILD）+屏障录制，全在命令流内完成
+            context.command->BuildTopLevelAccelerationStructure(tlas, instances);
         });
 }

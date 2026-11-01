@@ -43,7 +43,7 @@ vec4 UVToNearest2x2ScreenPixWeights(vec2 uv, ivec2 totalPixels)   // 2x2像素�
                 pixel.x         * pixel.y);
 }
 
-#ifdef WINDOW_WIDTH     // 刀7b-3：伞守卫改窗口宏守卫——弃伞窄头用户（经set2链自带L1 defines）同样可取单参重载
+#ifdef WINDOW_WIDTH    
 
 vec2 ScreenPixToUV(ivec2 pixel) 
 {

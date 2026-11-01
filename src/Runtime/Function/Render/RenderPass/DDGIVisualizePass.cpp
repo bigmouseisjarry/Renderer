@@ -14,7 +14,7 @@ void DDGIVisualizePass::Init()
     rootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetPerFrameRootSignature()->GetInfo())
                      .AddEntry(EngineContext::RenderResource()->GetBindlessRootSignature()->GetInfo())
                      .AddEntry(EngineContext::RenderResource()->GetSet2RootSignature()->GetInfo())       
-                     .AddPushConstant({128, SHADER_FREQUENCY_GRAPHICS});
+                     .AddPushConstant({sizeof(DDGIVisualizeSetting), SHADER_FREQUENCY_GRAPHICS});
     rootSignature = backend->CreateRootSignature(rootSignatureInfo);
 
 

@@ -13,8 +13,8 @@ void VolumetricFogPass::Init()
     RHIRootSignatureInfo rootSignatureInfo = {};
     rootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetPerFrameRootSignature()->GetInfo())
                      .AddEntry(EngineContext::RenderResource()->GetBindlessRootSignature()->GetInfo())
-                     .AddEntry(EngineContext::RenderResource()->GetSet2RootSignature()->GetInfo())       // 刀7b-3：set2全局统一RS（98槽）
-                     .AddPushConstant({128, SHADER_FREQUENCY_COMPUTE});
+                     .AddEntry(EngineContext::RenderResource()->GetSet2RootSignature()->GetInfo())       
+                     .AddPushConstant({sizeof(VolumetricFogSetting), SHADER_FREQUENCY_COMPUTE});
     rootSignature = backend->CreateRootSignature(rootSignatureInfo);
 
     RHIComputePipelineInfo pipelineInfo     = {};
@@ -71,16 +71,18 @@ void VolumetricFogPass::Build(RDGBuilder& builder)
 
         RDGComputePassHandle pass0 = builder.CreateComputePass(GetName() + " Light Injection")
             .RootSignature(rootSignature)
-            .Shaders({computeShader[0].shader})          // 刀7b-3：严格边校验
+            .Shaders({computeShader[0].shader})          
             .ReadWrite(2, SET2_BINDING_LIGHT_CLUSTER_GRID, 0, builder.GetTexture("Light Cluster Grid"), VIEW_TYPE_3D)
             .ReadWrite(2, SET2_BINDING_LIGHT_CLUSTER_INDEX, 0, builder.GetBuffer("Light Cluster Index"))
             .ReadWrite(2, SET2_BINDING_FOG_VOXEL_CURRENT, 0, voxelRaw, VIEW_TYPE_3D)
-            .ReadIfValid(2, SET2_BINDING_DIRECTIONAL_SHADOW, 0, "Directional Depth [0]", VIEW_TYPE_2D, { TEXTURE_ASPECT_DEPTH, 0, 1, 0, 1})
-            .ReadIfValid(2, SET2_BINDING_DIRECTIONAL_SHADOW, 1, "Directional Depth [1]", VIEW_TYPE_2D, { TEXTURE_ASPECT_DEPTH, 0, 1, 0, 1 })
-            .ReadIfValid(2, SET2_BINDING_DIRECTIONAL_SHADOW, 2, "Directional Depth [2]", VIEW_TYPE_2D, { TEXTURE_ASPECT_DEPTH, 0, 1, 0, 1 })
-            .ReadIfValid(2, SET2_BINDING_DIRECTIONAL_SHADOW, 3, "Directional Depth [3]", VIEW_TYPE_2D, { TEXTURE_ASPECT_DEPTH, 0, 1, 0, 1 })
-            .ReadIfValid(2, SET2_BINDING_POINT_SHADOW, 0, "Point Shadow Filtered Color [0]", VIEW_TYPE_CUBE, { TEXTURE_ASPECT_COLOR, 0, 1, 0, 6 })
-            .ReadIfValid(2, SET2_BINDING_POINT_SHADOW, 1, "Point Shadow Filtered Color [1]", VIEW_TYPE_CUBE, { TEXTURE_ASPECT_COLOR, 0, 1, 0, 6 })
+            .Read(2, SET2_BINDING_DIRECTIONAL_SHADOW, 0, builder.GetTexture("Directional Depth [0]"), VIEW_TYPE_2D, { TEXTURE_ASPECT_DEPTH, 0, 1, 0, 1})
+            .Read(2, SET2_BINDING_DIRECTIONAL_SHADOW, 1, builder.GetTexture("Directional Depth [1]"), VIEW_TYPE_2D, { TEXTURE_ASPECT_DEPTH, 0, 1, 0, 1 })
+            .Read(2, SET2_BINDING_DIRECTIONAL_SHADOW, 2, builder.GetTexture("Directional Depth [2]"), VIEW_TYPE_2D, { TEXTURE_ASPECT_DEPTH, 0, 1, 0, 1 })
+            .Read(2, SET2_BINDING_DIRECTIONAL_SHADOW, 3, builder.GetTexture("Directional Depth [3]"), VIEW_TYPE_2D, { TEXTURE_ASPECT_DEPTH, 0, 1, 0, 1 })
+            .Read(2, SET2_BINDING_POINT_SHADOW, 0, builder.GetTexture("Point Shadow Filtered Color [0]"), VIEW_TYPE_CUBE, { TEXTURE_ASPECT_COLOR, 0, 1, 0, 6 })
+            .Read(2, SET2_BINDING_POINT_SHADOW, 1, builder.GetTexture("Point Shadow Filtered Color [1]"), VIEW_TYPE_CUBE, { TEXTURE_ASPECT_COLOR, 0, 1, 0, 6 })
+            .Read(2, SET2_BINDING_POINT_SHADOW, 2, builder.GetTexture("Point Shadow Filtered Color [2]"), VIEW_TYPE_CUBE, { TEXTURE_ASPECT_COLOR, 0, 1, 0, 6 })
+            .Read(2, SET2_BINDING_POINT_SHADOW, 3, builder.GetTexture("Point Shadow Filtered Color [3]"), VIEW_TYPE_CUBE, { TEXTURE_ASPECT_COLOR, 0, 1, 0, 6 })
             .Execute([&](RDGPassContext context) {       
 
                 RHICommandListRef command = context.command; 
@@ -97,7 +99,7 @@ void VolumetricFogPass::Build(RDGBuilder& builder)
 
         RDGComputePassHandle pass1 = builder.CreateComputePass(GetName() + " Integral")
             .RootSignature(rootSignature)
-            .Shaders({computeShader[1].shader})          // 刀7b-3：严格边校验
+            .Shaders({computeShader[1].shader})          
             .ReadWrite(2, SET2_BINDING_FOG_VOXEL_CURRENT, 0, voxelRaw, VIEW_TYPE_3D)
             .ReadWrite(2, SET2_BINDING_FOG_VOXEL_HISTORY, 0, voxelRawHistory, VIEW_TYPE_3D)
             .ReadWrite(2, SET2_BINDING_FOG_VOXEL_INTEGRATED, 0, voxelIntegral, VIEW_TYPE_3D)
@@ -117,7 +119,7 @@ void VolumetricFogPass::Build(RDGBuilder& builder)
 
         RDGComputePassHandle pass2 = builder.CreateComputePass(GetName() + " Combine")
             .RootSignature(rootSignature)
-            .Shaders({computeShader[2].shader})          // 刀7b-3：严格边校验
+            .Shaders({computeShader[2].shader})          
             .Read(2, SET2_BINDING_HISTORY_DEPTH, 0, builder.GetTexture("Depth"))
             .ReadWrite(2, SET2_BINDING_FOG_VOXEL_INTEGRATED, 0, voxelIntegral, VIEW_TYPE_3D)
             .ReadWrite(2, SET2_BINDING_FOG_VOXEL_OUT, 0, outColor)

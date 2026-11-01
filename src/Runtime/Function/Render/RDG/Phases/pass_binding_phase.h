@@ -30,7 +30,6 @@ struct PassBindInfo {
 struct ResourceLifecycleInfo {
     struct LastUse {
         RDGPassNodeRef pass = nullptr;          // 最后一次使用的pass（按执行序）
-        bool pass_has_output_edge = false;      // 该pass是否以output边写出该资源（同pass先读后写时，读不算最后使用）
     };
 
     std::unordered_map<RDGResourceNodeRef, LastUse> last_use;
@@ -62,8 +61,7 @@ public:
     // 绑定查询
     const PassBindInfo* get_pass_bind_info(RDGPassNodeRef pass) const;
 
-    // 生命期查询（供执行期释放）；output 为当前释放边的 IsOutput()，保留旧 IsLastUsedPass 的同pass先读后写规则
-    bool is_last_use(RDGResourceNodeRef resource, RDGPassNodeRef pass, bool output) const;
+    bool is_last_use(RDGResourceNodeRef resource, RDGPassNodeRef pass) const;
     const ResourceLifecycleInfo& get_lifecycle_info() const { return lifecycle_; }
 
     const void debug_info()const;

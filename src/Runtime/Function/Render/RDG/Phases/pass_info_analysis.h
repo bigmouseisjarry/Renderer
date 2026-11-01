@@ -15,10 +15,12 @@ struct ResourceAccessInfo {
     RDGResourceNodeRef resource = nullptr;
     EResourceAccessType access_type;
     RHIResourceState resource_state = RESOURCE_STATE_UNDEFINED;
-    bool is_output = false;    // 是否为output边（pass产出、后续pass消费）：其状态是pass之后的收敛状态，屏障需在pass之后发射
+    uint32_t frequency = SHADER_FREQUENCY_ALL;    // 反射descriptor边=该槽位shader使用频率（屏障阶段收窄用）；非反射边（Color/DS/Copy/虚拟）保持ALL
     
     // Texture subresource range (optional)
-    TextureAspectFlags aspect = TEXTURE_ASPECT_NONE;    // 边声明的aspect：NONE=整资源（RHI侧按格式回退默认aspect）
+    // 以下四值经PassInfoAnalysis展开站具体化（本结构从边提取时aspect=NONE→format推导、
+    // count=0→节点全量已写回边），下游消费一律直读真值、不再展开
+    TextureAspectFlags aspect = TEXTURE_ASPECT_NONE;
     uint32_t mip_base = 0;
     uint32_t mip_count = 0;
     uint32_t array_base = 0;

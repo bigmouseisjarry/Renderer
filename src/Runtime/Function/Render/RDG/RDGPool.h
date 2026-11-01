@@ -189,14 +189,8 @@ public:
         RHIDescriptorSetRef descriptor;  
     };
 
-    // 池键=本pass set2反射used条目足迹(频率归一ALL)+set号;同键⟺实际使用槽位集合相同
-    // ⟹跨足迹陈旧槽污染链断绝(旧键=整个RS entries+set,全引擎pass共用同一套全局拼装RS→单桶,
-    // 前任pass的陈旧槽描述符残留→VUID-vkCmdDraw-None-09600,治本方案)
-    // RS仅用于桶miss时CreateDescriptorSet与静态采样器重播,布局真值不变(键只路由分桶)
     struct Key
     {
-        // 唯一构造点MakeKey:条目按值拷贝后归一(frequency→ALL,used→true),
-        // 并用值初始化条目逐字段拷贝以清零padding——保证同足迹键的Murmur字节哈希跨pass确定一致
         static Key MakeKey(const std::vector<ShaderResourceEntry>& set2Entries, uint32_t set)
         {
             Key k;
@@ -213,9 +207,6 @@ public:
             return k;
         }
 
-        // set0/1专用:沿用改键前的RS-entries语义(字节不变)——
-        // ★set1巨型bindless集必须单桶:NRD静态采样器领用set1,若按足迹分桶,
-        // NRD的3个子pass足迹各异→3套巨型set1×帧槽→显存乘法(OOM定案同型,R5卫生)
         static Key MakeLegacyKey(const RHIRootSignatureInfo& info, uint32_t set)
         {
             Key k;

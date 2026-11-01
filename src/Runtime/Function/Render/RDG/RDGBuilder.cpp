@@ -1,5 +1,4 @@
 #include "RDGBuilder.h"
-
 #include "Core/DependencyGraph/DependencyGraph.h"
 #include "Core/Log/Log.h"
 #include "Core/Util/StringFormat.h"
@@ -9,7 +8,6 @@
 #include "Function/Render/RDG/RDGNode.h"
 #include "Function/Render/RDG/RDGPool.h"
 #include "Function/Render/RHI/RHIStructs.h"
-
 #include <algorithm>
 #include <array>
 #include <cassert>
@@ -92,7 +90,7 @@ RDGTextureBuilder RDGBuilder::GetOrCreateTexture(std::string name)
         validationMode = false;
     }
 
-    return RDGTextureBuilder(this, textureNode, validationMode);    // 漏传validationMode=复用节点时setter会覆写声明（GetOrCreateBuffer:103的对照修复）
+    return RDGTextureBuilder(this, textureNode, validationMode);    // 漏传validationMode=复用节点时setter会覆写声明
 }
 
 RDGBufferBuilder RDGBuilder::GetOrCreateBuffer(std::string name)
@@ -117,7 +115,6 @@ RDGRenderPassBuilder RDGBuilder::CreateRenderPass(std::string name)
 
     RDGRenderPassNodeRef passNode = graph->CreateRenderPassNode(name);
     blackBoard.AddPass(passNode);
-    // passes.push_back(passNode);
     return RDGRenderPassBuilder(this, passNode);
 }
 
@@ -128,7 +125,6 @@ RDGComputePassBuilder RDGBuilder::CreateComputePass(std::string name)
 
     RDGComputePassNodeRef passNode = graph->CreateComputePassNode(name);
     blackBoard.AddPass(passNode);
-    // passes.push_back(passNode);
     return RDGComputePassBuilder(this, passNode);
 }
 
@@ -139,7 +135,6 @@ RDGRayTracingPassBuilder RDGBuilder::CreateRayTracingPass(std::string name)
 
     RDGRayTracingPassNodeRef passNode = graph->CreateRayTracingPassNode(name);
     blackBoard.AddPass(passNode);
-    // passes.push_back(passNode);
     return RDGRayTracingPassBuilder(this, passNode);
 }
 
@@ -150,7 +145,6 @@ RDGPresentPassBuilder RDGBuilder::CreatePresentPass(std::string name)
 
     RDGPresentPassNodeRef passNode = graph->CreatePresentPassNode(name);
     blackBoard.AddPass(passNode);
-    // passes.push_back(passNode);
     return RDGPresentPassBuilder(this, passNode);
 }
 
@@ -163,12 +157,6 @@ RDGCopyPassBuilder RDGBuilder::CreateCopyPass(std::string name)
     blackBoard.AddPass(passNode);
     // passes.push_back(passNode);
     return RDGCopyPassBuilder(this, passNode);
-}
-
-RDGTextureHandle RDGBuilder::FindTexture(const std::string& name)
-{
-    auto node = blackBoard.Texture(name);
-    return node == nullptr ? RDGTextureHandle(UINT64_MAX) : node->GetHandle();
 }
 
 RDGTextureHandle RDGBuilder::GetTexture(std::string name)
@@ -328,15 +316,10 @@ RDGTextureBuilder& RDGTextureBuilder::AllowDepthStencil()
 
 RDGTextureBuilder& RDGTextureBuilder::MipLevels(uint32_t mipLevels)
 {
-    if (mipLevels == 0)
-    {
-        assert(texture->info.extent.width != 0 || texture->info.extent.height != 0 || texture->info.extent.depth != 0);
-        mipLevels = texture->info.extent.MipSize();
-    }
-
+    // 默认值(0=按extent推导)的展开已移交PassInfoAnalysis展开站——Builder只记声明
     if(validationMode)
     {
-        assert(texture->info.mipLevels == mipLevels);
+        assert(mipLevels == 0 || texture->info.mipLevels == mipLevels);
     }
     else
     {
@@ -344,7 +327,7 @@ RDGTextureBuilder& RDGTextureBuilder::MipLevels(uint32_t mipLevels)
     }
 
     return *this;
-}   
+}
 
 RDGTextureBuilder& RDGTextureBuilder::ArrayLayers(uint32_t arrayLayers)
 {
@@ -465,49 +448,69 @@ RDGBufferBuilder& RDGBufferBuilder::AllowRead()
     return *this;    
 }
 
-// ===== S3:反射驱动描述符边的公共辅助(file-static,三builder共享) =====
-// 注:辅助函数非友元拿不到RDGPassNode保护成员,故条目数组/补齐标记/迁移门
-// 由各builder成员函数(经派生节点友元关系)按引用传入
-
-// 查条目:未声明shaders/槽位不在反射条目中(漏边或槽位宏写错)——当场致命
+// 未声明shaders/槽位不在反射条目中
 static const ShaderResourceEntry* RequireSet2Entry(const std::vector<ShaderResourceEntry>& set2Entries, const std::string& passName, uint32_t set, uint32_t binding)
 {
     for (const ShaderResourceEntry& e : set2Entries)
         if (e.set == set && e.binding == binding)
             return &e;
-    LOG_FATAL("pass[%s]: 描述符边槽位(set=%u,binding=%u)不在.Shaders()反射条目中(未声明shaders/漏边/槽位宏写错)", passName.c_str(), set, binding);
+    std::string inventory;
+    for (const ShaderResourceEntry& e : set2Entries)
+        inventory += std::to_string(e.binding) + " ";
+    LOG_FATAL("pass[%s]: descriptor edge slot (set=%u,binding=%u) not in .Shaders() reflected entries (shaders undeclared / missing edge / wrong slot macro). Actual entries [%zu]: %s",
+        passName.c_str(), set, binding, set2Entries.size(), inventory.c_str());
     return nullptr;    // LOG_FATAL必抛,返回仅为控制流完备
 }
 
-// 族校验:反射type须属于该API允许的族(位与判定;族矩阵来自S0核实的Spv反射映射终稿)
-static void CheckEdgeFamily(const char* api, const std::string& passName, const ShaderResourceEntry& e, uint32_t allowedBits)
+// 反射type须属于该API允许的族
+static void CheckEdgeFamily(const std::string& api, const std::string& passName, const ShaderResourceEntry& e, uint32_t allowedBits)
 {
     if ((e.type & allowedBits) == 0)    // 反射type为单bit,位与为零=不在族内
-        LOG_FATAL("pass[%s]: %s槽(set=%u,binding=%u)反射type=0x%x不属于该API允许族0x%x", passName.c_str(), api, e.set, e.binding, e.type, allowedBits);
+        LOG_FATAL("pass[%s]: %s slot (set=%u,binding=%u) reflected type=0x%x not in allowed family 0x%x", passName.c_str(), api.c_str(), e.set, e.binding, e.type, allowedBits);
 }
 
-// 包含校验:反射type必须按位包含于资源desc的info.type——资源侧声明过窄是存量bug面,点名不静默
-static void CheckTypeContained(const char* api, const std::string& passName, const ShaderResourceEntry& e, uint32_t resourceInfoType)
+// 反射type必须按位包含于资源desc的info.type
+static void CheckTypeContained(const std::string& api, const std::string& passName, const ShaderResourceEntry& e, uint32_t resourceInfoType)
 {
     if ((e.type & resourceInfoType) != e.type)
-        LOG_FATAL("pass[%s]: %s槽(set=%u,binding=%u)反射type=0x%x未被资源desc包含(info.type=0x%x,资源侧声明过窄)", passName.c_str(), api, e.set, e.binding, e.type, resourceInfoType);
+        LOG_FATAL("pass[%s]: %s slot (set=%u,binding=%u) reflected type=0x%x not contained in resource info.type=0x%x (resource-side declaration too narrow)", passName.c_str(), api.c_str(), e.set, e.binding, e.type, resourceInfoType);
 }
 
-// 收尾:回填type/frequency(反射为唯一来源,取代调用方手填)+标记done+置迁移门
-static void FinalizeDescriptorEdge(const ShaderResourceEntry& e, RDGTextureEdgeRef edge, uint8_t& doneFlag, bool& migratedFlag)
+void AuditSet2ElementCoverage(RDGDependencyGraphRef graph, RDGPassNodeRef pass, const std::vector<ShaderResourceEntry>& entries, const std::string& passName)
 {
-    edge->type = e.type;
-    edge->frequency = e.frequency;
-    doneFlag = 1;
-    migratedFlag = true;
-}
+    std::unordered_map<uint32_t, std::vector<uint32_t>> written;   // binding→已声明边的index集
+    graph->ForEachTexture(pass, [&](RDGTextureEdgeRef edge, RDGTextureNodeRef) {
+        if (edge->set == 2 && (edge->asShaderRead || edge->asShaderReadWrite))
+            written[edge->binding].push_back(edge->index);
+    });
+    graph->ForEachBuffer(pass, [&](RDGBufferEdgeRef edge, RDGBufferNodeRef) {
+        if (edge->set == 2 && (edge->asShaderRead || edge->asShaderReadWrite))
+            written[edge->binding].push_back(edge->index);
+    });
 
-static void FinalizeDescriptorEdge(const ShaderResourceEntry& e, RDGBufferEdgeRef edge, uint8_t& doneFlag, bool& migratedFlag)
-{
-    edge->type = e.type;
-    edge->frequency = e.frequency;
-    doneFlag = 1;
-    migratedFlag = true;
+    static std::unordered_set<std::string> reported;   // 进程内去重
+    for (const ShaderResourceEntry& e : entries)
+    {
+        // size==0=shader侧单块/无维度声明（如INDIRECT_MESH_DRAW_DATAS——RS侧按数组用,shader侧
+        // 声明单块,反射报0）——元素粒度对账无据可依,整条跳过（哨兵侧同因天然免疫）
+        if (e.size == 0) continue;
+
+        const std::vector<uint32_t>& indices = written[e.binding];   // 无键=空
+        for (uint32_t idx : indices)
+            if (idx >= e.size)
+                LOG_FATAL("pass[%s]: set2 b%u[%u] out-of-range write: edge index >= declared count=%u (deterministic error)", passName.c_str(), e.binding, idx, e.size);
+        for (uint32_t i = 0; i < e.size; i++)
+        {
+            bool covered = false;
+            for (uint32_t idx : indices) 
+                if (idx == i) { covered = true; break; }
+            if (covered) continue;
+            std::string key = passName + ":" + std::to_string(e.binding) + ":" + std::to_string(i);
+            if (reported.insert(std::move(key)).second)
+                ENGINE_LOG_WARN("[Set2Gap] pass[{}] set2 b{}[{}]: declared count={} with no covering edge (Finish gate element granularity, cross-checked with [DanglingSlot] sentinel)",
+                    passName.c_str(), e.binding, i, e.size);
+        }
+    }
 }
 
 RDGRenderPassBuilder& RDGRenderPassBuilder::PassIndex(uint32_t x, uint32_t y, uint32_t z)
@@ -527,9 +530,8 @@ RDGRenderPassBuilder& RDGRenderPassBuilder::RootSignature(RHIRootSignatureRef ro
 RDGRenderPassBuilder& RDGRenderPassBuilder::Shaders(std::initializer_list<RHIShaderRef> shaders)
 {
     // 双重声明守卫:二次调用会静默重置条目数组,直接致命
-    if (pass->shadersDeclared) LOG_FATAL("pass[%s]: .Shaders()被调用两次", pass->Name().c_str());
+    if (pass->shadersDeclared) LOG_FATAL("pass[%s]: .Shaders() called twice", pass->Name().c_str());
     // 边后调用守卫:新边API已用后再声明会静默重置done标记,同样致命(R9)
-    if (pass->bindingApiMigrated) LOG_FATAL("pass[%s]: .Shaders()必须在描述符边之前调用", pass->Name().c_str());
     pass->shadersDeclared = true;
 
     pass->set2Entries.clear();
@@ -544,7 +546,7 @@ RDGRenderPassBuilder& RDGRenderPassBuilder::Shaders(std::initializer_list<RHISha
             if (exist)
             {
                 if (exist->type != e.type)
-                    LOG_FATAL("pass[%s]: set2槽(set=%u,binding=%u)类型冲突 0x%x vs 0x%x", pass->Name().c_str(), e.set, e.binding, exist->type, e.type);
+                    LOG_FATAL("pass[%s]: set2 slot (set=%u,binding=%u) type conflict 0x%x vs 0x%x", pass->Name().c_str(), e.set, e.binding, exist->type, e.type);
                 exist->frequency |= e.frequency;
                 exist->size = std::max(exist->size, e.size);
             }
@@ -556,53 +558,17 @@ RDGRenderPassBuilder& RDGRenderPassBuilder::Shaders(std::initializer_list<RHISha
         if (a.set != b.set) return a.set < b.set;
         return a.binding < b.binding;
     });
-    pass->set2EntryDone.assign(pass->set2Entries.size(), 0);
     return *this;
 }
 
-RDGRenderPassBuilder& RDGRenderPassBuilder::Conditional(uint32_t set, uint32_t binding)
-{
-    pass->conditionalBindings.push_back({set, binding});     // 动态分支守护的静态访问：边校验放行（自担运行期不达的证明责任）
-    return *this;
-}
-
-RDGRenderPassBuilder& RDGRenderPassBuilder::DescriptorSet(uint32_t set, RHIDescriptorSetRef descriptorSet)
-{
-    pass->descriptorSets[set] = descriptorSet;
-    return *this;  
-}
-
-RDGRenderPassBuilder& RDGRenderPassBuilder::Read(uint32_t set, uint32_t binding, uint32_t index, RDGBufferHandle buffer, uint32_t offset, uint32_t size, ResourceType type)
-{
-    RDGBufferEdgeRef edge = new RDGBufferEdge();
-    edge->state = RESOURCE_STATE_SHADER_RESOURCE;
-    edge->offset = offset;
-    edge->size = size;
-    edge->asShaderRead = true;
-    edge->set = set;
-    edge->binding = binding;
-    edge->index = index;
-    edge->type = type;      // UBO与SSBO同为读类别但描述符类型不同，须与根签名条目一致（曾硬编码UNIFORM_BUFFER导致SSBO读VUID-00319）
-
-    graph->Link(graph->GetBufferNode(buffer.ID()), pass, edge);
-
-    return *this;
-}
-
-RDGRenderPassBuilder& RDGRenderPassBuilder::ReadIfValid(uint32_t set, uint32_t binding, uint32_t index, const std::string& name, TextureViewType viewType, TextureSubresourceRange subresource)
-{
-    RDGTextureHandle texture = builder->FindTexture(name);      // 条件性资源（无阴影光源帧/RT模式禁G-Buffer/未启用体积雾等）缺席时静默跳过
-    if(texture.ID() == UINT64_MAX)
-    {
-        pass->conditionalBindings.push_back({set, binding});    // 刀7b-5：缺席留痕——边校验放行+计数（悬空槽检出的合法出口）
-        return *this;
-    }
-    return Read(set, binding, index, texture, viewType, subresource);
-}
-
-
+// ===== S3:反射驱动描述符边(type/frequency由.Shaders()反射条目回填,取代调用方手填;
 RDGRenderPassBuilder& RDGRenderPassBuilder::Read(uint32_t set, uint32_t binding, uint32_t index, RDGTextureHandle texture, TextureViewType viewType, TextureSubresourceRange subresource)
 {
+    RDGTextureNodeRef node = graph->GetTextureNode(texture.ID());
+    const ShaderResourceEntry& e = *RequireSet2Entry(pass->set2Entries, pass->Name(), set, binding);
+    CheckEdgeFamily("Read(tex)", pass->Name(), e, RESOURCE_TYPE_TEXTURE | RESOURCE_TYPE_TEXTURE_CUBE | RESOURCE_TYPE_COMBINED_IMAGE_SAMPLER);
+    CheckTypeContained("Read(tex)", pass->Name(), e, node->GetInfo().type);
+
     RDGTextureEdgeRef edge = new RDGTextureEdge();
     edge->state = RESOURCE_STATE_SHADER_RESOURCE;
     edge->subresource = subresource;
@@ -610,79 +576,22 @@ RDGRenderPassBuilder& RDGRenderPassBuilder::Read(uint32_t set, uint32_t binding,
     edge->set = set;
     edge->binding = binding;
     edge->index = index;
-    edge->type = RESOURCE_TYPE_TEXTURE;
     edge->viewType = viewType;
 
-    graph->Link(graph->GetTextureNode(texture.ID()), pass, edge);
+    edge->type = e.type;
+    edge->frequency = e.frequency;
 
-    return *this;
-}
-
-RDGRenderPassBuilder& RDGRenderPassBuilder::ReadWrite(uint32_t set, uint32_t binding, uint32_t index, RDGBufferHandle buffer, uint32_t offset, uint32_t size)
-{
-    RDGBufferEdgeRef edge = new RDGBufferEdge();
-    edge->state = RESOURCE_STATE_UNORDERED_ACCESS;
-    edge->offset = offset;
-    edge->size = size;
-    edge->asShaderReadWrite = true;
-    edge->set = set;
-    edge->binding = binding;
-    edge->index = index;
-    edge->type = RESOURCE_TYPE_RW_BUFFER;
-
-    graph->Link(pass, graph->GetBufferNode(buffer.ID()), edge);
+    graph->Link(node, pass, edge);
 
     return *this;
 }
 
 RDGRenderPassBuilder& RDGRenderPassBuilder::ReadWrite(uint32_t set, uint32_t binding, uint32_t index, RDGTextureHandle texture, TextureViewType viewType, TextureSubresourceRange subresource)
 {
-    RDGTextureEdgeRef edge = new RDGTextureEdge();
-    edge->state = RESOURCE_STATE_UNORDERED_ACCESS;
-    edge->subresource = subresource;
-    edge->asShaderReadWrite = true;
-    edge->set = set;
-    edge->binding = binding;
-    edge->index = index;
-    edge->type = RESOURCE_TYPE_RW_TEXTURE;
-    edge->viewType = viewType;
-
-    graph->Link(pass, graph->GetTextureNode(texture.ID()), edge);
-
-    return *this;
-}
-
-// ===== S3:反射驱动描述符边(type/frequency由.Shaders()反射条目回填,取代调用方手填) =====
-
-RDGRenderPassBuilder& RDGRenderPassBuilder::ReadTexture(uint32_t set, uint32_t binding, RDGTextureHandle texture, uint32_t index, TextureViewType viewType, TextureSubresourceRange subresource)
-{
     RDGTextureNodeRef node = graph->GetTextureNode(texture.ID());
     const ShaderResourceEntry& e = *RequireSet2Entry(pass->set2Entries, pass->Name(), set, binding);
-    CheckEdgeFamily("ReadTexture", pass->Name(), e, RESOURCE_TYPE_TEXTURE | RESOURCE_TYPE_TEXTURE_CUBE | RESOURCE_TYPE_COMBINED_IMAGE_SAMPLER);
-    CheckTypeContained("ReadTexture", pass->Name(), e, node->GetInfo().type);
-
-    RDGTextureEdgeRef edge = new RDGTextureEdge();
-    edge->state = RESOURCE_STATE_SHADER_RESOURCE;
-    edge->subresource = subresource;
-    edge->asShaderRead = true;
-    edge->set = set;
-    edge->binding = binding;
-    edge->index = index;
-    edge->viewType = viewType;
-
-    FinalizeDescriptorEdge(e, edge, pass->set2EntryDone[static_cast<size_t>(&e - pass->set2Entries.data())], pass->bindingApiMigrated);
-
-    graph->Link(node, pass, edge);
-
-    return *this;
-}
-
-RDGRenderPassBuilder& RDGRenderPassBuilder::ReadWriteTexture(uint32_t set, uint32_t binding, RDGTextureHandle texture, uint32_t index, TextureViewType viewType, TextureSubresourceRange subresource)
-{
-    RDGTextureNodeRef node = graph->GetTextureNode(texture.ID());
-    const ShaderResourceEntry& e = *RequireSet2Entry(pass->set2Entries, pass->Name(), set, binding);
-    CheckEdgeFamily("ReadWriteTexture", pass->Name(), e, RESOURCE_TYPE_RW_TEXTURE);
-    CheckTypeContained("ReadWriteTexture", pass->Name(), e, node->GetInfo().type);
+    CheckEdgeFamily("ReadWrite(tex)", pass->Name(), e, RESOURCE_TYPE_RW_TEXTURE);
+    CheckTypeContained("ReadWrite(tex)", pass->Name(), e, node->GetInfo().type);
 
     RDGTextureEdgeRef edge = new RDGTextureEdge();
     edge->state = RESOURCE_STATE_UNORDERED_ACCESS;
@@ -693,19 +602,20 @@ RDGRenderPassBuilder& RDGRenderPassBuilder::ReadWriteTexture(uint32_t set, uint3
     edge->index = index;
     edge->viewType = viewType;
 
-    FinalizeDescriptorEdge(e, edge, pass->set2EntryDone[static_cast<size_t>(&e - pass->set2Entries.data())], pass->bindingApiMigrated);
+    edge->type = e.type;
+    edge->frequency = e.frequency;
 
     graph->Link(pass, node, edge);
 
     return *this;
 }
 
-RDGRenderPassBuilder& RDGRenderPassBuilder::ReadBuffer(uint32_t set, uint32_t binding, RDGBufferHandle buffer, uint32_t offset, uint32_t size, uint32_t index)
+RDGRenderPassBuilder& RDGRenderPassBuilder::Read(uint32_t set, uint32_t binding, uint32_t index, RDGBufferHandle buffer, uint32_t offset, uint32_t size)
 {
     RDGBufferNodeRef node = graph->GetBufferNode(buffer.ID());
     const ShaderResourceEntry& e = *RequireSet2Entry(pass->set2Entries, pass->Name(), set, binding);
-    CheckEdgeFamily("ReadBuffer", pass->Name(), e, RESOURCE_TYPE_UNIFORM_BUFFER | RESOURCE_TYPE_RW_BUFFER | RESOURCE_TYPE_TEXEL_BUFFER);
-    CheckTypeContained("ReadBuffer", pass->Name(), e, node->GetInfo().type);
+    CheckEdgeFamily("Read(buf)", pass->Name(), e, RESOURCE_TYPE_UNIFORM_BUFFER | RESOURCE_TYPE_RW_BUFFER | RESOURCE_TYPE_TEXEL_BUFFER);
+    CheckTypeContained("Read(buf)", pass->Name(), e, node->GetInfo().type);
 
     RDGBufferEdgeRef edge = new RDGBufferEdge();
     edge->state = RESOURCE_STATE_SHADER_RESOURCE;
@@ -716,19 +626,20 @@ RDGRenderPassBuilder& RDGRenderPassBuilder::ReadBuffer(uint32_t set, uint32_t bi
     edge->binding = binding;
     edge->index = index;
 
-    FinalizeDescriptorEdge(e, edge, pass->set2EntryDone[static_cast<size_t>(&e - pass->set2Entries.data())], pass->bindingApiMigrated);
+    edge->type = e.type;
+    edge->frequency = e.frequency;
 
     graph->Link(node, pass, edge);
 
     return *this;
 }
 
-RDGRenderPassBuilder& RDGRenderPassBuilder::ReadWriteBuffer(uint32_t set, uint32_t binding, RDGBufferHandle buffer, uint32_t offset, uint32_t size, uint32_t index)
+RDGRenderPassBuilder& RDGRenderPassBuilder::ReadWrite(uint32_t set, uint32_t binding, uint32_t index, RDGBufferHandle buffer, uint32_t offset, uint32_t size)
 {
     RDGBufferNodeRef node = graph->GetBufferNode(buffer.ID());
     const ShaderResourceEntry& e = *RequireSet2Entry(pass->set2Entries, pass->Name(), set, binding);
-    CheckEdgeFamily("ReadWriteBuffer", pass->Name(), e, RESOURCE_TYPE_RW_BUFFER | RESOURCE_TYPE_RW_TEXEL_BUFFER);
-    CheckTypeContained("ReadWriteBuffer", pass->Name(), e, node->GetInfo().type);
+    CheckEdgeFamily("ReadWrite(buf)", pass->Name(), e, RESOURCE_TYPE_RW_BUFFER | RESOURCE_TYPE_RW_TEXEL_BUFFER);
+    CheckTypeContained("ReadWrite(buf)", pass->Name(), e, node->GetInfo().type);
 
     RDGBufferEdgeRef edge = new RDGBufferEdge();
     edge->state = RESOURCE_STATE_UNORDERED_ACCESS;
@@ -739,7 +650,8 @@ RDGRenderPassBuilder& RDGRenderPassBuilder::ReadWriteBuffer(uint32_t set, uint32
     edge->binding = binding;
     edge->index = index;
 
-    FinalizeDescriptorEdge(e, edge, pass->set2EntryDone[static_cast<size_t>(&e - pass->set2Entries.data())], pass->bindingApiMigrated);
+    edge->type = e.type;
+    edge->frequency = e.frequency;
 
     graph->Link(pass, node, edge);
 
@@ -792,31 +704,6 @@ RDGRenderPassBuilder& RDGRenderPassBuilder::DepthStencil(   RDGTextureHandle tex
 RDGRenderPassBuilder& RDGRenderPassBuilder::Multiview(uint32_t multiviewCount)
 {
     pass->multiviewCount = multiviewCount;
-
-    return *this;
-}
-
-RDGRenderPassBuilder& RDGRenderPassBuilder::OutputRead(RDGBufferHandle buffer, uint32_t offset, uint32_t size)
-{
-    RDGBufferEdgeRef edge = new RDGBufferEdge();
-    edge->state = RESOURCE_STATE_SHADER_RESOURCE;
-    edge->offset = offset;
-    edge->size = size;
-    edge->asOutputRead = true;
-
-    graph->Link(pass, graph->GetBufferNode(buffer.ID()), edge);
-
-    return *this;
-}
-
-RDGRenderPassBuilder& RDGRenderPassBuilder::OutputRead(RDGTextureHandle texture, TextureSubresourceRange subresource)
-{
-    RDGTextureEdgeRef edge = new RDGTextureEdge();
-    edge->state = RESOURCE_STATE_SHADER_RESOURCE;
-    edge->subresource = subresource;
-    edge->asOutputRead = true;
-
-    graph->Link(pass, graph->GetTextureNode(texture.ID()), edge);
 
     return *this;
 }
@@ -879,31 +766,6 @@ RDGRenderPassBuilder& RDGRenderPassBuilder::ReadAccelerationStructure(RDGBufferH
     return *this;
 }
 
-RDGRenderPassBuilder& RDGRenderPassBuilder::OutputReadWrite(RDGBufferHandle buffer, uint32_t offset, uint32_t size)
-{
-    RDGBufferEdgeRef edge = new RDGBufferEdge();
-    edge->state = RESOURCE_STATE_UNORDERED_ACCESS;
-    edge->offset = offset;
-    edge->size = size;
-    edge->asOutputReadWrite = true;
-
-    graph->Link(pass, graph->GetBufferNode(buffer.ID()), edge);
-
-    return *this;
-}
-
-RDGRenderPassBuilder& RDGRenderPassBuilder::OutputReadWrite(RDGTextureHandle texture, TextureSubresourceRange subresource)
-{
-    RDGTextureEdgeRef edge = new RDGTextureEdge();
-    edge->state = RESOURCE_STATE_UNORDERED_ACCESS;
-    edge->subresource = subresource;
-    edge->asOutputReadWrite = true;
-
-    graph->Link(pass, graph->GetTextureNode(texture.ID()), edge);
-
-    return *this;
-}
-
 RDGRenderPassBuilder& RDGRenderPassBuilder::Execute(const RDGPassExecuteFunc& execute)
 {
     pass->execute = execute;
@@ -933,9 +795,8 @@ RDGComputePassBuilder& RDGComputePassBuilder::RootSignature(RHIRootSignatureRef 
 RDGComputePassBuilder& RDGComputePassBuilder::Shaders(std::initializer_list<RHIShaderRef> shaders)
 {
     // 双重声明守卫:二次调用会静默重置条目数组,直接致命
-    if (pass->shadersDeclared) LOG_FATAL("pass[%s]: .Shaders()被调用两次", pass->Name().c_str());
+    if (pass->shadersDeclared) LOG_FATAL("pass[%s]: .Shaders() called twice", pass->Name().c_str());
     // 边后调用守卫:新边API已用后再声明会静默重置done标记,同样致命(R9)
-    if (pass->bindingApiMigrated) LOG_FATAL("pass[%s]: .Shaders()必须在描述符边之前调用", pass->Name().c_str());
     pass->shadersDeclared = true;
 
     pass->set2Entries.clear();
@@ -950,7 +811,7 @@ RDGComputePassBuilder& RDGComputePassBuilder::Shaders(std::initializer_list<RHIS
             if (exist)
             {
                 if (exist->type != e.type)
-                    LOG_FATAL("pass[%s]: set2槽(set=%u,binding=%u)类型冲突 0x%x vs 0x%x", pass->Name().c_str(), e.set, e.binding, exist->type, e.type);
+                    LOG_FATAL("pass[%s]: set2 slot (set=%u,binding=%u) type conflict 0x%x vs 0x%x", pass->Name().c_str(), e.set, e.binding, exist->type, e.type);
                 exist->frequency |= e.frequency;
                 exist->size = std::max(exist->size, e.size);
             }
@@ -962,24 +823,12 @@ RDGComputePassBuilder& RDGComputePassBuilder::Shaders(std::initializer_list<RHIS
         if (a.set != b.set) return a.set < b.set;
         return a.binding < b.binding;
     });
-    pass->set2EntryDone.assign(pass->set2Entries.size(), 0);
     return *this;
 }
 
-RDGComputePassBuilder& RDGComputePassBuilder::Conditional(uint32_t set, uint32_t binding)
+RDGComputePassBuilder& RDGComputePassBuilder::ReadBuffer(uint32_t set, uint32_t binding, uint32_t index, RDGBufferHandle buffer, uint32_t offset, uint32_t size, ResourceType type)
 {
-    pass->conditionalBindings.push_back({set, binding});     // 动态分支守护的静态访问：边校验放行（自担运行期不达的证明责任）
-    return *this;
-}
-
-RDGComputePassBuilder& RDGComputePassBuilder::DescriptorSet(uint32_t set, RHIDescriptorSetRef descriptorSet)
-{
-    pass->descriptorSets[set] = descriptorSet;
-    return *this;  
-}  
-
-RDGComputePassBuilder& RDGComputePassBuilder::Read(uint32_t set, uint32_t binding, uint32_t index, RDGBufferHandle buffer, uint32_t offset, uint32_t size, ResourceType type)
-{
+    if (set == 2) LOG_FATAL("pass[%s]: set2 edges must use Read/ReadWrite (reflection family short names); this is the legacy slotted family (pre-swap Read), reserved for NRD set0/1 dynamic binding", pass->Name().c_str());
     RDGBufferEdgeRef edge = new RDGBufferEdge();
     edge->state = RESOURCE_STATE_SHADER_RESOURCE;
     edge->offset = offset;
@@ -995,20 +844,10 @@ RDGComputePassBuilder& RDGComputePassBuilder::Read(uint32_t set, uint32_t bindin
     return *this;
 }
 
-RDGComputePassBuilder& RDGComputePassBuilder::ReadIfValid(uint32_t set, uint32_t binding, uint32_t index, const std::string& name, TextureViewType viewType, TextureSubresourceRange subresource)
-{
-    RDGTextureHandle texture = builder->FindTexture(name);      // 条件性资源（无阴影光源帧/RT模式禁G-Buffer/未启用体积光等）缺席时静默跳过
-    if(texture.ID() == UINT64_MAX)
-    {
-        pass->conditionalBindings.push_back({set, binding});    // 刀7b-5：缺席留痕——边校验放行+计数（悬空槽检出的合法出口）
-        return *this;
-    }
-    return Read(set, binding, index, texture, viewType, subresource);
-}
 
-
-RDGComputePassBuilder& RDGComputePassBuilder::Read(uint32_t set, uint32_t binding, uint32_t index, RDGTextureHandle texture, TextureViewType viewType, TextureSubresourceRange subresource)
+RDGComputePassBuilder& RDGComputePassBuilder::ReadTexture(uint32_t set, uint32_t binding, uint32_t index, RDGTextureHandle texture, TextureViewType viewType, TextureSubresourceRange subresource)
 {
+    if (set == 2) LOG_FATAL("pass[%s]: set2 edges must use Read/ReadWrite (reflection family short names); this is the legacy slotted family (pre-swap Read), reserved for NRD set0/1 dynamic binding", pass->Name().c_str());
     RDGTextureEdgeRef edge = new RDGTextureEdge();
     edge->state = RESOURCE_STATE_SHADER_RESOURCE;
     edge->subresource = subresource;
@@ -1082,25 +921,9 @@ RDGComputePassBuilder& RDGComputePassBuilder::ReadAccelerationStructure(RDGBuffe
     return *this;
 }
 
-RDGComputePassBuilder& RDGComputePassBuilder::ReadWrite(uint32_t set, uint32_t binding, uint32_t index, RDGBufferHandle buffer, uint32_t offset, uint32_t size)
+RDGComputePassBuilder& RDGComputePassBuilder::ReadWriteTexture(uint32_t set, uint32_t binding, uint32_t index, RDGTextureHandle texture, TextureViewType viewType, TextureSubresourceRange subresource)
 {
-    RDGBufferEdgeRef edge = new RDGBufferEdge();
-    edge->state = RESOURCE_STATE_UNORDERED_ACCESS;
-    edge->offset = offset;
-    edge->size = size;
-    edge->asShaderReadWrite = true;
-    edge->set = set;
-    edge->binding = binding;
-    edge->index = index;
-    edge->type = RESOURCE_TYPE_RW_BUFFER;
-
-    graph->Link(pass, graph->GetBufferNode(buffer.ID()), edge);
-
-    return *this;
-}
-
-RDGComputePassBuilder& RDGComputePassBuilder::ReadWrite(uint32_t set, uint32_t binding, uint32_t index, RDGTextureHandle texture, TextureViewType viewType, TextureSubresourceRange subresource)
-{
+    if (set == 2) LOG_FATAL("pass[%s]: set2 edges must use Read/ReadWrite (reflection family short names); this is the legacy slotted family (pre-swap ReadWrite), reserved for NRD set0/1 dynamic binding", pass->Name().c_str());
     RDGTextureEdgeRef edge = new RDGTextureEdge();
     edge->state = RESOURCE_STATE_UNORDERED_ACCESS;
     edge->subresource = subresource;
@@ -1116,14 +939,12 @@ RDGComputePassBuilder& RDGComputePassBuilder::ReadWrite(uint32_t set, uint32_t b
     return *this;
 }
 
-// ===== S3:反射驱动描述符边(type/frequency由.Shaders()反射条目回填,取代调用方手填) =====
-
-RDGComputePassBuilder& RDGComputePassBuilder::ReadTexture(uint32_t set, uint32_t binding, RDGTextureHandle texture, uint32_t index, TextureViewType viewType, TextureSubresourceRange subresource)
+RDGComputePassBuilder& RDGComputePassBuilder::Read(uint32_t set, uint32_t binding, uint32_t index, RDGTextureHandle texture, TextureViewType viewType, TextureSubresourceRange subresource)
 {
     RDGTextureNodeRef node = graph->GetTextureNode(texture.ID());
     const ShaderResourceEntry& e = *RequireSet2Entry(pass->set2Entries, pass->Name(), set, binding);
-    CheckEdgeFamily("ReadTexture", pass->Name(), e, RESOURCE_TYPE_TEXTURE | RESOURCE_TYPE_TEXTURE_CUBE | RESOURCE_TYPE_COMBINED_IMAGE_SAMPLER);
-    CheckTypeContained("ReadTexture", pass->Name(), e, node->GetInfo().type);
+    CheckEdgeFamily("Read(tex)", pass->Name(), e, RESOURCE_TYPE_TEXTURE | RESOURCE_TYPE_TEXTURE_CUBE | RESOURCE_TYPE_COMBINED_IMAGE_SAMPLER);
+    CheckTypeContained("Read(tex)", pass->Name(), e, node->GetInfo().type);
 
     RDGTextureEdgeRef edge = new RDGTextureEdge();
     edge->state = RESOURCE_STATE_SHADER_RESOURCE;
@@ -1134,19 +955,20 @@ RDGComputePassBuilder& RDGComputePassBuilder::ReadTexture(uint32_t set, uint32_t
     edge->index = index;
     edge->viewType = viewType;
 
-    FinalizeDescriptorEdge(e, edge, pass->set2EntryDone[static_cast<size_t>(&e - pass->set2Entries.data())], pass->bindingApiMigrated);
+    edge->type = e.type;
+    edge->frequency = e.frequency;
 
     graph->Link(node, pass, edge);
 
     return *this;
 }
 
-RDGComputePassBuilder& RDGComputePassBuilder::ReadWriteTexture(uint32_t set, uint32_t binding, RDGTextureHandle texture, uint32_t index, TextureViewType viewType, TextureSubresourceRange subresource)
+RDGComputePassBuilder& RDGComputePassBuilder::ReadWrite(uint32_t set, uint32_t binding, uint32_t index, RDGTextureHandle texture, TextureViewType viewType, TextureSubresourceRange subresource)
 {
     RDGTextureNodeRef node = graph->GetTextureNode(texture.ID());
     const ShaderResourceEntry& e = *RequireSet2Entry(pass->set2Entries, pass->Name(), set, binding);
-    CheckEdgeFamily("ReadWriteTexture", pass->Name(), e, RESOURCE_TYPE_RW_TEXTURE);
-    CheckTypeContained("ReadWriteTexture", pass->Name(), e, node->GetInfo().type);
+    CheckEdgeFamily("ReadWrite(tex)", pass->Name(), e, RESOURCE_TYPE_RW_TEXTURE);
+    CheckTypeContained("ReadWrite(tex)", pass->Name(), e, node->GetInfo().type);
 
     RDGTextureEdgeRef edge = new RDGTextureEdge();
     edge->state = RESOURCE_STATE_UNORDERED_ACCESS;
@@ -1157,19 +979,20 @@ RDGComputePassBuilder& RDGComputePassBuilder::ReadWriteTexture(uint32_t set, uin
     edge->index = index;
     edge->viewType = viewType;
 
-    FinalizeDescriptorEdge(e, edge, pass->set2EntryDone[static_cast<size_t>(&e - pass->set2Entries.data())], pass->bindingApiMigrated);
+    edge->type = e.type;
+    edge->frequency = e.frequency;
 
     graph->Link(pass, node, edge);
 
     return *this;
 }
 
-RDGComputePassBuilder& RDGComputePassBuilder::ReadBuffer(uint32_t set, uint32_t binding, RDGBufferHandle buffer, uint32_t offset, uint32_t size, uint32_t index)
+RDGComputePassBuilder& RDGComputePassBuilder::Read(uint32_t set, uint32_t binding, uint32_t index, RDGBufferHandle buffer, uint32_t offset, uint32_t size)
 {
     RDGBufferNodeRef node = graph->GetBufferNode(buffer.ID());
     const ShaderResourceEntry& e = *RequireSet2Entry(pass->set2Entries, pass->Name(), set, binding);
-    CheckEdgeFamily("ReadBuffer", pass->Name(), e, RESOURCE_TYPE_UNIFORM_BUFFER | RESOURCE_TYPE_RW_BUFFER | RESOURCE_TYPE_TEXEL_BUFFER);
-    CheckTypeContained("ReadBuffer", pass->Name(), e, node->GetInfo().type);
+    CheckEdgeFamily("Read(buf)", pass->Name(), e, RESOURCE_TYPE_UNIFORM_BUFFER | RESOURCE_TYPE_RW_BUFFER | RESOURCE_TYPE_TEXEL_BUFFER);
+    CheckTypeContained("Read(buf)", pass->Name(), e, node->GetInfo().type);
 
     RDGBufferEdgeRef edge = new RDGBufferEdge();
     edge->state = RESOURCE_STATE_SHADER_RESOURCE;
@@ -1180,19 +1003,20 @@ RDGComputePassBuilder& RDGComputePassBuilder::ReadBuffer(uint32_t set, uint32_t 
     edge->binding = binding;
     edge->index = index;
 
-    FinalizeDescriptorEdge(e, edge, pass->set2EntryDone[static_cast<size_t>(&e - pass->set2Entries.data())], pass->bindingApiMigrated);
+    edge->type = e.type;
+    edge->frequency = e.frequency;
 
     graph->Link(node, pass, edge);
 
     return *this;
 }
 
-RDGComputePassBuilder& RDGComputePassBuilder::ReadWriteBuffer(uint32_t set, uint32_t binding, RDGBufferHandle buffer, uint32_t offset, uint32_t size, uint32_t index)
+RDGComputePassBuilder& RDGComputePassBuilder::ReadWrite(uint32_t set, uint32_t binding, uint32_t index, RDGBufferHandle buffer, uint32_t offset, uint32_t size)
 {
     RDGBufferNodeRef node = graph->GetBufferNode(buffer.ID());
     const ShaderResourceEntry& e = *RequireSet2Entry(pass->set2Entries, pass->Name(), set, binding);
-    CheckEdgeFamily("ReadWriteBuffer", pass->Name(), e, RESOURCE_TYPE_RW_BUFFER | RESOURCE_TYPE_RW_TEXEL_BUFFER);
-    CheckTypeContained("ReadWriteBuffer", pass->Name(), e, node->GetInfo().type);
+    CheckEdgeFamily("ReadWrite(buf)", pass->Name(), e, RESOURCE_TYPE_RW_BUFFER | RESOURCE_TYPE_RW_TEXEL_BUFFER);
+    CheckTypeContained("ReadWrite(buf)", pass->Name(), e, node->GetInfo().type);
 
     RDGBufferEdgeRef edge = new RDGBufferEdge();
     edge->state = RESOURCE_STATE_UNORDERED_ACCESS;
@@ -1203,72 +1027,10 @@ RDGComputePassBuilder& RDGComputePassBuilder::ReadWriteBuffer(uint32_t set, uint
     edge->binding = binding;
     edge->index = index;
 
-    FinalizeDescriptorEdge(e, edge, pass->set2EntryDone[static_cast<size_t>(&e - pass->set2Entries.data())], pass->bindingApiMigrated);
+    edge->type = e.type;
+    edge->frequency = e.frequency;
 
     graph->Link(pass, node, edge);
-
-    return *this;
-}
-
-RDGComputePassBuilder& RDGComputePassBuilder::OutputRead(RDGBufferHandle buffer, uint32_t offset, uint32_t size)
-{
-    RDGBufferEdgeRef edge = new RDGBufferEdge();
-    edge->state = RESOURCE_STATE_SHADER_RESOURCE;
-    edge->offset = offset;
-    edge->size = size;
-    edge->asOutputRead = true;
-
-    graph->Link(pass, graph->GetBufferNode(buffer.ID()), edge);
-
-    return *this;
-}
-
-RDGComputePassBuilder& RDGComputePassBuilder::OutputRead(RDGTextureHandle texture, TextureSubresourceRange subresource)
-{
-    RDGTextureEdgeRef edge = new RDGTextureEdge();
-    edge->state = RESOURCE_STATE_SHADER_RESOURCE;
-    edge->subresource = subresource;
-    edge->asOutputRead = true;    
-
-    graph->Link(pass, graph->GetTextureNode(texture.ID()), edge);
-
-    return *this;
-}
-
-RDGComputePassBuilder& RDGComputePassBuilder::OutputReadWrite(RDGBufferHandle buffer, uint32_t offset, uint32_t size)
-{
-    RDGBufferEdgeRef edge = new RDGBufferEdge();
-    edge->state = RESOURCE_STATE_UNORDERED_ACCESS;
-    edge->offset = offset;
-    edge->size = size;
-    edge->asOutputReadWrite = true;
-
-    graph->Link(pass, graph->GetBufferNode(buffer.ID()), edge);
-
-    return *this;
-}
-
-RDGComputePassBuilder& RDGComputePassBuilder::OutputReadWrite(RDGTextureHandle texture, TextureSubresourceRange subresource)
-{
-    RDGTextureEdgeRef edge = new RDGTextureEdge();
-    edge->state = RESOURCE_STATE_UNORDERED_ACCESS;
-    edge->subresource = subresource;
-    edge->asOutputReadWrite = true;
-
-    graph->Link(pass, graph->GetTextureNode(texture.ID()), edge);
-
-    return *this;
-}
-
-RDGComputePassBuilder& RDGComputePassBuilder::OutputIndirectDraw(RDGBufferHandle buffer, uint32_t offset, uint32_t size)
-{
-    RDGBufferEdgeRef edge = new RDGBufferEdge();
-    edge->state = RESOURCE_STATE_INDIRECT_ARGUMENT;
-    edge->offset = offset;
-    edge->size = size;
-    edge->asOutputIndirectDraw = true;
-
-    graph->Link(pass, graph->GetBufferNode(buffer.ID()), edge);
 
     return *this;
 }
@@ -1301,10 +1063,9 @@ RDGRayTracingPassBuilder& RDGRayTracingPassBuilder::RootSignature(RHIRootSignatu
 
 RDGRayTracingPassBuilder& RDGRayTracingPassBuilder::Shaders(std::initializer_list<RHIShaderRef> shaders)
 {
-    // 双重声明守卫:二次调用会静默重置条目数组,直接致命
-    if (pass->shadersDeclared) LOG_FATAL("pass[%s]: .Shaders()被调用两次", pass->Name().c_str());
-    // 边后调用守卫:新边API已用后再声明会静默重置done标记,同样致命(R9)
-    if (pass->bindingApiMigrated) LOG_FATAL("pass[%s]: .Shaders()必须在描述符边之前调用", pass->Name().c_str());
+    // 双重声明守卫
+    if (pass->shadersDeclared) LOG_FATAL("pass[%s]: .Shaders() called twice", pass->Name().c_str());
+    // 边后调用守卫
     pass->shadersDeclared = true;
 
     pass->set2Entries.clear();
@@ -1319,7 +1080,7 @@ RDGRayTracingPassBuilder& RDGRayTracingPassBuilder::Shaders(std::initializer_lis
             if (exist)
             {
                 if (exist->type != e.type)
-                    LOG_FATAL("pass[%s]: set2槽(set=%u,binding=%u)类型冲突 0x%x vs 0x%x", pass->Name().c_str(), e.set, e.binding, exist->type, e.type);
+                    LOG_FATAL("pass[%s]: set2 slot (set=%u,binding=%u) type conflict 0x%x vs 0x%x", pass->Name().c_str(), e.set, e.binding, exist->type, e.type);
                 exist->frequency |= e.frequency;
                 exist->size = std::max(exist->size, e.size);
             }
@@ -1331,49 +1092,16 @@ RDGRayTracingPassBuilder& RDGRayTracingPassBuilder::Shaders(std::initializer_lis
         if (a.set != b.set) return a.set < b.set;
         return a.binding < b.binding;
     });
-    pass->set2EntryDone.assign(pass->set2Entries.size(), 0);
     return *this;
 }
-
-RDGRayTracingPassBuilder& RDGRayTracingPassBuilder::Conditional(uint32_t set, uint32_t binding)
-{
-    pass->conditionalBindings.push_back({set, binding});     // 动态分支守护的静态访问：边校验放行（自担运行期不达的证明责任）
-    return *this;
-}   
-
-RDGRayTracingPassBuilder& RDGRayTracingPassBuilder::DescriptorSet(uint32_t set, RHIDescriptorSetRef descriptorSet)
-{
-    pass->descriptorSets[set] = descriptorSet;
-    return *this;  
-}  
-
-RDGRayTracingPassBuilder& RDGRayTracingPassBuilder::Read(uint32_t set, uint32_t binding, uint32_t index, RDGBufferHandle buffer, uint32_t offset, uint32_t size)
-{
-    RDGBufferEdgeRef edge = new RDGBufferEdge();
-    edge->state = RESOURCE_STATE_SHADER_RESOURCE;
-    edge->offset = offset;
-    edge->size = size;
-    edge->asShaderRead = true;
-    edge->set = set;
-    edge->binding = binding;
-    edge->index = index;
-    edge->type = RESOURCE_TYPE_UNIFORM_BUFFER;
-
-    graph->Link(graph->GetBufferNode(buffer.ID()), pass, edge);
-
-    return *this;
-}
-
-RDGRayTracingPassBuilder& RDGRayTracingPassBuilder::ReadIfValid(uint32_t set, uint32_t binding, uint32_t index, const std::string& name, TextureViewType viewType, TextureSubresourceRange subresource)
-{
-    RDGTextureHandle texture = builder->FindTexture(name);      // 条件性资源（无阴影光源帧/RT模式禁G-Buffer/未启用体积光等）缺席时静默跳过
-    if(texture.ID() == UINT64_MAX) return *this;
-    return Read(set, binding, index, texture, viewType, subresource);
-}
-
 
 RDGRayTracingPassBuilder& RDGRayTracingPassBuilder::Read(uint32_t set, uint32_t binding, uint32_t index, RDGTextureHandle texture, TextureViewType viewType, TextureSubresourceRange subresource)
 {
+    RDGTextureNodeRef node = graph->GetTextureNode(texture.ID());
+    const ShaderResourceEntry& e = *RequireSet2Entry(pass->set2Entries, pass->Name(), set, binding);
+    CheckEdgeFamily("Read(tex)", pass->Name(), e, RESOURCE_TYPE_TEXTURE | RESOURCE_TYPE_TEXTURE_CUBE | RESOURCE_TYPE_COMBINED_IMAGE_SAMPLER);
+    CheckTypeContained("Read(tex)", pass->Name(), e, node->GetInfo().type);
+
     RDGTextureEdgeRef edge = new RDGTextureEdge();
     edge->state = RESOURCE_STATE_SHADER_RESOURCE;
     edge->subresource = subresource;
@@ -1381,80 +1109,22 @@ RDGRayTracingPassBuilder& RDGRayTracingPassBuilder::Read(uint32_t set, uint32_t 
     edge->set = set;
     edge->binding = binding;
     edge->index = index;
-    edge->type = RESOURCE_TYPE_TEXTURE;
     edge->viewType = viewType;
 
-    graph->Link(graph->GetTextureNode(texture.ID()), pass, edge);
+    edge->type = e.type;
+    edge->frequency = e.frequency;
 
-    return *this;
-}
-
-RDGRayTracingPassBuilder& RDGRayTracingPassBuilder::ReadWrite(uint32_t set, uint32_t binding, uint32_t index, RDGBufferHandle buffer, uint32_t offset, uint32_t size)
-{
-    RDGBufferEdgeRef edge = new RDGBufferEdge();
-    edge->state = RESOURCE_STATE_UNORDERED_ACCESS;
-    edge->offset = offset;
-    edge->size = size;
-    edge->asShaderReadWrite = true;
-    edge->set = set;
-    edge->binding = binding;
-    edge->index = index;
-    edge->type = RESOURCE_TYPE_RW_BUFFER;
-
-    graph->Link(pass, graph->GetBufferNode(buffer.ID()), edge);
+    graph->Link(node, pass, edge);
 
     return *this;
 }
 
 RDGRayTracingPassBuilder& RDGRayTracingPassBuilder::ReadWrite(uint32_t set, uint32_t binding, uint32_t index, RDGTextureHandle texture, TextureViewType viewType, TextureSubresourceRange subresource)
 {
-    RDGTextureEdgeRef edge = new RDGTextureEdge();
-    edge->state = RESOURCE_STATE_UNORDERED_ACCESS;
-    edge->subresource = subresource;
-    edge->asShaderReadWrite = true;
-    edge->set = set;
-    edge->binding = binding;
-    edge->index = index;
-    edge->type = RESOURCE_TYPE_RW_TEXTURE;
-    edge->viewType = viewType;
-
-    graph->Link(pass, graph->GetTextureNode(texture.ID()), edge);
-
-    return *this;
-}
-
-// ===== S3:反射驱动描述符边(type/frequency由.Shaders()反射条目回填,取代调用方手填;
-// 旧RT版slotted Read(buffer)硬编码UNIFORM_BUFFER的坑就此由反射type根治) =====
-
-RDGRayTracingPassBuilder& RDGRayTracingPassBuilder::ReadTexture(uint32_t set, uint32_t binding, RDGTextureHandle texture, uint32_t index, TextureViewType viewType, TextureSubresourceRange subresource)
-{
     RDGTextureNodeRef node = graph->GetTextureNode(texture.ID());
     const ShaderResourceEntry& e = *RequireSet2Entry(pass->set2Entries, pass->Name(), set, binding);
-    CheckEdgeFamily("ReadTexture", pass->Name(), e, RESOURCE_TYPE_TEXTURE | RESOURCE_TYPE_TEXTURE_CUBE | RESOURCE_TYPE_COMBINED_IMAGE_SAMPLER);
-    CheckTypeContained("ReadTexture", pass->Name(), e, node->GetInfo().type);
-
-    RDGTextureEdgeRef edge = new RDGTextureEdge();
-    edge->state = RESOURCE_STATE_SHADER_RESOURCE;
-    edge->subresource = subresource;
-    edge->asShaderRead = true;
-    edge->set = set;
-    edge->binding = binding;
-    edge->index = index;
-    edge->viewType = viewType;
-
-    FinalizeDescriptorEdge(e, edge, pass->set2EntryDone[static_cast<size_t>(&e - pass->set2Entries.data())], pass->bindingApiMigrated);
-
-    graph->Link(node, pass, edge);
-
-    return *this;
-}
-
-RDGRayTracingPassBuilder& RDGRayTracingPassBuilder::ReadWriteTexture(uint32_t set, uint32_t binding, RDGTextureHandle texture, uint32_t index, TextureViewType viewType, TextureSubresourceRange subresource)
-{
-    RDGTextureNodeRef node = graph->GetTextureNode(texture.ID());
-    const ShaderResourceEntry& e = *RequireSet2Entry(pass->set2Entries, pass->Name(), set, binding);
-    CheckEdgeFamily("ReadWriteTexture", pass->Name(), e, RESOURCE_TYPE_RW_TEXTURE);
-    CheckTypeContained("ReadWriteTexture", pass->Name(), e, node->GetInfo().type);
+    CheckEdgeFamily("ReadWrite(tex)", pass->Name(), e, RESOURCE_TYPE_RW_TEXTURE);
+    CheckTypeContained("ReadWrite(tex)", pass->Name(), e, node->GetInfo().type);
 
     RDGTextureEdgeRef edge = new RDGTextureEdge();
     edge->state = RESOURCE_STATE_UNORDERED_ACCESS;
@@ -1465,19 +1135,20 @@ RDGRayTracingPassBuilder& RDGRayTracingPassBuilder::ReadWriteTexture(uint32_t se
     edge->index = index;
     edge->viewType = viewType;
 
-    FinalizeDescriptorEdge(e, edge, pass->set2EntryDone[static_cast<size_t>(&e - pass->set2Entries.data())], pass->bindingApiMigrated);
+    edge->type = e.type;
+    edge->frequency = e.frequency;
 
     graph->Link(pass, node, edge);
 
     return *this;
 }
 
-RDGRayTracingPassBuilder& RDGRayTracingPassBuilder::ReadBuffer(uint32_t set, uint32_t binding, RDGBufferHandle buffer, uint32_t offset, uint32_t size, uint32_t index)
+RDGRayTracingPassBuilder& RDGRayTracingPassBuilder::Read(uint32_t set, uint32_t binding, uint32_t index, RDGBufferHandle buffer, uint32_t offset, uint32_t size)
 {
     RDGBufferNodeRef node = graph->GetBufferNode(buffer.ID());
     const ShaderResourceEntry& e = *RequireSet2Entry(pass->set2Entries, pass->Name(), set, binding);
-    CheckEdgeFamily("ReadBuffer", pass->Name(), e, RESOURCE_TYPE_UNIFORM_BUFFER | RESOURCE_TYPE_RW_BUFFER | RESOURCE_TYPE_TEXEL_BUFFER);
-    CheckTypeContained("ReadBuffer", pass->Name(), e, node->GetInfo().type);
+    CheckEdgeFamily("Read(buf)", pass->Name(), e, RESOURCE_TYPE_UNIFORM_BUFFER | RESOURCE_TYPE_RW_BUFFER | RESOURCE_TYPE_TEXEL_BUFFER);
+    CheckTypeContained("Read(buf)", pass->Name(), e, node->GetInfo().type);
 
     RDGBufferEdgeRef edge = new RDGBufferEdge();
     edge->state = RESOURCE_STATE_SHADER_RESOURCE;
@@ -1488,19 +1159,20 @@ RDGRayTracingPassBuilder& RDGRayTracingPassBuilder::ReadBuffer(uint32_t set, uin
     edge->binding = binding;
     edge->index = index;
 
-    FinalizeDescriptorEdge(e, edge, pass->set2EntryDone[static_cast<size_t>(&e - pass->set2Entries.data())], pass->bindingApiMigrated);
+    edge->type = e.type;
+    edge->frequency = e.frequency;
 
     graph->Link(node, pass, edge);
 
     return *this;
 }
 
-RDGRayTracingPassBuilder& RDGRayTracingPassBuilder::ReadWriteBuffer(uint32_t set, uint32_t binding, RDGBufferHandle buffer, uint32_t offset, uint32_t size, uint32_t index)
+RDGRayTracingPassBuilder& RDGRayTracingPassBuilder::ReadWrite(uint32_t set, uint32_t binding, uint32_t index, RDGBufferHandle buffer, uint32_t offset, uint32_t size)
 {
     RDGBufferNodeRef node = graph->GetBufferNode(buffer.ID());
     const ShaderResourceEntry& e = *RequireSet2Entry(pass->set2Entries, pass->Name(), set, binding);
-    CheckEdgeFamily("ReadWriteBuffer", pass->Name(), e, RESOURCE_TYPE_RW_BUFFER | RESOURCE_TYPE_RW_TEXEL_BUFFER);
-    CheckTypeContained("ReadWriteBuffer", pass->Name(), e, node->GetInfo().type);
+    CheckEdgeFamily("ReadWrite(buf)", pass->Name(), e, RESOURCE_TYPE_RW_BUFFER | RESOURCE_TYPE_RW_TEXEL_BUFFER);
+    CheckTypeContained("ReadWrite(buf)", pass->Name(), e, node->GetInfo().type);
 
     RDGBufferEdgeRef edge = new RDGBufferEdge();
     edge->state = RESOURCE_STATE_UNORDERED_ACCESS;
@@ -1511,72 +1183,37 @@ RDGRayTracingPassBuilder& RDGRayTracingPassBuilder::ReadWriteBuffer(uint32_t set
     edge->binding = binding;
     edge->index = index;
 
-    FinalizeDescriptorEdge(e, edge, pass->set2EntryDone[static_cast<size_t>(&e - pass->set2Entries.data())], pass->bindingApiMigrated);
+    edge->type = e.type;
+    edge->frequency = e.frequency;
 
     graph->Link(pass, node, edge);
-
-    return *this;
-}
-
-RDGRayTracingPassBuilder& RDGRayTracingPassBuilder::OutputRead(RDGBufferHandle buffer, uint32_t offset, uint32_t size)
-{
-    RDGBufferEdgeRef edge = new RDGBufferEdge();
-    edge->state = RESOURCE_STATE_SHADER_RESOURCE;
-    edge->offset = offset;
-    edge->size = size;
-    edge->asOutputRead = true;
-
-    graph->Link(pass, graph->GetBufferNode(buffer.ID()), edge);
-
-    return *this;
-}
-
-RDGRayTracingPassBuilder& RDGRayTracingPassBuilder::OutputRead(RDGTextureHandle texture, TextureSubresourceRange subresource)
-{
-    RDGTextureEdgeRef edge = new RDGTextureEdge();
-    edge->state = RESOURCE_STATE_SHADER_RESOURCE;
-    edge->subresource = subresource;
-    edge->asOutputRead = true;    
-
-    graph->Link(pass, graph->GetTextureNode(texture.ID()), edge);
-
-    return *this;
-}
-
-RDGRayTracingPassBuilder& RDGRayTracingPassBuilder::OutputReadWrite(RDGBufferHandle buffer, uint32_t offset, uint32_t size)
-{
-    RDGBufferEdgeRef edge = new RDGBufferEdge();
-    edge->state = RESOURCE_STATE_UNORDERED_ACCESS;
-    edge->offset = offset;
-    edge->size = size;
-    edge->asOutputReadWrite = true;
-
-    graph->Link(pass, graph->GetBufferNode(buffer.ID()), edge);
-
-    return *this;
-}
-
-RDGRayTracingPassBuilder& RDGRayTracingPassBuilder::OutputReadWrite(RDGTextureHandle texture, TextureSubresourceRange subresource)
-{
-    RDGTextureEdgeRef edge = new RDGTextureEdge();
-    edge->state = RESOURCE_STATE_UNORDERED_ACCESS;
-    edge->subresource = subresource;
-    edge->asOutputReadWrite = true;
-
-    graph->Link(pass, graph->GetTextureNode(texture.ID()), edge);
 
     return *this;
 }
 
 RDGRayTracingPassBuilder& RDGRayTracingPassBuilder::Read(RDGBufferHandle buffer)
 {
-    if (buffer.ID() == UINT64_MAX) return *this;    
+    if (buffer.ID() == UINT64_MAX) return *this;
 
     RDGBufferEdgeRef edge = new RDGBufferEdge();
     edge->state = RESOURCE_STATE_SHADER_RESOURCE;
     edge->set = NO_DESCRIPTOR_SET;
 
     graph->Link(graph->GetBufferNode(buffer.ID()), pass, edge);
+
+    return *this;
+}
+
+RDGRayTracingPassBuilder& RDGRayTracingPassBuilder::Write(RDGBufferHandle buffer, RHIResourceState state)
+{
+    if (buffer.ID() == UINT64_MAX) return *this;
+
+    RDGBufferEdgeRef edge = new RDGBufferEdge();
+    edge->state = state;
+    edge->asShaderReadWrite = true;     // 借write记账语义进sync模型；NO_DESCRIPTOR_SET=全线无描述符副作用
+    edge->set = NO_DESCRIPTOR_SET;
+
+    graph->Link(pass, graph->GetBufferNode(buffer.ID()), edge);
 
     return *this;
 }
@@ -1642,7 +1279,8 @@ RDGPresentPassBuilder& RDGPresentPassBuilder::Texture(RDGTextureHandle texture, 
 {
     RDGTextureEdgeRef edge = new RDGTextureEdge();
     edge->state = RESOURCE_STATE_TRANSFER_SRC;
-    edge->subresourceLayer = subresource;
+    // API收Layers（单mip语义），存入统一转Range（levelCount=1冻结；mip0真值保留——baseMipLevel=0合法）
+    edge->subresource = { subresource.aspect, subresource.mipLevel, 1, subresource.baseArrayLayer, subresource.layerCount };
 
     graph->Link(graph->GetTextureNode(texture.ID()), pass, edge);
 
@@ -1677,12 +1315,12 @@ RDGCopyPassBuilder& RDGCopyPassBuilder::From(RDGTextureHandle texture, TextureSu
 {
     RDGTextureEdgeRef edge = new RDGTextureEdge();
     edge->state = RESOURCE_STATE_TRANSFER_SRC;
-    edge->subresourceLayer = subresource;
+    edge->subresource = { subresource.aspect, subresource.mipLevel, 1, subresource.baseArrayLayer, subresource.layerCount };
     edge->asTransferSrc = true;
 
     graph->Link(graph->GetTextureNode(texture.ID()), pass, edge);
 
-    return *this;    
+    return *this;
 }
 
 RDGCopyPassBuilder& RDGCopyPassBuilder::To(RDGBufferHandle buffer, uint32_t offset, uint32_t size)
@@ -1702,69 +1340,18 @@ RDGCopyPassBuilder& RDGCopyPassBuilder::To(RDGTextureHandle texture, TextureSubr
 {
     RDGTextureEdgeRef edge = new RDGTextureEdge();
     edge->state = RESOURCE_STATE_TRANSFER_DST;
-    edge->subresourceLayer = subresource;
+    edge->subresource = { subresource.aspect, subresource.mipLevel, 1, subresource.baseArrayLayer, subresource.layerCount };
     edge->asTransferDst = true;
 
     graph->Link(pass, graph->GetTextureNode(texture.ID()), edge);
 
-    return *this;    
+    return *this;
 }
 
 RDGCopyPassBuilder& RDGCopyPassBuilder::GenerateMips()
 {
     pass->generateMip = true;
     return *this;   
-}
-
-RDGCopyPassBuilder& RDGCopyPassBuilder::OutputRead(RDGBufferHandle buffer, uint32_t offset, uint32_t size)
-{
-    RDGBufferEdgeRef edge = new RDGBufferEdge();
-    edge->state = RESOURCE_STATE_SHADER_RESOURCE;
-    edge->offset = offset;
-    edge->size = size;
-    edge->asOutputRead = true;
-
-    graph->Link(pass, graph->GetBufferNode(buffer.ID()), edge);
-
-    return *this;
-}
-
-RDGCopyPassBuilder& RDGCopyPassBuilder::OutputRead(RDGTextureHandle texture, TextureSubresourceLayers subresource)
-{
-    RDGTextureEdgeRef edge = new RDGTextureEdge();
-
-    edge->state = RESOURCE_STATE_SHADER_RESOURCE;
-    edge->subresourceLayer = subresource;
-    edge->asOutputRead = true;
-
-    graph->Link(pass, graph->GetTextureNode(texture.ID()), edge);
-
-    return *this; 
-}
-
-RDGCopyPassBuilder& RDGCopyPassBuilder::OutputReadWrite(RDGBufferHandle buffer, uint32_t offset, uint32_t size)
-{
-    RDGBufferEdgeRef edge = new RDGBufferEdge();
-    edge->state = RESOURCE_STATE_UNORDERED_ACCESS;
-    edge->offset = offset;
-    edge->size = size;
-    edge->asOutputReadWrite = true;
-
-    graph->Link(pass, graph->GetBufferNode(buffer.ID()), edge);
-
-    return *this;
-}
-
-RDGCopyPassBuilder& RDGCopyPassBuilder::OutputReadWrite(RDGTextureHandle texture, TextureSubresourceLayers subresource)
-{
-    RDGTextureEdgeRef edge = new RDGTextureEdge();
-    edge->state = RESOURCE_STATE_UNORDERED_ACCESS;
-    edge->subresourceLayer = subresource;
-    edge->asOutputReadWrite = true;
-
-    graph->Link(pass, graph->GetTextureNode(texture.ID()), edge);
-
-    return *this; 
 }
 
 RDGCopyPassBuilder& RDGCopyPassBuilder::AddFlag(const RDGPassFlags flag)

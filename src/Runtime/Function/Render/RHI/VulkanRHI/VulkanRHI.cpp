@@ -823,7 +823,8 @@ void VulkanRHIBackend::CreateImmediateCommand()
 void TextureBarrier(VkCommandBuffer commandBuffer, const RHITextureBarrier& barrier, uint32_t queueFamilyIndex = RHI_QUEUE_FAMILY_IGNORED)
 {
     TextureSubresourceRange range = barrier.subresource;
-    if (range.aspect == TEXTURE_ASPECT_NONE) range = barrier.texture->GetDefaultSubresourceRange();
+    if (range.IsDefault()) range = barrier.texture->GetDefaultSubresourceRange();
+    assert(range.aspect != TEXTURE_ASPECT_NONE && range.levelCount > 0 && range.layerCount > 0);
 
     // queueFlags：IGNORED→图形族位；否则取录制队列族能力位。
     // 推导函数本身已按队列能力裁剪stage/access：非图形族上不会带图形专属stage
@@ -866,12 +867,6 @@ void TextureBarrier(VkCommandBuffer commandBuffer, const RHITextureBarrier& barr
         srcStage = VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT;
         srcAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
     }
-    // 布局转移链的写-写衔接：转移本身=写，屏障src/dst一律带MEMORY读写位——同态acquire
-    // （SRV→SRV）的srcAccess=SHADER_READ-only不覆盖上一转移写的可用性（sync validation
-    // 实证：Depth的release转移链WRITE_RACING_WRITE）。图像屏障本就是全图可用性操作，
-    // 保守全量无可测代价
-    srcAccessMask |= VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
-    dstAccessMask |= VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
 
     VkImageMemoryBarrier memoryBarrier = {};
     memoryBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -881,10 +876,14 @@ void TextureBarrier(VkCommandBuffer commandBuffer, const RHITextureBarrier& barr
     memoryBarrier.newLayout = newLayout;
     memoryBarrier.image = ResourceCast(barrier.texture)->GetHandle();
     memoryBarrier.subresourceRange = VulkanUtil::SubresourceToVk(range);
+
+    if (barrier.texture->GetInfo().extent.depth > 1)
+    {
+        memoryBarrier.subresourceRange.baseArrayLayer = 0;
+        memoryBarrier.subresourceRange.layerCount = VK_REMAINING_ARRAY_LAYERS;
+    }
     memoryBarrier.srcAccessMask = srcAccessMask;
     memoryBarrier.dstAccessMask = dstAccessMask;
-
-    // [BEmitted]取证日志已删（2026-10-28收尾：布局案经悬空槽案终局翻案+刀A修复，使命完成）
 
     vkCmdPipelineBarrier(
         commandBuffer,
@@ -986,8 +985,9 @@ void CopyTexture(VkCommandBuffer commandBuffer, RHITextureRef src, TextureSubres
     VkImageCopy imageCopy = {};
     imageCopy.srcOffset = {0, 0, 0};    // TODO ?
     imageCopy.dstOffset = {0, 0, 0};
-    imageCopy.srcSubresource = (srcSubresource.aspect == 0) ? VulkanUtil::SubresourceToVk(src->GetDefaultSubresourceLayers()) : VulkanUtil::SubresourceToVk(srcSubresource);
-    imageCopy.dstSubresource = (dstSubresource.aspect == 0) ? VulkanUtil::SubresourceToVk(dst->GetDefaultSubresourceLayers()) : VulkanUtil::SubresourceToVk(dstSubresource);
+    assert(srcSubresource.aspect != 0 && dstSubresource.aspect != 0);
+    imageCopy.srcSubresource = VulkanUtil::SubresourceToVk(srcSubresource);
+    imageCopy.dstSubresource = VulkanUtil::SubresourceToVk(dstSubresource);
     imageCopy.extent = VulkanUtil::ExtentToVk(src->MipExtent(srcSubresource.mipLevel));
 
     vkCmdCopyImage(commandBuffer,
@@ -1082,6 +1082,7 @@ VulkanRHICommandContext::VulkanRHICommandContext(RHICommandPoolRef pool, const V
 : RHICommandContext(pool)
 {
     this->pool = ResourceCast(pool.get());
+    this->logicalDevice = backend.GetLogicalDevice();
 
     VkCommandBufferAllocateInfo allocInfo = {};
     allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
@@ -1144,7 +1145,16 @@ void VulkanRHICommandContext::Submit(const RHIQueueSubmitBatch& batch, const std
         if (wait.semaphore == nullptr) continue;
 
         VkPipelineStageFlags2 stage = 0;
-        if (wait.isTimeline)
+        if (!wait.waitUsages.empty())
+        {
+            // 窄化路径：贡献者(state,frequency)逐对展开取并——RDG折叠期已按同state OR合并
+            // frequency（推导对frequency线性，合并精确）；queueFlags门控在推导函数内完成
+            // （等待队列=本提交队列）。空usages走下列旧路（悬空/join/swapchain）
+            for (const auto& usage : wait.waitUsages)
+                stage |= VulkanUtil::AccessFlagsToPipelineStageFlags(
+                    VulkanUtil::ResourceStateToAccessFlags(usage.state, queueFlags), queueFlags, usage.frequency);
+        }
+        else if (wait.isTimeline)
         {
             // 同步点/跨帧链/join的timeline wait=批次级同步：掩码必须覆盖本批【一切】可能的访问阶段。
             // 单一资源to_state推导会漏阶段（sync validation实证：SSIS合并点只带一个资源的态，
@@ -1200,18 +1210,6 @@ void VulkanRHICommandContext::Submit(const RHIQueueSubmitBatch& batch, const std
 
     VkFence signalFence = batch.signalFence != nullptr ? ResourceCast(batch.signalFence)->GetHandle() : VK_NULL_HANDLE;
 
-    // 取证：布局案（2026-10-26）——批次CB清单+timeline等待值：对账VVL报错CB与悬空CB的相对提交序
-    {
-        char buf[4096]; int off = 0;
-        off += snprintf(buf + off, sizeof(buf) - off, "[Submit2] qfam %u cbs[%u]:", queue->GetQueueFamilyIndex(), (uint32_t)commandBufferInfos.size());
-        for (const auto& info : commandBufferInfos)
-            off += snprintf(buf + off, sizeof(buf) - off, " %p", info.commandBuffer);
-        off += snprintf(buf + off, sizeof(buf) - off, " | waits:");
-        for (const auto& w : waitInfos)
-            off += snprintf(buf + off, sizeof(buf) - off, " %p:%llu", w.semaphore, (unsigned long long)w.value);
-        LOG_DEBUG("%s", buf);
-    }
-
     VkResult err = vkQueueSubmit2(queue->GetHandle(), 1, &submitInfo, signalFence);
     if (err != VK_SUCCESS)
     {
@@ -1254,9 +1252,85 @@ void VulkanRHICommandContext::GenerateMips(RHITextureRef src)
     ::GenerateMips(handle, src);
 }
 
-void VulkanRHICommandContext::BuildTopLevelAccelerationStructure(RHITopLevelAccelerationStructureRef tlas)
+// TLAS帧内构建/更新的唯一实现：一步完成instance写入+乒乓mode推导+录制+状态机推进。
+// 乒乓模型：本帧构建dst=本槽TLAS，UPDATE的src=对端槽（上一帧的结果）——dst写与src读分属两buffer无同体WAR，
+// 每槽各一份instance/scratch与在飞帧结构性隔离；count门控不满足UPDATE契约时降级BUILD（VUID-03769）
+void VulkanRHICommandContext::BuildTopLevelAccelerationStructure(RHITopLevelAccelerationStructureRef tlasRef, const std::vector<RHIAccelerationStructureInstanceInfo>& instances)
 {
-    ResourceCast(tlas)->RecordBuild(handle);
+    VulkanRHITopLevelAccelerationStructure* tlas = ResourceCast(tlasRef).get();
+    if(instances.size() > tlas->info.maxInstance)
+        LOG_FATAL("TLAS instance count exceeds maxInstance capacity!");
+
+    // 0. CPU侧：instance写入本槽持久映射buffer（instance buffer随TLAS每帧槽一份）
+    {
+        std::vector<VkAccelerationStructureInstanceKHR> vkInstances;
+        vkInstances.reserve(instances.size());
+        for(const RHIAccelerationStructureInstanceInfo& instance : instances)
+            vkInstances.push_back(VulkanUtil::AccelerationStructureInstanceInfoToVk(instance));
+        memcpy(tlas->instanceBuffer->Map(), vkInstances.data(), vkInstances.size() * sizeof(VkAccelerationStructureInstanceKHR));
+    }
+
+    // 1. 推导构建模式：对端槽有内容且count与对端上次构建一致→UPDATE(src=对端)；否则BUILD(src=NULL，无count契约)
+    bool update = tlas->peer != nullptr
+               && tlas->peer->hasContent
+               && (uint32_t)instances.size() == tlas->peer->lastBuildCount;
+
+    // 2. 填充构建信息（局部量：单函数构建无跨阶段状态）
+    VkAccelerationStructureGeometryKHR geometry = {};
+    geometry.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+    geometry.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
+    geometry.flags = 0;     // instances几何不在不透明度判定链上（链=ray flags>instance FORCE位>BLAS几何OPAQUE位）
+    geometry.geometry.instances.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
+    geometry.geometry.instances.arrayOfPointers = VK_FALSE;
+    geometry.geometry.instances.data.deviceAddress = VulkanUtil::GetBufferDeviceAddress(ResourceCast(tlas->instanceBuffer)->GetHandle(), logicalDevice);
+
+    VkAccelerationStructureBuildGeometryInfoKHR buildGeometryInfo = {};
+    buildGeometryInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+    buildGeometryInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
+    buildGeometryInfo.flags = VulkanUtil::RHIBuildFlagsToVk(tlas->info.flags);   // UPDATE契约值，逐帧不可变
+    buildGeometryInfo.geometryCount = 1;
+    buildGeometryInfo.mode = update ? VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR : VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+    buildGeometryInfo.srcAccelerationStructure = update ? tlas->peer->handle : VK_NULL_HANDLE;
+    buildGeometryInfo.dstAccelerationStructure = tlas->handle;
+    buildGeometryInfo.pGeometries = &geometry;
+    buildGeometryInfo.scratchData.deviceAddress = VulkanUtil::GetBufferDeviceAddress(ResourceCast(tlas->scratchBuffer)->GetHandle(), logicalDevice);
+
+    VkAccelerationStructureBuildRangeInfoKHR buildRangeInfo = {};
+    buildRangeInfo.primitiveCount = (uint32_t)instances.size();
+    buildRangeInfo.primitiveOffset = 0;
+    buildRangeInfo.firstVertex = 0;
+    buildRangeInfo.transformOffset = 0;
+
+    // 3. 屏障+录制（跨帧危害均落在相邻帧对上，由RDG的storage依赖边+跨帧时间线链承担；此屏障为同命令流内构建串行化兜底）
+    VkBufferMemoryBarrier scratchBarrier{};
+    scratchBarrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+    scratchBarrier.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+    scratchBarrier.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+    scratchBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    scratchBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    scratchBarrier.buffer = ResourceCast(tlas->scratchBuffer)->GetHandle();
+    scratchBarrier.offset = 0;
+    scratchBarrier.size = VK_WHOLE_SIZE;
+
+    VkMemoryBarrier asBodyBarrier{};
+    asBodyBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    asBodyBarrier.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+    asBodyBarrier.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+
+    vkCmdPipelineBarrier(handle,
+        VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+        VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+        0, 1, &asBodyBarrier, 1, &scratchBarrier, 0, nullptr);
+
+    VkAccelerationStructureBuildRangeInfoKHR* rangeInfo = &buildRangeInfo;
+    vkCmdBuildAccelerationStructuresKHR(handle,
+        1,
+        &buildGeometryInfo,
+        &rangeInfo);     // 在这条指令处真正完成构建
+
+    // 4. 状态机推进（lastBuildCount=本槽下次作为对端src时的03769对齐值）
+    tlas->hasContent = true;
+    tlas->lastBuildCount = (uint32_t)instances.size();
 } 
 
 void VulkanRHICommandContext::PushEvent(const std::string& name, Color3 color) 

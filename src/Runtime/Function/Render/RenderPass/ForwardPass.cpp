@@ -95,8 +95,11 @@ void ForwardPass::Build(RDGBuilder& builder)
             .DepthStencil(depth, ATTACHMENT_LOAD_OP_LOAD, ATTACHMENT_STORE_OP_STORE, 1.0f, 0)
             .ReadIndirect(builder.GetBuffer("Mesh Draw Commands" + cmdIndex))
             .ReadIndirect(builder.GetBuffer("Clusrter Draw Commands" + cmdIndex))
-            .RootSignature(rootSignature)     
-            .Read(2, SET2_BINDING_CLUSTER_DRAW_INFOS_READ, 0, builder.GetBuffer("Cluster Draw Infos" + cmdIndex), 0, 0, RESOURCE_TYPE_BUFFER)
+            .RootSignature(rootSignature)
+            .Shaders({vertexShader.shader, clusterVertexShader.shader, fragmentShader.shader})
+            .Read(2, SET2_BINDING_CLUSTER_DRAW_INFOS_READ, 0, builder.GetBuffer("Cluster Draw Infos" + cmdIndex), 0, 0)
+            .Read(builder.GetTexture("Skybox IBL diffuse"))
+            .Read(builder.GetTexture("Skybox IBL specular"))
             .Execute([&](RDGPassContext context) {
 
 

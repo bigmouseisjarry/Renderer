@@ -767,13 +767,51 @@ struct RHIIndirectCommand
     uint32_t    firstInstance;
 };
 
+// 光追加速结构相关flags（与Vulkan位一一对应；语义背书=spec raytraversal.adoc"Ray Opacity Culling"节）
+enum RHIGeometryFlagBits : uint32_t	// 几何构建flags（BLAS三角几何用；TLAS的instances几何不在不透明度判定链上，恒0）
+{
+	RHI_GEOMETRY_OPAQUE = 1 << 0,						// opaque：命中不走any-hit确认
+	RHI_GEOMETRY_NO_DUPLICATE_ANY_HIT = 1 << 1,
+
+	RHI_GEOMETRY_FLAG_MAX_ENUM = 0x7FFFFFFF,
+};
+
+enum RHIAccelerationStructureBuildFlagBits : uint32_t
+{
+	RHI_BUILD_ALLOW_UPDATE = 1 << 0,					// 开启后才能UPDATE(refit)；UPDATE契约=各构建参数须与上次BUILD一致
+	RHI_BUILD_PREFER_FAST_TRACE = 1 << 2,				// 静态几何首选
+	RHI_BUILD_PREFER_FAST_BUILD = 1 << 3,
+
+	RHI_BUILD_FLAG_MAX_ENUM = 0x7FFFFFFF,
+};
+
+enum RHIGeometryInstanceFlagBits : uint32_t	// 逐instance flags（不透明度覆盖/背面剔除；instance层优先于BLAS几何层）
+{
+	RHI_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE = 1 << 0,
+	RHI_GEOMETRY_INSTANCE_TRIANGLE_FRONT_COUNTERCLOCKWISE = 1 << 1,
+	RHI_GEOMETRY_INSTANCE_FORCE_OPAQUE = 1 << 2,		// 覆盖实例内所有几何为opaque
+	RHI_GEOMETRY_INSTANCE_FORCE_NO_OPAQUE = 1 << 3,	// 覆盖实例内所有几何为非opaque
+
+	RHI_GEOMETRY_INSTANCE_FLAG_MAX_ENUM = 0x7FFFFFFF,
+};
+
+// instance mask位规划（Ray Mask Culling：mask & cullMask == 0则丢弃交点；cullMask由traceRay侧指定）
+enum RHIAccelerationStructureInstanceMaskBits : uint32_t
+{
+	RHI_INSTANCE_MASK_SCENE = 1 << 0,					// bit0=场景/GI可见（默认可见性，存量0xFF射线兼容）
+	RHI_INSTANCE_MASK_SHADOW_CASTER = 1 << 1,			// bit1=阴影投射体（材质CastShadow填充，阴影射线专用）
+
+	RHI_INSTANCE_MASK_MAX_ENUM = 0x7FFFFFFF,
+};
+
 struct RHIAccelerationStructureInstanceInfo
 {
 	float    	transform[3][4] = { 0.0f };
 
     uint32_t    instanceIndex;
-    uint32_t    mask;
+    uint32_t    mask = RHI_INSTANCE_MASK_SCENE | RHI_INSTANCE_MASK_SHADOW_CASTER;
     uint32_t    shaderBindingTableOffset;
+	uint32_t	flags = RHI_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE;	// RHIGeometryInstanceFlagBits
     RHIBottomLevelAccelerationStructureRef    blas;
 
 };
@@ -1097,10 +1135,11 @@ struct RHIShaderBindingTableInfo
 
 };
 
+// TLAS创建信息（纯创建期契约：flags属UPDATE契约值不可逐帧变，故不进帧内构建接口）
 struct RHITopLevelAccelerationStructureInfo
 {
-	uint32_t maxInstance;
-	std::vector<RHIAccelerationStructureInstanceInfo> instanceInfos;
+	uint32_t maxInstance;		// 超额容量（尺寸查询按此分配；帧内构建instance数须≤此值）
+	uint32_t flags = RHI_BUILD_ALLOW_UPDATE | RHI_BUILD_PREFER_FAST_BUILD;	// RHIAccelerationStructureBuildFlagBits
 
 };
 
@@ -1112,7 +1151,9 @@ struct RHIBottomLevelAccelerationStructureInfo
 	uint32_t vertexStride = 0;
 	uint32_t indexOffset = 0;
 	uint32_t vertexOffset = 0;
-	uint32_t vertexCount = 0;    // BLAS几何真实顶点数(maxVertex上限用,2026-10-28 AS范围违规修复)
+	uint32_t vertexCount = 0;    // BLAS几何真实顶点数
+	uint32_t geometryFlags = RHI_GEOMETRY_OPAQUE;			// RHIGeometryFlagBits（alpha-test材质去OPAQUE）
+	uint32_t buildFlags = RHI_BUILD_PREFER_FAST_TRACE;		// RHIAccelerationStructureBuildFlagBits
 
 };
 
@@ -1530,9 +1571,16 @@ struct RHISemaphoreSubmitInfo
 struct RHISemaphoreWaitInfo
 {
 	RHISemaphoreRef semaphore = nullptr;
-	uint64_t value = 0;					
+	uint64_t value = 0;
 	bool isTimeline = false;
 	RHIResourceState waitState = RESOURCE_STATE_UNDEFINED;
+
+	// wait窄化：贡献者(RHIResourceState,frequency)对——RDG折叠期累积（RDG层不持Vk类型，
+	// 与RHITextureBarrier的state+src/dstFrequency同族模式）；后端逐对展开stage取并。同state下
+	// frequency按位OR合并（stage推导对frequency线性，合并精确非保守）。空=该wait含未知贡献者
+	// （悬空registry种子/swapchain acquire/join中继）→走waitState宽展开旧路径
+	struct WaitUsage { RHIResourceState state; uint32_t frequency; };
+	std::vector<WaitUsage> waitUsages;
 };
 
 // 单个提交批次（唯一提交单元，三种运行模式统于此）：commandLists的归属队列族须与queue一致

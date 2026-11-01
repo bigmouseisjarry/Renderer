@@ -32,7 +32,7 @@
 #define SET2_BINDING_GBUFFER_SPECULAR_F0_ROUGHNESS      23
 #define SET2_BINDING_GBUFFER_GEOMETRIC_NORMAL_AO        24
 #define SET2_BINDING_GBUFFER_IOR                        25
-// 26 已退役（DirectionalDepthHistory特性2026-10-22删除，槽号保留防错位）
+
 #define SET2_BINDING_REPROJECTION_RESULT                27
 #define SET2_BINDING_FINAL_COLOR                        28     // "Noisy HDR Color"四号归一
 #define SET2_BINDING_DI_DIFFUSE_COLOR                   29

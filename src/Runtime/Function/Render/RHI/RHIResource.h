@@ -220,6 +220,8 @@ protected:
 	RHIShaderBindingTableInfo info;
 };
 
+// TLAS为纯被动资源：构建/更新的唯一帧内入口是RHICommandList::BuildTopLevelAccelerationStructure
+// （一步完成instance写入+乒乓mode推导+录制），类自身不再暴露任何构建方法
 class RHITopLevelAccelerationStructure : public RHIResource
 {
 public:
@@ -228,12 +230,8 @@ public:
 	, info(info)
 	{}
 
-	// 立即路径：准备+immediate录制+提交（仅构造期的一次性空构建等场景使用）
-	virtual void Update(const std::vector<RHIAccelerationStructureInstanceInfo>& instanceInfos, bool build = false) = 0;
-
-	// 纯CPU准备：instance数据写入持久映射buffer + 填充构建信息（不录任何命令）
-	// 帧内路径由RDG的TLASUpdatePass调用：Build期Prepare，Execute期经命令流录制
-	virtual void PrepareUpdate(const std::vector<RHIAccelerationStructureInstanceInfo>& instanceInfos, bool build = false) = 0;
+	// 乒乓refit的另一帧槽（持有方在全部槽创建完后互指；构建mode推导须读对端上次构建的count）
+	virtual void SetPeer(RHITopLevelAccelerationStructureRef peer) = 0;
 
 	// AS存储buffer（RDG以imported buffer的形式为其建立依赖边与屏障）
 	virtual RHIBufferRef GetStorageBuffer() const = 0;

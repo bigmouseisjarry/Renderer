@@ -30,7 +30,7 @@ void ClusterLightingPass::Build(RDGBuilder& builder)
         !EngineContext::Render()->IsPassEnabled(RAY_TRACING_BASE_PASS) && 
         !EngineContext::Render()->IsPassEnabled(PATH_TRACING_PASS))
     {
-        // 稳态均=SRV：本pass的OutputReadWrite(UAV)之后由DeferredLighting读收敛
+        // 稳态均=SRV:本pass写完UAV后,DeferredLighting的读边收敛(Output边已退役,转移需求侧化)
         RDGTextureHandle lightClusterGrid = builder.CreateTexture("Light Cluster Grid")
             .Import(EngineContext::RenderResource()->GetLightClusterGridTexture())
             .Finish();
@@ -41,7 +41,8 @@ void ClusterLightingPass::Build(RDGBuilder& builder)
 
         RDGComputePassHandle pass = builder.CreateComputePass(GetName())
             .RootSignature(rootSignature)
-            .ReadWrite(2, SET2_BINDING_LIGHT_CLUSTER_GRID, 0, lightClusterGrid, VIEW_TYPE_3D)  
+            .Shaders({computeShader.shader})         
+            .ReadWrite(2, SET2_BINDING_LIGHT_CLUSTER_GRID, 0, lightClusterGrid, VIEW_TYPE_3D)
             .ReadWrite(2, SET2_BINDING_LIGHT_CLUSTER_INDEX, 0, lightClusterIndex)
             .Execute([&](RDGPassContext context) {       
 
@@ -54,8 +55,6 @@ void ClusterLightingPass::Build(RDGBuilder& builder)
                                     1, 
                                     LIGHT_CLUSTER_DEPTH);
             })
-            .OutputReadWrite(lightClusterGrid)
-            .OutputReadWrite(lightClusterIndex)
             .Finish();
     }
 }

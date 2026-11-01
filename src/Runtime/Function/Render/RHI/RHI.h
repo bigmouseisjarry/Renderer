@@ -159,9 +159,9 @@ public:
 
     virtual void GenerateMips(RHITextureRef src) = 0;
 
-    // TLAS构建录制：与PrepareUpdate配对（后者先完成CPU侧instance写入与构建信息填充）。
-    // 帧内路径——录进当前命令缓冲，随主流一起提交，无独立submit
-    virtual void BuildTopLevelAccelerationStructure(RHITopLevelAccelerationStructureRef tlas) = 0;
+    // TLAS帧内构建/更新的一步完成入口：instance写入本槽buffer + 推导乒乓mode
+    // （count与对端槽上次构建一致→UPDATE(src=对端)，否则降级BUILD）+ 录制构建命令
+    virtual void BuildTopLevelAccelerationStructure(RHITopLevelAccelerationStructureRef tlas, const std::vector<RHIAccelerationStructureInstanceInfo>& instances) = 0;
 
     virtual void PushEvent(const std::string& name, Color3 color) = 0;   //Label?
 

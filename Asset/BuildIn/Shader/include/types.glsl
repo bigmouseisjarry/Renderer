@@ -1,6 +1,5 @@
 #ifndef TYPES_GLSL
 #define TYPES_GLSL
-// 刀1拆分自common.glsl：全部共享结构体（零绑定声明）
 #include "defines.glsl"
 struct RHIIndexedIndirectCommand 
 {
@@ -251,8 +250,6 @@ struct GizmoBillboardInfo
     vec2 _padding;
     vec4 color;
 };
-
-// MeshCluster/MeshClusterGroup/MeshClusterDrawInfo等mesh域结构体：见下方刀7b-4段（本文件即唯一定义点）
 
 struct MeshCardInfo     // 单个Card的全部信息
 {

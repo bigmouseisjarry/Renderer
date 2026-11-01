@@ -103,7 +103,7 @@ void GBufferThinPass::Build(RDGBuilder& builder)
         RDGTextureHandle objectID       = builder.GetTexture("G-Buffer Object ID");
         RDGTextureHandle geometricNormal = builder.GetTexture("G-Buffer Geometric Normal/AO");
         RDGTextureHandle specularF0     = builder.GetTexture("G-Buffer Specular F0/Roughness");
-        RDGTextureHandle ior            = builder.GetTexture("G-Buffer IOR");   // 复用GBufferPass的节点：同物理纹理双节点=隐形依赖边（Duplicate告警2026-10-26定罪），Import声明留GBufferPass一处
+        RDGTextureHandle ior            = builder.GetTexture("G-Buffer IOR");   
         RDGTextureHandle depth          = builder.GetTexture("Depth");
 
         // 间接绘制命令buffer的虚拟依赖边（见GPUCullingPass的Import命名）
@@ -121,8 +121,9 @@ void GBufferThinPass::Build(RDGBuilder& builder)
             .DepthStencil(depth, ATTACHMENT_LOAD_OP_LOAD, ATTACHMENT_STORE_OP_STORE, 1.0f, 0)                       // depthWrite=false由管线保证
             .ReadIndirect(builder.GetBuffer("Mesh Draw Commands" + cmdIndex))
             .ReadIndirect(builder.GetBuffer("Clusrter Draw Commands" + cmdIndex))
-            .RootSignature(rootSignature)    
-            .Read(2, SET2_BINDING_CLUSTER_DRAW_INFOS_READ, 0, builder.GetBuffer("Cluster Draw Infos" + cmdIndex), 0, 0, RESOURCE_TYPE_BUFFER)
+            .RootSignature(rootSignature)
+            .Shaders({vertexShader.shader, clusterVertexShader.shader, fragmentShader.shader})     
+            .Read(2, SET2_BINDING_CLUSTER_DRAW_INFOS_READ, 0, builder.GetBuffer("Cluster Draw Infos" + cmdIndex), 0, 0)
             .Execute([&](RDGPassContext context) {
 
                 Extent2D windowExtent = EngineContext::Render()->GetWindowsExtent();
@@ -138,10 +139,6 @@ void GBufferThinPass::Build(RDGBuilder& builder)
 
                 meshPassProcessor->Draw(command);
             })
-            .OutputRead(depth)
-            .OutputRead(velocity)
-            .OutputRead(objectID)
-            .OutputRead(ior)
             .Finish();
     }
 }

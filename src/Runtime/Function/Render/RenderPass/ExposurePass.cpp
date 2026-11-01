@@ -52,9 +52,9 @@ void ExposurePass::Build(RDGBuilder& builder)
     RDGComputePassHandle pass0 = builder.CreateComputePass("Luminance Histogram")
         .AddFlag(RDGPassFlags::ForceGraphicsQueue)
         .RootSignature(rootSignature)
-        .Shaders({computeShader0.shader})            
-        .Read(2, SET2_BINDING_IN_COLOR, 0, stableColor)
-        .ReadWrite(2, SET2_BINDING_EXPOSURE_DATA, 0, exposureData, 0, 0)
+        .Shaders({computeShader0.shader})
+        .Read(2, SET2_BINDING_IN_COLOR, 0, stableColor)   // S5-E回滚:histogram.comp实测用b38(直方图采样stable color)——此边为真边;仅pass1(Exposure,b41-only)的b38是假边走虚拟
+        .ReadWrite(2, SET2_BINDING_EXPOSURE_DATA, 0, exposureData)
         .Execute([&](RDGPassContext context) {
 
             RHICommandListRef command = context.command;
@@ -70,8 +70,8 @@ void ExposurePass::Build(RDGBuilder& builder)
         .AddFlag(RDGPassFlags::ForceGraphicsQueue)
         .RootSignature(rootSignature)
         .Shaders({computeShader1.shader})           
-        .Read(2, SET2_BINDING_IN_COLOR, 0, stableColor)
-        .ReadWrite(2, SET2_BINDING_EXPOSURE_DATA, 0, exposureData, 0, 0)
+        .Read(stableColor)
+        .ReadWrite(2, SET2_BINDING_EXPOSURE_DATA, 0, exposureData)
         .Execute([&](RDGPassContext context) {
 
             RHICommandListRef command = context.command;

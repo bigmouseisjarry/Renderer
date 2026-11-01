@@ -1,9 +1,7 @@
 #ifndef SET1_GLSL
 #define SET1_GLSL
-// 刀7a（2026-10-20）：set1=bindless资源池集（原bindless.glsl；刀1拆分自common.glsl，本轮重排连续化0-25）
-// =数据表+顶点/纹理池+TLAS+全部Fetch*访问器；槽位宏见同目录defines.glsl
-// 刀7b-3：自包含化——types.glsl依赖L1全局defines的MAX_*宏，必须先于types引入；
-// 天空访问器已拆往../sky.glsl（依赖set0符号）
+
+
 #include "defines.glsl"
 #include "../defines.glsl"
 #include "../math.glsl"
@@ -41,8 +39,6 @@ layout(set = 1, binding = SET1_BINDING_MESH_CARD) readonly buffer mesh_cards {
 
 } MESH_CARDS;
 
-// 刀7b-4：mesh域两表自mesh_pass.glsl迁入（struct在types.glsl，宏guard与家族头共存）——
-// mesh pass族改经set1.glsl取此声明，mesh_pass.glsl的set1段随7b-3退役
 #ifndef MESH_CLUSTERS_DECLARED
 #define MESH_CLUSTERS_DECLARED
 layout(set = 1, binding = SET1_BINDING_MESH_CLUSTER) readonly buffer mesh_clusters {
@@ -553,10 +549,7 @@ vec4 FetchSpecular(in Material material, in vec2 coord) {
 
 //默认纹理////////////////////////////////////////////////////////////////////////////
 
-// 刀7b-3：SkyboxTextureSize/FetchSkyLight×2（引用set0的GLOBAL_SETTING）已拆往../sky.glsl，
-// 本文件自此自包含——不依赖set0任何声明，窄头用户可单独include（fxaa等只取SAMPLER的场景）
 
 #endif
-// 刀4a：静态资源随池迁入（槽位沿用set0旧号，仅set位0→1）
 layout(set = 1, binding = SET1_BINDING_SKYBOX_IBL) uniform textureCube SKYBOX_IBL[2];    // diffuse, specular
 layout(set = 1, binding = SET1_BINDING_STBN) uniform texture2D STBN[64];

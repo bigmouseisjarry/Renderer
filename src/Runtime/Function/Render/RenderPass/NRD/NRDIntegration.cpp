@@ -414,7 +414,7 @@ void NRDIntegration::_Dispatch(RDGBuilder& builder, const nrd::DispatchDesc& dis
             m_ConstantBufferOffsetPrev = dynamicConstantBufferOffset;
         }
         if (dispatchDesc.constantBufferDataSize)
-            passBuilder.Read(1, 2, 0, bufferHandle, dynamicConstantBufferOffset, dispatchDesc.constantBufferDataSize);
+            passBuilder.ReadBuffer(1, 2, 0, bufferHandle, dynamicConstantBufferOffset, dispatchDesc.constantBufferDataSize);
     }
 
     // 为纹理创造添加一个标志，允许跨族访问
@@ -448,12 +448,12 @@ void NRDIntegration::_Dispatch(RDGBuilder& builder, const nrd::DispatchDesc& dis
                 
                 if(isStorage)
                 {
-                    passBuilder.ReadWrite(0, baseBinding + bindingOffset, 0, resource->handle);
+                    passBuilder.ReadWriteTexture(0, baseBinding + bindingOffset, 0, resource->handle);
                     resource->state = RESOURCE_STATE_UNORDERED_ACCESS;
                 }
                 else
                 {
-                    passBuilder.Read(0, baseBinding + bindingOffset, 0, resource->handle);
+                    passBuilder.ReadTexture(0, baseBinding + bindingOffset, 0, resource->handle);
                     resource->state = RESOURCE_STATE_SHADER_RESOURCE;
                 }    
                 bindingOffset++; 

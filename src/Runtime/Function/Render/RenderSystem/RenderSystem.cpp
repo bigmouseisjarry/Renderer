@@ -81,7 +81,7 @@ void RenderSystem::InitBaseResource()
     // 队列调度配置：编译器与帧槽预建共用同一份（QueryConfiguredQueues按它枚举，保证slot下标与all_queues对齐）
     QueueScheduleConfig queueCfg{}; 
     queueCfg.enable_graphic_queues = 1;
-    queueCfg.enable_async_compute_queues = 1;   // 已还原正式态（10-27夜单队列消融:单队列frame546照崩→多队列域洗清;Xid案转环境假说:显存92-95%悬崖+当日30+次TDR的驱动会话退化,重启后复测）
+    queueCfg.enable_async_compute_queues = 1;   
     queueCfg.enable_copy_queues = 0;
     queueCfg.enable_debug_output = false;
 
@@ -119,8 +119,8 @@ void RenderSystem::InitBaseResource()
 
         CommandRecordingConfig commandRecordingConfig{};
         commandRecordingConfig.enable_debug_markers = true;
-        commandRecordingConfig.enable_debug_output = false;       // 2026-10-28收尾关回（布局案结案；[Phase8]/[Step*]取证dump停用）
-        commandRecordingConfig.enable_gpu_timing = false;        
+        commandRecordingConfig.enable_debug_output = false;       
+        commandRecordingConfig.enable_gpu_timing = false;
         commandRecordingConfig.chunk_count = 3;     // ANY池worker(2) + 主线程(1)——亦是每队列预建命令流数
         rdgCompilers[i] = std::make_shared<RDGCompiler>(crossFrameRegistry, renderQuery, queueCfg, reorderConfig, passBindingConfig, barrierGenerationConfig, commandRecordingConfig);
     }
@@ -147,7 +147,7 @@ void RenderSystem::InitPasses()
     meshPasses[MESH_DIRECTIONAL_SHADOW_PASS]    = std::make_shared<DirectionalShadowPass>();
     meshPasses[MESH_POINT_SHADOW_PASS]          = std::make_shared<PointShadowPass>();
     meshPasses[MESH_G_BUFFER_PASS]              = std::make_shared<GBufferPass>();
-    meshPasses[MESH_G_BUFFER_THIN_PASS]         = std::make_shared<GBufferThinPass>();    // 需maxColorAttachments>=8（本机启动日志已核实=8）
+    meshPasses[MESH_G_BUFFER_THIN_PASS]         = std::make_shared<GBufferThinPass>();    
     meshPasses[MESH_FORWARD_PASS]               = std::make_shared<ForwardPass>();
 
     passes[TLAS_UPDATE_PASS]                    = std::make_shared<TLASUpdatePass>();
@@ -211,10 +211,8 @@ void RenderSystem::InitPasses()
     passes[RAY_TRACING_BASE_PASS]->SetEnable(false);
 #endif
 
-    // Init去重：render槽位与mesh槽位可能填同一实例（如DEPTH_PASS=MESH_DEPTH_PASS），只初始化一次
-    std::set<std::shared_ptr<RenderPass>> inited;
     for(auto& pass : passes)
-        if(pass && inited.insert(pass).second) pass->Init();
+        if(pass) pass->Init();
 }
 
 void RenderSystem::Tick()
@@ -259,8 +257,6 @@ void RenderSystem::Tick()
 
     BuildRDG(); // RDG的构建目前暂未支持多线程并行，只能串行；执行需要依赖于上面几个manager的数据处理结果
 
-    // 根据分析结果分别录制+执行，而不是现在这样串行一个队列执行
-    // 分别录制已完成
     ExecuteRDG();
 
     {

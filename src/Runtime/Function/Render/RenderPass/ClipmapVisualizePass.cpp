@@ -23,8 +23,8 @@ void ClipmapVisualizePass::Init()
     RHIRootSignatureInfo rootSignatureInfo = {};
     rootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetPerFrameRootSignature()->GetInfo())
                      .AddEntry(EngineContext::RenderResource()->GetBindlessRootSignature()->GetInfo())
-                     .AddEntry(EngineContext::RenderResource()->GetSet2RootSignature()->GetInfo())       // 刀7b-3：set2全局统一RS（98槽）
-                     .AddPushConstant({128, SHADER_FREQUENCY_GRAPHICS});
+                     .AddEntry(EngineContext::RenderResource()->GetSet2RootSignature()->GetInfo())       
+                     .AddPushConstant({sizeof(ClipmapVisualizeSetting), SHADER_FREQUENCY_GRAPHICS});
     rootSignature = backend->CreateRootSignature(rootSignatureInfo);
 
     {
@@ -94,7 +94,7 @@ void ClipmapVisualizePass::Build(RDGBuilder& builder)
                     .Color(0, outColor, (i == setting.minMip) ? ATTACHMENT_LOAD_OP_CLEAR : ATTACHMENT_LOAD_OP_LOAD, ATTACHMENT_STORE_OP_STORE, {0.0f, 0.0f, 0.0f, 0.0f})
                     .DepthStencil(depth, (i == setting.minMip) ? ATTACHMENT_LOAD_OP_CLEAR : ATTACHMENT_LOAD_OP_LOAD, ATTACHMENT_STORE_OP_STORE, 1.0f, 0)
                     .ReadWrite(2, SET2_BINDING_CLIPMAP_A, 0, clipmapTex, VIEW_TYPE_3D)
-                    .ReadWrite(2, SET2_BINDING_CLIPMAP_B, 0, clipmapBuf, 0, 0)
+                    .ReadWrite(2, SET2_BINDING_CLIPMAP_B, 0, clipmapBuf)
                     .Execute([&](RDGPassContext context) {
                         
                         ClipmapVisualizeSetting newSetting = setting;
@@ -125,7 +125,7 @@ void ClipmapVisualizePass::Build(RDGBuilder& builder)
                 .Shaders({rayGenShader.shader, rayMissShader.shader, closestHitShader.shader})  
                 .ReadAccelerationStructure(builder.GetBuffer("TLAS Storage"))      
                 .ReadWrite(2, SET2_BINDING_CLIPMAP_A, 0, clipmapTex, VIEW_TYPE_3D)
-                .ReadWrite(2, SET2_BINDING_CLIPMAP_B, 0, clipmapBuf, 0, 0)
+                .ReadWrite(2, SET2_BINDING_CLIPMAP_B, 0, clipmapBuf)
                 .ReadWrite(2, SET2_BINDING_CLIPMAP_C, 0, outColor)
                 .Execute([&](RDGPassContext context) {       
 

@@ -30,18 +30,19 @@ static const char* INSTANCE_LAYERS[] = {
 };
 
 static const std::vector<VkValidationFeatureEnableEXT> ENABLED_VALIDATION_FEATURES = {  // 需要时再启用，对帧数影响大
-    //VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT,   // 刀6d取证轮（2026-10-20）已用毕还原：C1形态抓到DDGI Radiance set2 b10(LightClusterGrid)悬空实锤
+    //VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT,   
 #if ENABLE_DEBUG_MODE
     //VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT,
-    //VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT,
-    // 诊断结论（2026-09-03 sync validation实证后移除环境变量门控）：需要跑sync validation时
+//    VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT,
+    // 诊断结论：需要跑sync validation时
     // 取消下一行注释（或临时加回env门控）——它是多队列同步掩码正确性的最终裁判
     //VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT // RUN4已毕还原(syncval被ENABLE_DEBUG_MODE=0吞,未生效)
 #endif
-//    VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT,  // GPU-AV本机废(2026-10-28五连判:Submit2上internal error自禁,详见memory)
-//    VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT,  // syncval配方:守卫外挂+不挂DISABLE_ALL(ENABLE_DEBUG_MODE=0会吞#if守卫内的)
+//    VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT,       
+//    VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT,  // 
+//    VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT,  // syncval配方
 };
-static const std::vector<VkValidationFeatureDisableEXT> DISABLED_VALIDATION_FEATURES = {  // RUN5实证:不关core则GPU-AV internal error自禁
+static const std::vector<VkValidationFeatureDisableEXT> DISABLED_VALIDATION_FEATURES = {  // 不关core则GPU-AV internal error自禁
 //VK_VALIDATION_FEATURE_DISABLE_ALL_EXT,  // GPU-AV专用(与GPU_ASSISTED配套)
 };
 
@@ -127,12 +128,11 @@ public:
         return debugCreateInfo;
     }
 
-    // GPU-AV配套：必须关core检查（同开=very slow+GPU-AV internal error，2026-10-19实证）
+    // GPU-AV配套：必须关core检查（同开=very slow+GPU-AV internal error）
     static VkValidationFeaturesEXT GetValidationFeatureCreateInfo()
     {
         VkValidationFeaturesEXT validationFeaturesExt = {};
         validationFeaturesExt.sType = VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT;
-        // 刀6d取证轮已毕还原（GPU-AV配方=GPU_ASSISTED+DISABLE_ALL挂载，见memory/devicelost-dangling-descriptor）
         validationFeaturesExt.pEnabledValidationFeatures = ENABLED_VALIDATION_FEATURES.data();
         validationFeaturesExt.enabledValidationFeatureCount = ENABLED_VALIDATION_FEATURES.size();
         validationFeaturesExt.pDisabledValidationFeatures = DISABLED_VALIDATION_FEATURES.data();
@@ -232,10 +232,37 @@ public:
         instance.instanceCustomIndex = info.instanceIndex;
         instance.mask = info.mask;
         instance.instanceShaderBindingTableRecordOffset = info.shaderBindingTableOffset;
-        instance.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;                 // 剔除模式
+        instance.flags = RHIGeometryInstanceFlagsToVk(info.flags);
         instance.accelerationStructureReference = ResourceCast(info.blas)->GetAddress();
 
         return instance;
+    }
+
+    static VkGeometryFlagsKHR RHIGeometryFlagsToVk(uint32_t flags)
+    {
+        VkGeometryFlagsKHR vkFlags = 0;
+        if(flags & RHI_GEOMETRY_OPAQUE)                     vkFlags |= VK_GEOMETRY_OPAQUE_BIT_KHR;
+        if(flags & RHI_GEOMETRY_NO_DUPLICATE_ANY_HIT)       vkFlags |= VK_GEOMETRY_NO_DUPLICATE_ANY_HIT_INVOCATION_BIT_KHR;
+        return vkFlags;
+    }
+
+    static VkBuildAccelerationStructureFlagsKHR RHIBuildFlagsToVk(uint32_t flags)
+    {
+        VkBuildAccelerationStructureFlagsKHR vkFlags = 0;
+        if(flags & RHI_BUILD_ALLOW_UPDATE)                  vkFlags |= VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
+        if(flags & RHI_BUILD_PREFER_FAST_TRACE)             vkFlags |= VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+        if(flags & RHI_BUILD_PREFER_FAST_BUILD)             vkFlags |= VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_BUILD_BIT_KHR;
+        return vkFlags;
+    }
+
+    static VkGeometryInstanceFlagsKHR RHIGeometryInstanceFlagsToVk(uint32_t flags)
+    {
+        VkGeometryInstanceFlagsKHR vkFlags = 0;
+        if(flags & RHI_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE)       vkFlags |= VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
+        if(flags & RHI_GEOMETRY_INSTANCE_TRIANGLE_FRONT_COUNTERCLOCKWISE)    vkFlags |= VK_GEOMETRY_INSTANCE_TRIANGLE_FRONT_COUNTERCLOCKWISE_BIT_KHR;
+        if(flags & RHI_GEOMETRY_INSTANCE_FORCE_OPAQUE)                       vkFlags |= VK_GEOMETRY_INSTANCE_FORCE_OPAQUE_BIT_KHR;
+        if(flags & RHI_GEOMETRY_INSTANCE_FORCE_NO_OPAQUE)                    vkFlags |= VK_GEOMETRY_INSTANCE_FORCE_NO_OPAQUE_BIT_KHR;
+        return vkFlags;
     }
 
     static VkFormat RHIFormatToVkFormat(const RHIFormat& pixelFormat)
@@ -728,8 +755,6 @@ public:
     // (状态 + 着色器频率) → 访问掩码 + 布局 + 管线阶段
     // 布局与访问仍完全由状态推导；频率仅细化shader类访问的阶段展开（新RHI流单一入口）
     // ★buffer专有态(VERTEX/INDEX/INDIRECT/AS)不在ImageLayout覆盖集——组合入口对其跳过布局推导
-    // (置UNDEFINED,buffer调用方本就丢弃布局),否则误触ImageLayout的default fatal
-    // (2026-10-27实锤:GPU剔除的INDIRECT_ARGUMENT buffer屏障在双worker同时fatal)
     static void ResourceStateToBarrierInfo(RHIResourceState state, uint32_t frequency, VkQueueFlags queueFlags,
         VkAccessFlags& outAccess, VkImageLayout& outLayout, VkPipelineStageFlags& outStages)
     {
@@ -795,7 +820,9 @@ public:
             {
                 // 频率感知：按frequency精确展开，再按队列族门控——
                 // 图形族天然支持图形+compute+RT全部shader stage；纯compute族只保留compute/RT
-                VkShaderStageFlags stages = ShaderFrequencyToVkStageFlags(frequency);
+                // ★必须用pipeline-stage域的映射：VkShaderStageFlagBits与VkPipelineStageFlagBits
+                // 数值不同位域（VERTEX=0x1 vs VERTEX_SHADER=0x8），混用=乱码stage
+                VkPipelineStageFlags stages = ShaderFrequencyToVkPipelineStageFlags(frequency);
                 if(graphics)                    flags |= stages;
                 else if(compute)                flags |= stages & (VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT |
                                                                    VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR);
@@ -904,6 +931,22 @@ public:
         if (best >= 0)
             freeCounts[best] = std::max(0, freeCounts[best] - MAX_QUEUE_CNT);
         return best;
+    }
+
+    static VkPipelineStageFlags ShaderFrequencyToVkPipelineStageFlags(uint32_t frequency)
+    {
+        VkPipelineStageFlags stageFlags = 0;
+        if(frequency & SHADER_FREQUENCY_COMPUTE)      stageFlags |= VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+        if(frequency & SHADER_FREQUENCY_VERTEX)       stageFlags |= VK_PIPELINE_STAGE_VERTEX_SHADER_BIT;
+        if(frequency & SHADER_FREQUENCY_FRAGMENT)     stageFlags |= VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        if(frequency & SHADER_FREQUENCY_GEOMETRY)     stageFlags |= VK_PIPELINE_STAGE_GEOMETRY_SHADER_BIT;
+        if(frequency & (SHADER_FREQUENCY_RAY_GEN |
+                        SHADER_FREQUENCY_CLOSEST_HIT |
+                        SHADER_FREQUENCY_RAY_MISS |
+                        SHADER_FREQUENCY_INTERSECTION |
+                        SHADER_FREQUENCY_ANY_HIT))    stageFlags |= VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR;
+        if(frequency & SHADER_FREQUENCY_MESH)         stageFlags |= VK_PIPELINE_STAGE_MESH_SHADER_BIT_EXT;
+        return stageFlags;
     }
 
     static VkShaderStageFlags ShaderFrequencyToVkStageFlags(ShaderFrequency frequency)
@@ -1102,7 +1145,7 @@ public:
             subresource.layerCount); 
     }
 
-    // ===== 启动期绑定布局校验（迁自ShaderBindingValidator.cpp的验证A，S1预迁：S2切换调用点后原文件整体退役）=====
+    // ===== 启动期绑定布局校验=====
     // shader反射声明 vs 根签名AddEntry布局 对拍（管线创建时调用一次）
     // 防"绑定乱象"类的存量bug：镜像枚举漂移（C++的AddEntry与glsl声明不一致）、漏加AddEntry、
     // PC stage掩码不覆盖实际使用它的shader stage
@@ -1158,36 +1201,34 @@ public:
         }
     }
 
-    static bool ValidatePipelineBindings(  const std::string& pipelineName,
-                                            const std::vector<RHIShaderRef>& shaders,
-                                            const RHIRootSignatureRef& rootSignature)
+    static bool ValidatePipelineBindings(const std::string& pipelineName, const std::vector<RHIShaderRef>& shaders, const RHIRootSignatureRef& rootSignature)
     {
-        if(rootSignature == nullptr) return true;    // TestTriangle等无签名管线
+        if (rootSignature == nullptr) return true;    // TestTriangle等无签名管线
 
         const RHIRootSignatureInfo& rsInfo = rootSignature->GetInfo();
         const std::vector<ShaderResourceEntry>& rsEntries = rsInfo.GetEntries();
-        std::vector<std::string> violations;    // 刀4b：收集全部违例统一抛（一批迭代排查用）
+        std::vector<std::string> violations;
 
         // 管线使用的每一个shader
-        for(const RHIShaderRef& shader : shaders)
+        for (const RHIShaderRef& shader : shaders)
         {
-            if(shader == nullptr) continue;
+            if (shader == nullptr) continue;
             const ShaderReflectInfo& reflect = shader->GetReflectInfo();
             const std::string& shaderName = shader->GetInfo().debugName;
 
             // 反射得到的entity
-            for(const ShaderResourceEntry& used : reflect.resources)
+            for (const ShaderResourceEntry& used : reflect.resources)
             {
                 // 共享include常带来"声明但未静态使用"的绑定（如nrd/common.glsl的G_BUFFER_DEPTH对combine），
                 // Vulkan不要求未使用绑定有后备，跳过
-                if(!used.used) continue;
+                if (!used.used) continue;
 
                 // 1. shader声明的每个绑定，根签名里必须有同(set,binding)的entry
                 const ShaderResourceEntry* declared = nullptr;
-                for(const ShaderResourceEntry& entry : rsEntries)
-                    if(entry.set == used.set && entry.binding == used.binding) { declared = &entry; break; }
+                for (const ShaderResourceEntry& entry : rsEntries)
+                    if (entry.set == used.set && entry.binding == used.binding) { declared = &entry; break; }
 
-                if(declared == nullptr)
+                if (declared == nullptr)
                 {
                     violations.push_back("[" + pipelineName + "] shader '" + shaderName + "' set=" +
                         std::to_string(used.set) + " binding=" + std::to_string(used.binding) + " 无对应AddEntry");
@@ -1195,7 +1236,7 @@ public:
                 }
 
                 // 2. 类型族必须一致
-                if(GetTypeFamily(declared->type) != GetTypeFamily(used.type))
+                if (GetTypeFamily(declared->type) != GetTypeFamily(used.type))
                 {
                     violations.push_back("[" + pipelineName + "] set=" + std::to_string(used.set) + " binding=" +
                         std::to_string(used.binding) + " 类型不符 RS=" + TypeFamilyName(GetTypeFamily(declared->type)) +
@@ -1204,7 +1245,7 @@ public:
                 }
 
                 // 3. RS的entry必须覆盖实际访问它的shader stage
-                if((((uint32_t)declared->frequency) & ((uint32_t)used.frequency)) == 0)
+                if ((((uint32_t)declared->frequency) & ((uint32_t)used.frequency)) == 0)
                 {
                     violations.push_back("[" + pipelineName + "] set=" + std::to_string(used.set) + " binding=" +
                         std::to_string(used.binding) + " stage掩码不含 '" + shaderName + "'");
@@ -1212,7 +1253,7 @@ public:
                 }
 
                 // 4. 数组大小：RS的0=无界池(bindless)；shader的0=runtime数组；否则shader声明数不能超过RS容量
-                if(declared->size != 0 && used.size > declared->size)
+                if (declared->size != 0 && used.size > declared->size)
                 {
                     violations.push_back("[" + pipelineName + "] set=" + std::to_string(used.set) + " binding=" +
                         std::to_string(used.binding) + " 数组超容 RS=" + std::to_string(declared->size) +
@@ -1221,14 +1262,16 @@ public:
             }
 
             // 5. push constant：使用PC的shader，其stage必须被某个PC range掩码覆盖且大小足够
-            if(reflect.usePushConstant)
+            if (reflect.usePushConstant)
             {
                 bool covered = false;
-                for(const PushConstantInfo& pc : rsInfo.GetPushConstants())
-                    if((((uint32_t)pc.frequency) & ((uint32_t)reflect.frequency)) != 0 && pc.size >= reflect.pushConstantSize)
-                    { covered = true; break; }
+                for (const PushConstantInfo& pc : rsInfo.GetPushConstants())
+                    if ((((uint32_t)pc.frequency) & ((uint32_t)reflect.frequency)) != 0 && pc.size >= reflect.pushConstantSize)
+                    {
+                        covered = true; break;
+                    }
 
-                if(!covered)
+                if (!covered)
                 {
                     violations.push_back("[" + pipelineName + "] shader '" + shaderName + "' PC未覆盖(size=" +
                         std::to_string(reflect.pushConstantSize) + ")");
@@ -1236,7 +1279,7 @@ public:
             }
         }
 
-        for(const std::string& v : violations)
+        for (const std::string& v : violations)
             LOG_FATAL("%s", v.c_str());
         return violations.empty();
     }

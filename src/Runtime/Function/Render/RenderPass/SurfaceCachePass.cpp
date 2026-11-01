@@ -23,8 +23,8 @@ void SurfaceCachePass::Init()
     RHIRootSignatureInfo rootSignatureInfo = {};
     rootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetPerFrameRootSignature()->GetInfo())
                      .AddEntry(EngineContext::RenderResource()->GetBindlessRootSignature()->GetInfo())
-                     .AddEntry(EngineContext::RenderResource()->GetSet2RootSignature()->GetInfo())       // 刀7b-3：set2全局统一RS
-                                                                                                                                                                                                                  .AddPushConstant({128, SHADER_FREQUENCY_GRAPHICS}); // 掩码须与Execute里PushConstants的stage一致(VUID-01796要求命令掩码⊇range掩码)；direct_lighting.comp不用PC故无需COMPUTE
+                     .AddEntry(EngineContext::RenderResource()->GetSet2RootSignature()->GetInfo())      
+                                                                                                                                                                                                                  .AddPushConstant({sizeof(SurfaceCacheRasterizeSetting), SHADER_FREQUENCY_GRAPHICS}); // 掩码须与Execute里PushConstants的stage一致(VUID-01796要求命令掩码⊇range掩码)；direct_lighting.comp不用PC故无需COMPUTE
     rootSignature = backend->CreateRootSignature(rootSignatureInfo);
 
 
@@ -68,7 +68,7 @@ void SurfaceCachePass::Build(RDGBuilder& builder)
 {
     //if (IsEnabled())
     {
-        // 五纹理稳态均=SRV：pass1(Direct Lighting)末尾全OutputRead收敛；lighting槽随后被SSSR/ReSTIRGI读亦SRV
+        // 五纹理稳态均=SRV：pass1(Direct Lighting)写完，Clipmap/RayTracingBase读边收敛；lighting槽随后被SSSR/ReSTIRGI读亦SRV
         RDGTextureHandle diffuseTex = builder.CreateTexture("Surface Cache Diffuse/Metallic")
             .Import(EngineContext::RenderResource()->GetSurfaceCacheTexture(0)->texture)
             .Finish();
@@ -129,32 +129,30 @@ void SurfaceCachePass::Build(RDGBuilder& builder)
             })
             .Finish();
 
-        auto pass1 = builder.CreateComputePass(GetName() + " Direct Lighting")   // 刀5：auto持有builder——链中插volume light边循环需要继续链式调用
+        auto pass1 = builder.CreateComputePass(GetName() + " Direct Lighting")   
             .RootSignature(rootSignature)
-            .Shaders({computeShader.shader})           // 刀7b-3：严格边校验
+            .Shaders({computeShader.shader})          
             .Read(2, SET2_BINDING_SC_CACHE_DIFFUSE, 0, diffuseTex)
             .Read(2, SET2_BINDING_SC_CACHE_NORMAL, 0, normalTex)
             .Read(2, SET2_BINDING_SC_CACHE_EMISSION, 0, emissionTex)
             .ReadWrite(2, SET2_BINDING_SC_CACHE_LIGHTING, 0, lightingTex)
             .Read(2, SET2_BINDING_SC_CACHE_DEPTH, 0, depthTex)
-            .ReadWrite(2, SET2_BINDING_SC_DIRECT_LIGHTING_DISPATCH, 0, directLightingBuf, 0, 0);
-            // 刀5：volume light经照明域b25/b26（原set0；index=volumeLightID动态对齐）
-            // 自建导入（不依赖DDGI是否启用；GetOrCreate同参=与DDGI共享单节点）
+            .ReadWrite(2, SET2_BINDING_SC_DIRECT_LIGHTING_DISPATCH, 0, directLightingBuf);
             for(auto& volumeLight : EngineContext::Render()->GetLightManager()->GetVolumeLights())
             {
                 uint32_t vid = volumeLight->GetVolumeLightID();
                 RDGTextureHandle irr = builder.GetOrCreateTexture("Volume Light Irradiance [" + std::to_string(vid) + "]")
-                    .Import(volumeLight->GetTextres().irradianceTex->texture).Finish();     // 刀6a：稳态=U4 OutputRead收尾（与DDGIPass同值，黑板名多导入点同值契约）
+                    .Import(volumeLight->GetTextres().irradianceTex->texture).Finish();     
                 RDGTextureHandle dep = builder.GetOrCreateTexture("Volume Light Depth [" + std::to_string(vid) + "]")
                     .Import(volumeLight->GetTextres().depthTex->texture).Finish();
                 pass1.Read(2, SET2_BINDING_VOLUME_LIGHT_IRRADIANCE, vid, irr, VIEW_TYPE_2D, {});
                 pass1.Read(2, SET2_BINDING_VOLUME_LIGHT_DEPTH, vid, dep, VIEW_TYPE_2D, {});
             }
             pass1
-            // 刀DDGI假边扫描（2026-10-22）：探针实证direct_lighting.comp不吃DIRECTIONAL_SHADOW(b6)——
-            // 卡片直接光=DDGI体积(b9/b10)+点光阴影(b7)，平行光四条ReadIfValid为假边已删
-            .ReadIfValid(2, SET2_BINDING_POINT_SHADOW, 0, "Point Shadow Filtered Color [0]", VIEW_TYPE_CUBE, { TEXTURE_ASPECT_COLOR, 0, 1, 0, 6 })
-            .ReadIfValid(2, SET2_BINDING_POINT_SHADOW, 1, "Point Shadow Filtered Color [1]", VIEW_TYPE_CUBE, { TEXTURE_ASPECT_COLOR, 0, 1, 0, 6 })
+            .Read(2, SET2_BINDING_POINT_SHADOW, 0, builder.GetTexture("Point Shadow Filtered Color [0]"), VIEW_TYPE_CUBE, { TEXTURE_ASPECT_COLOR, 0, 1, 0, 6 })
+            .Read(2, SET2_BINDING_POINT_SHADOW, 1, builder.GetTexture("Point Shadow Filtered Color [1]"), VIEW_TYPE_CUBE, { TEXTURE_ASPECT_COLOR, 0, 1, 0, 6 })
+            .Read(2, SET2_BINDING_POINT_SHADOW, 2, builder.GetTexture("Point Shadow Filtered Color [2]"), VIEW_TYPE_CUBE, { TEXTURE_ASPECT_COLOR, 0, 1, 0, 6 })
+            .Read(2, SET2_BINDING_POINT_SHADOW, 3, builder.GetTexture("Point Shadow Filtered Color [3]"), VIEW_TYPE_CUBE, { TEXTURE_ASPECT_COLOR, 0, 1, 0, 6 })
             .Execute([&](RDGPassContext context) {       
                 
                 auto& dispatches = EngineContext::Render()->GetSurfaceCacheManager()->GetDirectLightingDispatches();
@@ -169,11 +167,6 @@ void SurfaceCachePass::Build(RDGBuilder& builder)
                                     1, 
                                     1);
             })
-            .OutputRead(diffuseTex)
-            .OutputRead(normalTex)
-            .OutputRead(emissionTex)
-            .OutputRead(lightingTex)
-            .OutputRead(depthTex)
             .Finish();
 
         init = true;

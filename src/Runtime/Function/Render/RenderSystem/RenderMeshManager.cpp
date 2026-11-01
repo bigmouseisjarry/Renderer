@@ -7,12 +7,16 @@
 
 void RenderMeshManager::Init()
 {
-    tlas = EngineContext::RHI()->CreateTopLevelAccelerationStructure({
-        .maxInstance = MAX_PER_FRAME_OBJECT_SIZE,
-        .instanceInfos = {}
-    });
-    EngineContext::RenderResource()->SetTLAS(tlas);
-    init = false;
+    // 每帧槽一份TLAS（构造含空BUILD占位），全建完后互指乒乓peer；
+    // 槽i的池描述符绑槽i的TLAS——句柄永不变，一次写死长期有效
+    for(uint32_t i = 0; i < FRAMES_IN_FLIGHT; i++)
+        tlas[i] = EngineContext::RHI()->CreateTopLevelAccelerationStructure({
+            .maxInstance = MAX_PER_FRAME_OBJECT_SIZE});
+    for(uint32_t i = 0; i < FRAMES_IN_FLIGHT; i++)
+    {
+        tlas[i]->SetPeer(tlas[(i + 1) % FRAMES_IN_FLIGHT]);
+        EngineContext::RenderResource()->SetTLAS(i, tlas[i]);
+    }
 }
 
 void RenderMeshManager::Tick()
@@ -56,17 +60,8 @@ void RenderMeshManager::PrepareRayTracePass()
 {
     ENGINE_TIME_SCOPE(RenderMeshManager::PrepareRayTracePass);
 
-    // 遍历场景，获取光追实例信息
+    // 遍历场景，获取光追实例信息（TLAS构建由RDG的TLASUpdatePass在Execute期一步完成）
     instances.clear();
     auto rendererComponents = EngineContext::World()->GetActiveScene()->GetComponents<MeshRendererComponent>();     // 场景物体
     for(auto component : rendererComponents) component->CollectAccelerationStructureInstance(instances);
-    // TLAS的构建由RDG的TLASUpdatePass在Build期Prepare、帧命令流内录制
-}
-
-void RenderMeshManager::PrepareTLASUpdate()
-{
-    ENGINE_TIME_SCOPE(RenderMeshManager::PrepareTLASUpdate);
-
-    tlas->PrepareUpdate(instances, !init);
-    init = true;
 }

@@ -26,7 +26,7 @@ void GPUCullingPass::Init()
     rootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetPerFrameRootSignature()->GetInfo())
                      .AddEntry(EngineContext::RenderResource()->GetBindlessRootSignature()->GetInfo())
                      .AddEntry(EngineContext::RenderResource()->GetSet2RootSignature()->GetInfo())       
-                                                                                                                                                                                             .AddPushConstant({128, SHADER_FREQUENCY_COMPUTE});
+                                                                                                                                                                                             .AddPushConstant({sizeof(CullingLodSetting), SHADER_FREQUENCY_COMPUTE});
                                  
     rootSignature = backend->CreateRootSignature(rootSignatureInfo);
 
@@ -68,9 +68,15 @@ void GPUCullingPass::Build(RDGBuilder& builder)
 
         std::string indexStrX = " [" + std::to_string(i) + "]";
 
-        auto pass0Builder = builder.CreateComputePass(GetName() + " Mesh" + indexStrX);
-        auto pass1Builder = builder.CreateComputePass(GetName() + " Cluster Group" + indexStrX);
-        auto pass2Builder = builder.CreateComputePass(GetName() + " Cluster" + indexStrX);
+        auto pass0Builder = builder.CreateComputePass(GetName() + " Mesh" + indexStrX)
+            .RootSignature(rootSignature)
+            .Shaders({cullingShader.shader});            // S5-E：边时校验要求Shaders先于边（声明在循环外、边之前）
+        auto pass1Builder = builder.CreateComputePass(GetName() + " Cluster Group" + indexStrX)
+            .RootSignature(rootSignature)
+            .Shaders({clusterGroupCullingShader.shader});
+        auto pass2Builder = builder.CreateComputePass(GetName() + " Cluster" + indexStrX)
+            .RootSignature(rootSignature)
+            .Shaders({clusterCullingShader.shader});
 
         auto& processSizes = passes[i]->GetMeshPassProcessor()->GetProcessSizes();
         auto& passBuffers = passes[i]->GetMeshPassProcessor()->GetIndirectBuffers();
@@ -100,38 +106,32 @@ void GPUCullingPass::Build(RDGBuilder& builder)
                 .Import(passBuffers[j]->clusterGroupDrawDataBuffer.buffer, RESOURCE_STATE_UNORDERED_ACCESS)
                 .Finish();
 
-            // 稳态=SRV：正常帧末位触碰者=各mesh render pass的读；无读者帧（级联不更新/光源禁用/RT模式）=pass2的OutputRead收敛——两种帧形都闭环
+            // 稳态闭环(Output边退役):正常帧末位触碰者=各mesh render pass的读边;无读者帧写完UAV由
+            // registry/pool记真实终态,下帧首个读者(或下帧pass2的RW边)需求侧转换——两种帧形都闭环
             RDGBufferHandle clusterDrawInfos = builder.CreateBuffer("Cluster Draw Infos" + indexStrXY)
                 .Import(passBuffers[j]->clusterDrawInfoBuffer, RESOURCE_STATE_SHADER_RESOURCE)
                 .Finish();
 
             pass0Builder
-                // 现行犯#1修复(2026-10-28悬空槽案): culling.comp:58静态读DEPTH_PYRAMID[1](=Max,遮蔽
-                // 剔除语义),原绑[0](=Min)为索引错位——Mesh剔除每帧每物体读悬空槽=按物体闪烁噪声+垃圾读彩票
                 .Read(2, SET2_BINDING_HISTORY_DEPTH_PYRAMID, 1, depthMax, VIEW_TYPE_2D, {})
 
-                .ReadWrite(2, SET2_BINDING_GIZMO_DRAW_DATA, 0, gizmoData, 0, 0)
-                .ReadWrite(2, SET2_BINDING_INDIRECT_MESH_DRAW_DATAS, j, meshDrawDatas, 0, 0)
-                .ReadWrite(2, SET2_BINDING_INDIRECT_MESH_DRAW_COMMANDS, j, meshDrawCommands, 0, 0)
-                .OutputIndirectDraw(meshDrawCommands);       // 输出，作为后续间接绘制的buffer。
+                .ReadWrite(2, SET2_BINDING_GIZMO_DRAW_DATA, 0, gizmoData)
+                .ReadWrite(2, SET2_BINDING_INDIRECT_MESH_DRAW_DATAS, j, meshDrawDatas)
+                .ReadWrite(2, SET2_BINDING_INDIRECT_MESH_DRAW_COMMANDS, j, meshDrawCommands);
 
             pass1Builder
-                .ReadWrite(2, SET2_BINDING_INDIRECT_CLUSTER_DRAW_DATAS, j, clusrterDrawDatas, 0, 0)
-                .ReadWrite(2, SET2_BINDING_INDIRECT_CLUSTER_GROUP_DATAS, j, clusrterGroupDrawDatas, 0, 0);
+                .ReadWrite(2, SET2_BINDING_INDIRECT_CLUSTER_DRAW_DATAS, j, clusrterDrawDatas)
+                .ReadWrite(2, SET2_BINDING_INDIRECT_CLUSTER_GROUP_DATAS, j, clusrterGroupDrawDatas);
 
             pass2Builder
                 .Read(2, SET2_BINDING_HISTORY_DEPTH_PYRAMID, 1, depthMax, VIEW_TYPE_2D, {})
-                .ReadWrite(2, SET2_BINDING_GIZMO_DRAW_DATA, 0, gizmoData, 0, 0)
-                .ReadWrite(2, SET2_BINDING_INDIRECT_CLUSTER_DRAW_DATAS, j, clusrterDrawDatas, 0, 0)
-                .ReadWrite(2, SET2_BINDING_INDIRECT_CLUSTER_DRAW_COMMANDS, j, clusrterDrawCommands, 0, 0)
-                .ReadWrite(2, SET2_BINDING_CLUSTER_DRAW_INFOS_WRITE, j, clusterDrawInfos, 0, 0)                 // 剔除后实际绘制的cluster索引表（本遍自己的那块）
-                .OutputIndirectDraw(clusrterDrawCommands)    // 输出，作为后续间接绘制的buffer
-                .OutputRead(clusterDrawInfos);
+                .ReadWrite(2, SET2_BINDING_GIZMO_DRAW_DATA, 0, gizmoData)
+                .ReadWrite(2, SET2_BINDING_INDIRECT_CLUSTER_DRAW_DATAS, j, clusrterDrawDatas)
+                .ReadWrite(2, SET2_BINDING_INDIRECT_CLUSTER_DRAW_COMMANDS, j, clusrterDrawCommands)
+                .ReadWrite(2, SET2_BINDING_CLUSTER_DRAW_INFOS_WRITE, j, clusterDrawInfos);                // 剔除后实际绘制的cluster索引表（本遍自己的那块）
         }
 
         pass0Builder
-            .RootSignature(rootSignature)
-            .Shaders({cullingShader.shader})               
 			.PassIndex(i, passCount, processSizes[0])           // pass类型 、 该类型跑多少遍 、每遍处理多少个mesh
             .Execute([&](RDGPassContext context) {       
 
@@ -152,8 +152,6 @@ void GPUCullingPass::Build(RDGBuilder& builder)
             .Finish();
 
         pass1Builder
-            .RootSignature(rootSignature)
-            .Shaders({clusterGroupCullingShader.shader})   
             .PassIndex(i, passCount, processSizes[1])
             .Execute([&](RDGPassContext context) {       
 
@@ -174,8 +172,6 @@ void GPUCullingPass::Build(RDGBuilder& builder)
             .Finish();
 
         pass2Builder
-            .RootSignature(rootSignature)
-            .Shaders({clusterCullingShader.shader})         
             .PassIndex(i, passCount, processSizes[2])
             .Execute([&](RDGPassContext context) {       
 

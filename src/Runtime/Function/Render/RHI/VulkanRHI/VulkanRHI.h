@@ -194,7 +194,8 @@ public:
 
     virtual void GenerateMips(RHITextureRef src) override final;
 
-    virtual void BuildTopLevelAccelerationStructure(RHITopLevelAccelerationStructureRef tlas) override final;
+    // TLAS帧内构建/更新的唯一实现点（friend直捣VulkanRHITopLevelAccelerationStructure私有成员）
+    virtual void BuildTopLevelAccelerationStructure(RHITopLevelAccelerationStructureRef tlas, const std::vector<RHIAccelerationStructureInstanceInfo>& instances) override final;
 
     virtual void PushEvent(const std::string& name, Color3 color) override final;
 
@@ -257,6 +258,7 @@ public:
 private:
     VkCommandBuffer handle;
     VulkanRHICommandPool* pool;
+    VkDevice logicalDevice = VK_NULL_HANDLE;    // TLAS构建入口取buffer设备地址用
 
     // VulkanRHIRenderPass* renderPass;                // 运行时状态，随指令变化
     VulkanRHIGraphicsPipeline* graphicsPipeline;

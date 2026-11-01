@@ -20,8 +20,8 @@ void SVGFPass::Init()
     RHIRootSignatureInfo rootSignatureInfo = {};
     rootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetPerFrameRootSignature()->GetInfo())
                      .AddEntry(EngineContext::RenderResource()->GetBindlessRootSignature()->GetInfo())
-                     .AddEntry(EngineContext::RenderResource()->GetSet2RootSignature()->GetInfo())       // 刀7b-3：set2全局统一RS（98槽）
-                                                                                                                                                                                                                                                                                 .AddPushConstant({128, SHADER_FREQUENCY_COMPUTE});
+                     .AddEntry(EngineContext::RenderResource()->GetSet2RootSignature()->GetInfo())       //
+                                                                                                                                                                                                                                                                                 .AddPushConstant({sizeof(SVGFSetting), SHADER_FREQUENCY_COMPUTE});
     rootSignature = backend->CreateRootSignature(rootSignatureInfo);
 
     RHIComputePipelineInfo pipelineInfo     = {};
@@ -124,12 +124,12 @@ void SVGFPass::Build(RDGBuilder& builder)
 
         RDGComputePassHandle pass0 = builder.CreateComputePass(GetName() + " Temporal Accumulation")
             .RootSignature(rootSignature)
-            .Shaders({computeShader[0].shader})           // 刀7b-3：严格边校验
+            .Shaders({computeShader[0].shader})           
             .Read(2, SET2_BINDING_HISTORY_DEPTH, 0, builder.GetTexture("Depth"))
             .Read(2, SET2_BINDING_HISTORY_DEPTH, 1, builder.GetTexture("Previous Depth"), VIEW_TYPE_2D, {})
-            .ReadIfValid(2, SET2_BINDING_HISTORY_VELOCITY, 0, "G-Buffer Velocity")
-            .ReadIfValid(2, SET2_BINDING_HISTORY_OBJECT_ID, 0, "G-Buffer Object ID")
-            .ReadIfValid(2, SET2_BINDING_HISTORY_OBJECT_ID, 1, "History G-Buffer Object ID")
+            .Read(2, SET2_BINDING_HISTORY_VELOCITY, 0, builder.GetTexture("G-Buffer Velocity"))
+            .Read(2, SET2_BINDING_HISTORY_OBJECT_ID, 0, builder.GetTexture("G-Buffer Object ID"))
+            .Read(2, SET2_BINDING_HISTORY_OBJECT_ID, 1, builder.GetTexture("History G-Buffer Object ID"))
             .Read(2, SET2_BINDING_GBUFFER_DIFFUSE_METALLIC, 0, diffuse)
             .Read(2, SET2_BINDING_GBUFFER_NORMAL_ROUGHNESS, 0, normal)
             .Read(2, SET2_BINDING_SVGF_HISTORY_GBUFFER_NORMAL, 0, historyNormal)
@@ -156,7 +156,7 @@ void SVGFPass::Build(RDGBuilder& builder)
 
         RDGComputePassHandle pass1 = builder.CreateComputePass(GetName() + " Disocclusion Fix")
             .RootSignature(rootSignature)
-            .Shaders({computeShader[1].shader})           // 刀7b-3：严格边校验
+            .Shaders({computeShader[1].shader})           
             .Read(2, SET2_BINDING_HISTORY_DEPTH, 0, builder.GetTexture("Depth"))
             .Read(2, SET2_BINDING_HISTORY_DEPTH, 1, builder.GetTexture("Previous Depth"), VIEW_TYPE_2D, {})
             .Read(2, SET2_BINDING_GBUFFER_NORMAL_ROUGHNESS, 0, normal)
@@ -185,9 +185,9 @@ void SVGFPass::Build(RDGBuilder& builder)
 
         RDGComputePassHandle pass2 = builder.CreateComputePass(GetName() + " Anti-Firefly")
             .RootSignature(rootSignature)
-            .Shaders({computeShader[2].shader})           // 刀7b-3：严格边校验
-            .ReadIfValid(2, SET2_BINDING_HISTORY_OBJECT_ID, 0, "G-Buffer Object ID")
-            .ReadIfValid(2, SET2_BINDING_HISTORY_OBJECT_ID, 1, "History G-Buffer Object ID")
+            .Shaders({computeShader[2].shader})           
+            .Read(2, SET2_BINDING_HISTORY_OBJECT_ID, 0, builder.GetTexture("G-Buffer Object ID"))
+            .Read(2, SET2_BINDING_HISTORY_OBJECT_ID, 1, builder.GetTexture("History G-Buffer Object ID"))
             .ReadWrite(2, SET2_BINDING_SVGF_CURRENT_COLOR_VARIANCE, 0, currentColor0)
             .ReadWrite(2, SET2_BINDING_SVGF_CURRENT_COLOR_VARIANCE, 1, currentColor1, VIEW_TYPE_2D, {})
             .Execute([&](RDGPassContext context) {       
@@ -206,7 +206,7 @@ void SVGFPass::Build(RDGBuilder& builder)
 
         RDGComputePassHandle pass3 = builder.CreateComputePass(GetName() + " Variance Estimation")
             .RootSignature(rootSignature)
-            .Shaders({computeShader[3].shader})           // 刀7b-3：严格边校验
+            .Shaders({computeShader[3].shader})           
             .Read(2, SET2_BINDING_HISTORY_DEPTH, 0, builder.GetTexture("Depth"))
             .Read(2, SET2_BINDING_HISTORY_DEPTH, 1, builder.GetTexture("Previous Depth"), VIEW_TYPE_2D, {})
             .Read(2, SET2_BINDING_GBUFFER_NORMAL_ROUGHNESS, 0, normal)
@@ -254,7 +254,7 @@ void SVGFPass::Build(RDGBuilder& builder)
             RDGComputePassHandle pass5 = builder.CreateComputePass(GetName() + " Wavelet [" + std::to_string(i) + "]")
                 .PassIndex(i)
                 .RootSignature(rootSignature)
-                .Shaders({computeShader[5].shader})           // 刀7b-3：严格边校验
+                .Shaders({computeShader[5].shader})           
                 .Read(2, SET2_BINDING_HISTORY_DEPTH, 0, builder.GetTexture("Depth"))
                 .Read(2, SET2_BINDING_HISTORY_DEPTH, 1, builder.GetTexture("Previous Depth"), VIEW_TYPE_2D, {})
                 .Read(2, SET2_BINDING_GBUFFER_NORMAL_ROUGHNESS, 0, normal)
@@ -288,7 +288,7 @@ void SVGFPass::Build(RDGBuilder& builder)
 
         RDGComputePassHandle pass6 = builder.CreateComputePass(GetName() + " Combine")
             .RootSignature(rootSignature)
-            .Shaders({computeShader[6].shader})           // 刀7b-3：严格边校验
+            .Shaders({computeShader[6].shader})           
             .Read(2, SET2_BINDING_GBUFFER_DIFFUSE_METALLIC, 0, diffuse)
             .ReadWrite(2, SET2_BINDING_IN_COLOR, 0, inColor)
             .ReadWrite(2, SET2_BINDING_OUT_COLOR, 0, outColor)

@@ -7,7 +7,7 @@
 #include <utility>
 #include <vector>
 
-// 跨帧注册表——RDG编译管线唯一的跨帧持久状态（时间线双signal模型，定案2026-10-25）
+// 跨帧注册表——RDG编译管线唯一的跨帧持久状态（时间线双signal模型）
 //
 // 为什么必须是 RenderSystem 拥有、构造注入的共享对象：
 // RDGCompiler 是每帧槽一个实例（RenderSystem.h rdgCompilers[FRAMES_IN_FLIGHT]），
@@ -67,7 +67,7 @@ public:
         // 跨帧保活至被wait完
         std::unordered_map<RHISemaphoreRef, std::pair<uint64_t, uint64_t>> signals;
         // 上帧末真实布局（逐子资源，mip主序展开=mip*arrayLayers+layer，与Phase 7 tracker同构）。
-        // 布局动态记载制（2026-10-26）：import的布局种子权威——调用点Import声明退役为首见兜底。
+        // 布局动态记载制：import的布局种子权威——调用点Import声明退役为首见兜底。
         // 与signals同代际同语义：他槽在飞帧的记录，其值在下帧wait该帧signals后即为真实
         std::vector<RHIResourceState> final_states;
     };
