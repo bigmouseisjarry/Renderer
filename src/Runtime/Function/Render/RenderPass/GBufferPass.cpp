@@ -33,7 +33,6 @@ RHIGraphicsPipelineRef GBufferPassProcessor::OnCreatePipeline(const DrawPipeline
     pipelineInfo.colorAttachmentFormats[4]      = FORMAT_R32_UINT;
     pipelineInfo.colorAttachmentFormats[5]      = FORMAT_R8G8B8A8_UNORM;               // 八面体几何法线+AO
     pipelineInfo.colorAttachmentFormats[6]      = FORMAT_R8G8B8A8_UNORM;               // transparent+specF
-    pipelineInfo.colorAttachmentFormats[7]      = FORMAT_R8_UNORM;                     // IOR(η-1)/2，薄透明pass写
     pipelineInfo.depthStencilAttachmentFormat   = EngineContext::Render()->GetDepthFormat();
 
     // if(!pipelineInfo.vertexShader->GetReflectInfo().DefinedSymbol("VERTEX_INPUT"));   // 也可以根据反射信息来检查管线适配性
@@ -60,9 +59,9 @@ void GBufferPass::Init()
 
     auto backend = EngineContext::RHI();
 
-    vertexShader        = Shader(EngineContext::File()->ShaderPath() + "default/default.vert.spv", SHADER_FREQUENCY_VERTEX);
-    clusterVertexShader = Shader(EngineContext::File()->ShaderPath() + "default/default_cluster.vert.spv", SHADER_FREQUENCY_VERTEX);
-    fragmentShader      = Shader(EngineContext::File()->ShaderPath() + "default/deferred.frag.spv", SHADER_FREQUENCY_FRAGMENT);
+    vertexShader        = Shader(EngineContext::File()->ShaderPath() + "gbuffer/default.vert.spv", SHADER_FREQUENCY_VERTEX);
+    clusterVertexShader = Shader(EngineContext::File()->ShaderPath() + "gbuffer/default_cluster.vert.spv", SHADER_FREQUENCY_VERTEX);
+    fragmentShader      = Shader(EngineContext::File()->ShaderPath() + "gbuffer/gbuffer.frag.spv", SHADER_FREQUENCY_FRAGMENT);
 
     RHIRootSignatureInfo rootSignatureInfo = {};
     rootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetPerFrameRootSignature()->GetInfo())
@@ -84,7 +83,6 @@ void GBufferPass::Init()
     pipelineInfo.colorAttachmentFormats[4]      = FORMAT_R32_UINT;                      // objectID
 	pipelineInfo.colorAttachmentFormats[5]      = FORMAT_R8G8B8A8_UNORM;                // 八面体几何法线+AO
 	pipelineInfo.colorAttachmentFormats[6]      = FORMAT_R8G8B8A8_UNORM;                // F0+roughness
-    pipelineInfo.colorAttachmentFormats[7]      = FORMAT_R8_UNORM;                      // IOR(η-1)/2，薄透明pass写
     pipelineInfo.depthStencilState              = { COMPARE_FUNCTION_LESS_EQUAL, true, true };
     pipelineInfo.depthStencilAttachmentFormat   = EngineContext::Render()->GetDepthFormat();
     pipeline                                    = GraphicsPipelineCache::Get()->Allocate(pipelineInfo).pipeline;    // 普通mesh的默认绘制管线
@@ -158,10 +156,6 @@ void GBufferPass::Build(RDGBuilder& builder)
         .AllowRenderTarget()
         .Finish();
 
-    RDGTextureHandle ior = builder.CreateTexture("G-Buffer IOR")
-        .Import(EngineContext::RenderResource()->GetIORTexture())          // 末位=DeferredLighting读（读者边收敛）
-        .Finish();
-
     RDGTextureHandle depth = builder.GetTexture("Depth");
 
     if(IsEnabled())
@@ -186,7 +180,6 @@ void GBufferPass::Build(RDGBuilder& builder)
             .Color(4, objectID, ATTACHMENT_LOAD_OP_CLEAR, ATTACHMENT_STORE_OP_STORE, {0.0f, 0.0f, 0.0f, 0.0f})
             .Color(5, geometricNormal, ATTACHMENT_LOAD_OP_CLEAR, ATTACHMENT_STORE_OP_STORE, {0.0f, 0.0f, 136.0f / 255.0f, 1.0f})   //八面体编码后的+z（kk=2048→B=0x88），AO=1（无遮挡）
             .Color(6, specularF0, ATTACHMENT_LOAD_OP_CLEAR, ATTACHMENT_STORE_OP_STORE, {0.04f, 0.04f, 0.04f, 1.0f})   //F0=0.04电介质基线，roughness=1
-            .Color(7, ior, ATTACHMENT_LOAD_OP_CLEAR, ATTACHMENT_STORE_OP_STORE, {0.0f, 0.0f, 0.0f, 0.0f})              //IOR清0=1.0（无折射），薄透明pass二次写
             .DepthStencil(depth, ATTACHMENT_LOAD_OP_LOAD, ATTACHMENT_STORE_OP_STORE, 1.0f, 0)
             .ReadIndirect(builder.GetBuffer("Mesh Draw Commands" + cmdIndex))
             .ReadIndirect(builder.GetBuffer("Clusrter Draw Commands" + cmdIndex))

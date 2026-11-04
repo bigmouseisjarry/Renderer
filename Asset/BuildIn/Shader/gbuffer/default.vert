@@ -27,7 +27,7 @@ void main()
 
     OUT_POSITION        = model * pos;
     OUT_PREV_POSITION   = prevModel * pos;
-    VIS_OUT_COLOR           = color;
+    VIS_OUT_COLOR       = color;
     OUT_TEXCOORD        = texCoord;
     OUT_NORMAL          = worldNormal;
     OUT_TANGENT         = worldTangent;

@@ -1,0 +1,76 @@
+#version 460
+#extension GL_GOOGLE_include_directive : enable
+#extension GL_EXT_samplerless_texture_functions : enable
+#include "include/common.glsl"
+
+
+layout(push_constant) uniform DeferredLightSetting {
+    uint mode;
+    uint directOnly;
+} SETTING;
+
+#define THREAD_SIZE_X 16
+#define THREAD_SIZE_Y 16
+#define THREAD_SIZE_Z 1
+layout (local_size_x = THREAD_SIZE_X,
+		local_size_y = THREAD_SIZE_Y,
+		local_size_z = THREAD_SIZE_Z) in;
+
+
+void main()
+{
+    ivec2 pixel     = ivec2(gl_GlobalInvocationID.xy);
+    vec2 uv         = ScreenPixToUV(pixel);
+
+    if(FetchDepth(uv) == 1.0f) return;    // 天空早退不store（①已写黑；debug视图天空=黑）
+
+    SurfaceInfo gbuffer  = DecodeGBuffer(texelFetch(G_BUFFER_DIFFUSE_TRANSPARENT, pixel, 0),
+                                         texelFetch(G_BUFFER_NORMAL_SPECF, pixel, 0),
+                                         texelFetch(G_BUFFER_EMISSION, pixel, 0),
+                                         texelFetch(G_BUFFER_GEOMETRIC_NORMAL_AO, pixel, 0),
+                                         texelFetch(G_BUFFER_SPECULAR_F0_ROUGHNESS, pixel, 0),
+                                         texelFetch(G_BUFFER_IOR, pixel, 0).r);
+
+    vec3 diffuse      = gbuffer.diffuse * (1.0f - gbuffer.transparent);
+    float roughness   = gbuffer.roughness;
+    vec3 F0           = gbuffer.F0;
+    vec3 gnormal      = gbuffer.gnormal;
+    float ao          = gbuffer.ao;
+    float transparent = gbuffer.transparent;
+
+    vec4 worldPos   = DepthToWorld(uv);
+    vec3 N          = normalize(gbuffer.normal);
+    vec3 V          = normalize((CAMERA.pos - worldPos).xyz);
+
+    // 间接（AO对间接乘一次；直接光AO已在PBS内）
+    vec3 indirectLightColor = vec3(0.0f);
+    if(SETTING.directOnly == 0)
+        indirectLightColor = IndirectLighting(diffuse, roughness, F0, worldPos, N, V) * ao;
+
+    vec4 prev       = imageLoad(FINAL_COLOR, pixel);
+
+    // debug动物园（属主：本段以外的全视图族） //////////////////////////////////
+    vec4 finalColor = prev;                                        // mode4/7/8/9/16/17：直通
+    if(SETTING.mode == 0)        finalColor = vec4(prev.rgb + indirectLightColor, 1.0f);
+    else if(SETTING.mode == 1)   finalColor = vec4(vec3(N * 0.5f + 0.5f), 1.0f);
+    else if(SETTING.mode == 2)   finalColor = vec4(roughness, RGBtoLuminance(F0), 0.0f, 1.0f);
+    else if(SETTING.mode == 3)   finalColor = worldPos;
+    else if(SETTING.mode == 5)   finalColor = vec4(vec3(Linear01Depth(FetchDepth(uv), CAMERA.near, CAMERA.far)), 1.0f);
+    else if(SETTING.mode == 6)   finalColor = vec4(0.0f);          // 原cascade可视化，CSM已退役
+    else if(SETTING.mode == 10)  finalColor = vec4(indirectLightColor, 1.0f);
+    else if(SETTING.mode == 11)  finalColor = vec4(IndirectIrradiance(worldPos, N, V), 1.0f);
+    else if(SETTING.mode == 12)  finalColor = vec4(vec3(ao), 1.0f);
+    else if(SETTING.mode == 13)  finalColor = vec4(gnormal * 0.5f + 0.5f, 1.0f);
+    else if(SETTING.mode == 14)  finalColor = vec4(F0, 1.0f);
+    else if(SETTING.mode == 15)  finalColor = vec4(vec3(transparent), 1.0f);
+
+    if(GLOBAL_SETTING.clusterInspectMode != 0) finalColor = vec4(diffuse.xyz, 1.0f);
+
+    imageStore(FINAL_COLOR, pixel, finalColor);
+}
+
+// 直接光漫反射 = 1（阶段①局部+③太阳，PBS内拆）
+// 直接光镜面反射 = 2（同上）
+// 间接光漫反射 = 3（本段）
+// 间接光镜面反射 = 4（SSSR链）
+// 自发光 = 5（阶段①）

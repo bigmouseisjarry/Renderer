@@ -101,21 +101,24 @@ enum PerFrameBindingID
     SET1_BINDING_BINDLESS_TEXTURE_CUBE,
     SET1_BINDING_BINDLESS_TEXTURE_3D,
 
-    SET1_BINDING_DDGI_SETTING,                      // =26 灯布局刀①：VOLUME_LIGHT_SETTINGS独立数组（尾部追加）
+    SET1_BINDING_DDGI_SETTING,                      // =26 
+    SET1_BINDING_SOBOL,                             // =27 Sobol-BND组3：Heitz三张整数LUT（尾部追加）
+    SET1_BINDING_SCRAMBLING_TILE,                   // =28
+    SET1_BINDING_RANKING_TILE,                      // =29
     SET1_BINDING_MAX_ENUM,//
 };
 
 enum Set2BindingID
 {
     // 共享域 0-13（跨pass语义槽）
-    SET2_BINDING_LIGHT_CLUSTER_GRID = 0,
-    SET2_BINDING_LIGHT_CLUSTER_INDEX,               // =1
+    SET2_BINDING_LIGHT_CLUSTER_GRID = 0,            // 已退役
+    SET2_BINDING_LIGHT_CLUSTER_INDEX,               // =1 已退役
     SET2_BINDING_HISTORY_DEPTH,                      // =2 x2
     SET2_BINDING_HISTORY_DEPTH_PYRAMID,              // =3 x2
     SET2_BINDING_HISTORY_VELOCITY,                   // =4
     SET2_BINDING_HISTORY_OBJECT_ID,                  // =5 x2
-    SET2_BINDING_DIRECTIONAL_SHADOW,                 // =6 x4 已退役（阴影转换刀D，槽号保留防移位）
-    SET2_BINDING_POINT_SHADOW,                       // =7 x8 已退役（阴影转换刀D，槽号保留防移位）
+    SET2_BINDING_DIRECTIONAL_SHADOW,                 // =6 x4 已退役
+    SET2_BINDING_POINT_SHADOW,                       // =7 x8 已退役
     SET2_BINDING_SURFACE_CACHE,                      // =8 x5
     SET2_BINDING_VOLUME_LIGHT_IRRADIANCE,            // =9 xMAX_VOLUME_LIGHT_COUNT
     SET2_BINDING_VOLUME_LIGHT_DEPTH,                 // =10 xMAX_VOLUME_LIGHT_COUNT
@@ -231,11 +234,15 @@ enum Set2BindingID
     SET2_BINDING_PT_B,                               // =96 RW rgba32f
     SET2_BINDING_IBL_A,                              // =97 RW rgba16f
 
-    // ReSTIR DI G-Buffer RW读槽 98-101（v4拆分裁决：storage读法保留）
+    // ReSTIR DI G-Buffer RW读槽 98-101
     SET2_BINDING_RESTIR_DI_GBUFFER_DIFFUSE,        // =98 RW rgba8
     SET2_BINDING_RESTIR_DI_GBUFFER_NORMAL,          // =99 RW rgba8
     SET2_BINDING_RESTIR_DI_GBUFFER_EMISSION,        // =100 RW rgba8
     SET2_BINDING_RESTIR_DI_GBUFFER_SPECF0,          // =101 RW rgba8
+
+    // ZBin灯剔除域
+    SET2_BINDING_TILE_LIGHTS,                       // =102 RW_BUFFER（每tile段=[count|entry×32]）
+    SET2_BINDING_BIN_LIGHT_MASKS,                   // =103 已退役
 
     SET2_BINDING_MAX_ENUM,//
 };
@@ -287,8 +294,6 @@ public:
     uint32_t AllocateBindlessID(const BindlessResourceInfo& resoruceInfo, BindlessSlot slot);
     void ReleaseBindlessID(uint32_t id, BindlessSlot slot);   
   
-    RHITextureRef GetLightClusterGridTexture()              { return multiFrameResource.lightClusterGridTexture->texture; }
-    // 阴影转换刀D：GetDirectionalShadowTexture/GetPointShadowTexture/GetPointShadowDepthTexture随光栅阴影退役删除
     RHITextureRef GetIBLTexture(uint32_t id)                { return multiFrameResource.skyboxIBLTexuture[id]->texture; }
     RHITextureRef GetDepthTexture()                         { return multiFrameResource.depthTexture[0]->texture; }
     RHITextureRef GetPrevDepthTexture()                     { return multiFrameResource.depthTexture[1]->texture; }
@@ -298,7 +303,6 @@ public:
     RHITextureRef GetPrevObjectIDTexture()                  { return multiFrameResource.objectIDTexture[1]->texture; }
     RHITextureRef GetNormalTexture()                        { return multiFrameResource.gbufferNormalTexture[0]->texture; }
     RHITextureRef GetPrevNormalTexture()                    { return multiFrameResource.gbufferNormalTexture[1]->texture; }
-    RHITextureRef GetIORTexture()                           { return multiFrameResource.gbufferIORTexture->texture; }    // (η-1)/2，薄透明pass写
     RHITextureRef GetStableHDRColorTexture(uint32_t slot);
     TextureRef GetSurfaceCacheTexture(uint32_t id)          { return multiFrameResource.surfaceCacheTexture[id]; }
 
@@ -308,9 +312,9 @@ public:
     void SetObjectInfo(const ObjectInfo& objectInfo, uint32_t objectID);
     void SetObjectInfos(const std::vector<ObjectInfo>& objectInfos, uint32_t baseObjectID);
     void SetDirectionalLightInfo(const DirectionalLightInfo& directionalLightInfo);
-    void SetPointLightInfo(const PointLightInfo& pointLightInfo, uint32_t pointLightID);
+    void SetPointLightInfo(const PointLightInfo& pointLightInfo, uint32_t gpuSlot);
     void SetVolumeLightInfo(const VolumeLightInfo& volumeLightInfo, uint32_t volumeLightID);
-    void SetVolumeLightSetting(uint32_t volumeLightCnt, const uint32_t* volumeLightIDs);     // 灯布局刀①：VL独立buffer头部提交
+    void SetVolumeLightSetting(uint32_t volumeLightCnt, const uint32_t* volumeLightIDs);     
     void SetVolumeLightTextures(const VolumeLightTextures& volumeLightTextures, uint32_t volumeLightID);
     void SetLightSetting(const LightSetting& lightSetting);
     void SetMaterialInfo(const MaterialInfo& materialInfo, uint32_t materialID);
@@ -322,7 +326,7 @@ public:
     void GetMeshCardReadback(MeshCardReadBack& readback);
 
     RHIShaderRef GetOrCreateRHIShader(const std::string& path, ShaderFrequency frequency, const std::string& entry = "main");
-    RHIBufferRef GetLightClusterIndexBuffer();
+    RHIBufferRef GetTileLightsBuffer();          
     RHIBufferRef GetGizmoDataBuffer();
     RHIBufferRef GetCardUpdateBuffer()              { return multiFrameResource.cardUpdateBuffer.buffer; }
     RHIBufferRef GetCardReadbackBuffer()            { return multiFrameResource.cardReadbackBuffer.buffer; }
@@ -347,15 +351,14 @@ private:
         // 每帧都完全重构的buffer
         // 上一帧还在渲染时下一帧也可能在录制了，因此对每一帧有单独的buffer
 
-        ArrayBuffer<LightClusterIndex, LIGHT_CLUSTER_NUM * MAX_LIGHTS_PER_CLUSTER> lightClusterIndexBuffer;                     // ClusterLightingPass (Compute写入)
-        // clusterDrawInfoBuffer已下放至MeshPassIndirectBuffers（per mesh pass自持，GPUCullingPass入图import）
+        ArrayBuffer<uint32_t, LIGHT_CLUSTER_WIDTH * LIGHT_CLUSTER_HEIGHT * (ZBIN_LIGHTS_PER_TILE + 1)> tileLightsBuffer;  
     
         // 有固定槽位分配的buffer，且更新频率高
         Buffer<CameraInfo> cameraBuffer;                                    
         ArrayBuffer<ObjectInfo, MAX_PER_FRAME_OBJECT_SIZE> objectBuffer;
         ArrayBuffer<MeshCardInfo, MAX_PER_FRAME_OBJECT_SIZE * 6> meshCardBuffer;
         Buffer<LightInfo> lightBuffer;
-        Buffer<VolumeLightSettingsInfo> volumeLightSettingsBuffer;      // 灯布局刀①：VL独立buffer（头部count/IDs+slots）
+        Buffer<VolumeLightSettingsInfo> volumeLightSettingsBuffer;      
         Buffer<GizmoDrawData> gizmoBuffer = Buffer<GizmoDrawData>(RESOURCE_TYPE_RW_BUFFER | RESOURCE_TYPE_INDIRECT_BUFFER);     // GizmoPass
     };
     std::array<PerFrameResource, FRAMES_IN_FLIGHT> perFrameResources;
@@ -374,16 +377,16 @@ private:
         Buffer<MeshCardReadBack> cardUpdateBuffer = Buffer<MeshCardReadBack>(RESOURCE_TYPE_RW_BUFFER); // 需要每帧更新，但是都用同一个
         Buffer<MeshCardReadBack> cardReadbackBuffer = Buffer<MeshCardReadBack>(RESOURCE_TYPE_RW_BUFFER, MEMORY_USAGE_GPU_TO_CPU); 
  
-        TextureRef lightClusterGridTexture;                                 // 纹理不会有冲突
-        // 阴影转换刀D：dirShadowTextures/pointShadowTextures/pointShadowDepthTextures三族退役删除（回收≈270MB显存）
         std::array<TextureRef, 2> skyboxIBLTexuture;    // diffuse, specular
         std::array<TextureRef, 2> depthTexture;         // 本帧，上一帧
         std::array<TextureRef, 2> depthPyramidTexture;  // MIN, MAX 
         TextureRef velocityTexture;
         std::array<TextureRef, 64> stbnTexture;
+        TextureRef sobolTexture;                    // Sobol-BND组3：256x256基序列（UNORM直读整数）
+        TextureRef scramblingTileTexture;           // 128x1024，3D层按HRP扁平序平铺
+        TextureRef rankingTileTexture;              // 128x1024，同上
         std::array<TextureRef, 2> objectIDTexture;      // 本帧，上一帧
         std::array<TextureRef, 2> gbufferNormalTexture; // 本帧，上一帧：G-Buffer Normal的历史对
-        TextureRef gbufferIORTexture;                   // G-Buffer IOR(R8)：仅薄透明pass写，每帧CLEAR兜0=IOR 1
         std::array<TextureRef, 2> stableHDRColorTexture;    // 最终颜色乒乓：TAA直写physical[parity]（无Copy），经语义访问器(0=本帧,1=上一帧)访问
         std::array<TextureRef, 5> surfaceCacheTexture;
         std::vector<SamplerRef> samplers; 

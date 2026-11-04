@@ -50,7 +50,7 @@ private:
 
     PointLightInfo info;            //向GPU提交的光源信息
 
-    void UpdateLightInfo();
+    void UpdateLightInfo(uint32_t gpuSlot);    // 上传槽位=帧内密集号（1..cnt），由RenderLightManager分配
 
 private:
     BeginSerailize()

@@ -20,7 +20,7 @@ enum TextureType{
 class Texture : public Asset
 {
 public:
-    Texture(const std::string& path);
+    Texture(const std::string& path, RHIFormat format = FORMAT_R8G8B8A8_SRGB);	
     Texture(const std::vector<std::string>& paths, TextureType type);
     Texture(TextureType type, RHIFormat format, Extent3D extent, uint32_t arrayLayer = 1, uint32_t mipLevels = 0,
             std::initializer_list<QueueType> concurrentFamilies = {});

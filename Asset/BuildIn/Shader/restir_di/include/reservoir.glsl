@@ -7,7 +7,7 @@ uint ReservoirIndex(ivec2 pixel)
 
 void CleanDIReservoir(inout DIReservoir res)
 {
-	res.sampl.lightID = 0;
+	res.sampl.lightID = LIGHT_ID_INVALID;
 	res.pHat = 0.0f;
 	res.sumWeights = 0.0f;
 	res.w = 0.0f;

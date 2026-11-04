@@ -28,6 +28,9 @@
 #define SET1_BINDING_BINDLESS_TEXTURE_2D_ARRAY     23
 #define SET1_BINDING_BINDLESS_TEXTURE_CUBE         24
 #define SET1_BINDING_BINDLESS_TEXTURE_3D           25
-#define SET1_BINDING_DDGI_SETTING                  26  
+#define SET1_BINDING_DDGI_SETTING                  26
+#define SET1_BINDING_SOBOL                         27
+#define SET1_BINDING_SCRAMBLING_TILE               28
+#define SET1_BINDING_RANKING_TILE                  29
 
 #endif

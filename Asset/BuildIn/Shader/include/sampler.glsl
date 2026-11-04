@@ -1,8 +1,146 @@
-#ifndef MONTE_CARLO_GLSL
-#define MONTE_CARLO_GLSL
+#ifndef SAMPLER_GLSL
+#define SAMPLER_GLSL
+
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+
+// 采样器一文件（对位HRP Sampler.hlsl）：随机数源 → 消费宏 → 低差异序列 → 分布函数
+// 组织形式同HRP：表访问器/组合器一律函数，只有状态消费接口是宏。
+// 伞头位置：ddgi之后brdf之前（需set0/set1已过；自带math.glsl依赖，HRP同款include PBS.hlsl）。
+
+#include "math.glsl"
+
+#define GOLDEN_ANGLE 2.39996323
+
+// =====================================================================================
+// 一、随机数源
+// =====================================================================================
+
+// ---- 1.1 PCG白噪声（有状态，逐次推进；全调用点seed=帧号，宏只带seq流号）----
+// https://www.pcg-random.org/
+struct Rand {
+	uint64_t state;
+	uint64_t inc;
+};
+
+uint RandUint(inout Rand r) {
+	uint64_t oldState = r.state;
+	r.state = oldState * 6364136223846793005ul + r.inc;
+	uint xorShifted = uint(((oldState >> 18u) ^ oldState) >> 27u);
+	uint rot = uint(oldState >> 59u);
+	return (xorShifted >> rot) | (xorShifted << ((-rot) & 31u));
+}
+
+Rand SeedRand(uint64_t seed, uint64_t seq) {
+	Rand result;
+	result.state = 0;
+	result.inc = (seq << 1u) | 1u;
+	RandUint(result);
+	result.state += seed;
+	RandUint(result);
+	return result;
+}
+
+float RandFloat(inout Rand r) {
+	return RandUint(r) / 4294967296.0f;
+}
+
+#define SEED_RAND(seq) SeedRand(uint64_t(GLOBAL_SETTING.totalTicks), (seq))				// 赋值形（如RAY_PAYLOAD.rand）
+#define RANDSTATE(seq) Rand randState = SeedRand(uint64_t(GLOBAL_SETTING.totalTicks), (seq))
+#define RAND RandFloat(randState)
 
 
-// 全部来自UE Private/MonteCarlo.ush
+uint sobol_256spp_256d(uint index) {
+	return uint(texelFetch(SOBOL, ivec2(index & 255u, index >> 8u), 0).r * 255.0f + 0.5f);
+}
+
+uint scramblingTile(uint index) {
+	return uint(texelFetch(SCRAMBLING_TILE, ivec2(index & 127u, index >> 7u), 0).r * 255.0f + 0.5f);
+}
+
+uint rankingTile(uint index) {
+	return uint(texelFetch(RANKING_TILE, ivec2(index & 127u, index >> 7u), 0).r * 255.0f + 0.5f);
+}
+
+float BNDSample(uint pixelI, uint pixelJ, uint sampleIndex, uint sampleDimension) {
+	// wrap arguments（维度预算与HRP同约束：实际使用维度保持低位）
+	pixelI = pixelI & 127u;
+	pixelJ = pixelJ & 127u;
+	sampleIndex = sampleIndex & 255u;
+	sampleDimension = sampleDimension & 255u;
+
+	// xor index based on optimized ranking
+	uint rankedSampleIndex = sampleIndex ^ rankingTile(sampleDimension + (pixelI + pixelJ * 128u) * 8u);
+
+	// fetch value in sequence
+	uint value = sobol_256spp_256d(sampleDimension + rankedSampleIndex * 256u);
+
+	// xor sequence value based on optimized scrambling
+	value = value ^ scramblingTile((sampleDimension % 8u) + (pixelI + pixelJ * 128u) * 8u);
+
+	// convert to float and return
+	return (0.5f + float(value)) / 256.0f;
+}
+
+#define BNDSTATE(px) uvec4 bndState = uvec4(uvec2(px), GLOBAL_SETTING.totalTicks, 0u)
+#define SAMPLE (BNDSample(bndState.x, bndState.y, bndState.z, bndState.w++))
+
+// ---- 1.3 STBN/IGN蓝噪声旋转角（表=set1 b9，NRD供64帧轮转；11-04加载已改UNORM——原SRGB伽马解码扭曲分布的在册bug修毕；当前零调用者，数据已就绪待消费）----
+float StbnSample(ivec2 pixel, int channel) {
+	return texture(sampler2D(STBN[GLOBAL_SETTING.totalTicks % 64u], SAMPLER[4]), vec2(pixel) / 128.0)[channel];
+}
+
+float StbnRotation(ivec2 pixel) {
+	return StbnSample(pixel, 0) * 6.2831853;
+}
+
+float IGNRotation(ivec2 pixel) {
+	return fract(52.9829189 * fract(0.06711056 * pixel.x + 0.00583715 * pixel.y)) * 6.28318530 + GLOBAL_SETTING.totalTicks * GOLDEN_ANGLE;
+}
+
+// ---- 1.4 Vogel圆盘 ----
+vec2 VogeLDisk(float i, float rotation, float sampleCountSqrt)
+{
+    float r = sqrt(i + 0.5) / sampleCountSqrt;
+    float theta = i * GOLDEN_ANGLE + rotation;
+    return vec2(cos(theta), sin(theta)) * r;
+}
+
+// =====================================================================================
+// 二、低差异序列（原monte_carlo.glsl，UE Private/MonteCarlo.ush）
+// =====================================================================================
+
+float RadicalInverse(uint bits)
+{
+    bits = (bits << 16u) | (bits >> 16u);
+    bits = ((bits & 0x55555555u) << 1u) | ((bits & 0xAAAAAAAAu) >> 1u);
+    bits = ((bits & 0x33333333u) << 2u) | ((bits & 0xCCCCCCCCu) >> 2u);
+    bits = ((bits & 0x0F0F0F0Fu) << 4u) | ((bits & 0xF0F0F0F0u) >> 4u);
+    bits = ((bits & 0x00FF00FFu) << 8u) | ((bits & 0xFF00FF00u) >> 8u);
+    return float(bits) * 2.3283064365386963e-10f;
+}
+
+vec2 Hammersley(uint i, uint N)
+{
+    return vec2(float(i) / float(N), RadicalInverse(i));
+}
+
+// vec2 Hammersley( uint Index, uint NumSamples, uvec2 Random )
+// {
+// 	float E1 = fract( float(Index) / NumSamples + float( Random.x & 0xffff ) / (1<<16) );
+// 	float E2 = float( bitfieldReverse(Index) ^ Random.y ) * 2.3283064365386963e-10;
+// 	return vec2( E1, E2 );
+// }
+
+// vec2 Hammersley16( uint Index, uint NumSamples, uvec2 Random )
+// {
+// 	float E1 = fract( float(Index) / NumSamples + float( Random.x ) * (1.0 / 65536.0) );
+// 	float E2 = float( ( bitfieldReverse(Index) >> 16 ) ^ Random.y ) * (1.0 / 65536.0);
+// 	return vec2( E1, E2 );
+// }
+
+// =====================================================================================
+// 三、分布函数（原monte_carlo.glsl，UE Private/MonteCarlo.ush）
+// =====================================================================================
 
 // 切线空间转换/////////////////////////////////////////////////////////////////////
 
@@ -13,7 +151,7 @@ mat3 GetTangentBasis( vec3 TangentZ )
 	const float Sign = TangentZ.z >= 0 ? 1 : -1;
 	const float a = -rcp( Sign + TangentZ.z );
 	const float b = TangentZ.x * TangentZ.y * a;
-	
+
 	vec3 TangentX = { 1 + Sign * a * Pow2( TangentZ.x ), Sign * b, -Sign * TangentZ.x };
 	vec3 TangentY = { b,  Sign + a * Pow2( TangentZ.y ), -TangentZ.y };
 
@@ -53,38 +191,6 @@ vec3 WorldToTangent( vec3 Vec, vec3 TangentZ )
 	return GetTangentBasis(TangentZ) * Vec;
 }
 
-// 低差异序列/////////////////////////////////////////////////////////////////////
-
-
-float RadicalInverse(uint bits) 
-{
-    bits = (bits << 16u) | (bits >> 16u);
-    bits = ((bits & 0x55555555u) << 1u) | ((bits & 0xAAAAAAAAu) >> 1u);
-    bits = ((bits & 0x33333333u) << 2u) | ((bits & 0xCCCCCCCCu) >> 2u);
-    bits = ((bits & 0x0F0F0F0Fu) << 4u) | ((bits & 0xF0F0F0F0u) >> 4u);
-    bits = ((bits & 0x00FF00FFu) << 8u) | ((bits & 0xFF00FF00u) >> 8u);
-    return float(bits) * 2.3283064365386963e-10f;
-}
- 
-vec2 Hammersley(uint i, uint N) 
-{
-    return vec2(float(i) / float(N), RadicalInverse(i));
-}
-
-// vec2 Hammersley( uint Index, uint NumSamples, uvec2 Random )
-// {
-// 	float E1 = fract( float(Index) / NumSamples + float( Random.x & 0xffff ) / (1<<16) );
-// 	float E2 = float( bitfieldReverse(Index) ^ Random.y ) * 2.3283064365386963e-10;
-// 	return vec2( E1, E2 );
-// }
-
-// vec2 Hammersley16( uint Index, uint NumSamples, uvec2 Random )
-// {
-// 	float E1 = fract( float(Index) / NumSamples + float( Random.x ) * (1.0 / 65536.0) );
-// 	float E2 = float( ( bitfieldReverse(Index) >> 16 ) ^ Random.y ) * (1.0 / 65536.0);
-// 	return vec2( E1, E2 );
-// }
-
 // 球面映射/////////////////////////////////////////////////////////////////////
 
 // Based on: [Clarberg 2008, "Fast Equal-Area Mapping of the (Hemi)Sphere using SIMD"]
@@ -113,7 +219,7 @@ vec2 InverseEquiAreaSphericalMapping(vec3 Direction)
 {
 	// Most use cases of this func generate Direction by diffing two positions and thus unnormalized
 	Direction = normalize(Direction);
-	
+
 	vec3 AbsDir = abs(Direction);
 	float R = sqrt(1 - AbsDir.z);
 	float Epsilon = 5.42101086243e-20; // 2^-64 (this avoids 0/0 without changing the rest of the mapping)
@@ -142,7 +248,6 @@ vec2 InverseEquiAreaSphericalMapping(vec3 Direction)
 	UV = vec2(uvec2(UV) ^ (uvec2(Direction.xy) & 0x80000000u));
 	return UV * 0.5 + 0.5;
 }
-
 
 // 采样函数/////////////////////////////////////////////////////////////////////
 
@@ -247,7 +352,7 @@ vec4 CosineSampleHemisphere( vec2 E )
 }
 
 // PDF = NoL / PI
-vec4 CosineSampleHemisphere( vec2 E, vec3 N ) 
+vec4 CosineSampleHemisphere( vec2 E, vec3 N )
 {
 	vec3 H = UniformSampleSphere( E ).xyz;
 	H = normalize( N + H );
@@ -272,7 +377,7 @@ vec4 ImportanceSampleGGX( vec2 E, float a2 )
 	H.x = SinTheta * cos( Phi );
 	H.y = SinTheta * sin( Phi );
 	H.z = CosTheta;
-	
+
 	float d = ( CosTheta * a2 - CosTheta ) * CosTheta + 1;
 	float D = a2 / ( PI*d*d );
 	float PDF = D * CosTheta;	// 用法线分布来对环境光照进行采样时的使用的概率密度函数，按法线分布函数的定义，D * CosTheta半球积分就是1
@@ -290,6 +395,5 @@ float RayPDFToReflectionRayPDF(float VoH, float RayPDF)
 
 	return ReflectPDF;
 }
-
 
 #endif

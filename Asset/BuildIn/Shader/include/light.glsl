@@ -3,32 +3,20 @@
 
 // cluster lighting 辅助函数////////////////////////////////////////////////////////////////////////////
 
-ivec3 FetchLightClusterGrid(vec3 ndc)
+uint FetchLightTileEntries(vec3 ndc, out uint lightCount, out uint binBit)
 {
-    vec2 screenPixPos   = FetchScreenPixPos(ndc);
+    vec2 screenPixPos   = FetchScreenPixPos(ndc.xy);
+    uvec2 tileId        = uvec2(uint(screenPixPos.x / LIGHT_CLUSTER_GRID_SIZE),
+                                uint(screenPixPos.y / LIGHT_CLUSTER_GRID_SIZE));
 
-    float depth         = ndc.z;   
-    float linearDepth   = LinearEyeDepth(depth, CAMERA.near, CAMERA.far);
+    float linearDepth   = LinearEyeDepth(ndc.z, CAMERA.near, CAMERA.far);
+    uint binIdx         = min(uint(ZBIN_BIN_COUNT * log(linearDepth / CAMERA.near) / log(CAMERA.far / CAMERA.near)),
+                              uint(ZBIN_BIN_COUNT) - 1u);    // 夹23——1u<<24会撞entry的index字段
+    binBit              = 1u << binIdx;
 
-    // 值 = min * pow(max/min，k/all)
-    uint clusterZ       = uint(LIGHT_CLUSTER_DEPTH * log(linearDepth / CAMERA.near) / log(CAMERA.far / CAMERA.near));  //对数划分
-    //uint clusterZ     = uint( (linearDepth - CAMERA.near) / ((CAMERA.far - CAMERA.near) / LIGHT_CLUSTER_DEPTH));   //均匀划分
-    ivec3 clusterGrid   = ivec3(uint(screenPixPos.x / LIGHT_CLUSTER_GRID_SIZE), uint(screenPixPos.y / LIGHT_CLUSTER_GRID_SIZE), clusterZ);
-
-    return clusterGrid;
-}
-
-ivec3 FetchLightClusterGrid(vec2 coord)
-{
-    float depth         = FetchDepth(coord);   
-    vec3 ndc            = vec3(ScreenToNDC(coord), depth);
-
-    return FetchLightClusterGrid(ndc);
-}
-
-uvec2 FetchLightClusterIndex(ivec3 clusterGrid)
-{
-    return imageLoad(LIGHT_CLUSTER_GRID, clusterGrid).xy;
+    uint start          = (tileId.x + tileId.y * uint(LIGHT_CLUSTER_WIDTH)) * (ZBIN_LIGHTS_PER_TILE + 1u);
+    lightCount          = min(TILE_LIGHTS.words[start], uint(ZBIN_LIGHTS_PER_TILE));   // 构建端已预截断，此处min=双保险
+    return start + 1u;
 }
 
 
@@ -40,6 +28,34 @@ float PointLightFalloff(float dist, float radius)
 	return pow(clamp(1.0f - pow(dist / radius, 4), 0.0, 1.0), 2) / (dist * dist + 1.0f);
 }
 
+struct SolvedLight
+{
+	vec3 dir;		// 表面指向灯
+	vec3 end;		// 阴影射线终点（局部灯=灯位置；方向灯=pos+dir*MAX_RAY_TRACING_DISTANCE）
+	vec3 radiance;	// 颜色×强度×距离衰减
+};
+
+SolvedLight SolveLight(LightStructGPU light, vec3 pos)
+{
+	SolvedLight s;
+	vec3 toLight   = light.position_range.xyz - pos;
+	float dist     = length(toLight);
+	s.dir          = toLight / max(dist, 1e-5f);
+	s.end          = light.position_range.xyz;
+	s.radiance     = light.radiance_type.rgb * PointLightFalloff(dist, light.position_range.w);
+	return s;
+}
+
+// 方向灯版：HRP把无限远近似成MAX_RAY_TRACING_DISTANCE外一点（阴影射线终点+角抖动横移的锚）
+SolvedLight SolveDirectionalLight(LightStructGPU light, vec3 pos)
+{
+	SolvedLight s;
+	s.dir      = -normalize(light.mainDirection_id.xyz);
+	s.end      = pos + s.dir * MAX_RAY_TRACING_DISTANCE;
+	s.radiance = light.radiance_type.rgb;
+	return s;
+}
+
 
 #if(ENABLE_RAY_TRACING != 0)	// 光追版本的光源阴影获取
 
@@ -49,7 +65,7 @@ float RtDirectionalShadow(vec4 worldPos, float bias)
     if(LIGHTS.lightSetting.directionalLightCnt != 0)	
     {
         LightStructGPU dirLight = LIGHTS.slot[0];
-        vec3 L = -normalize(dirLight.dir_tan.xyz);
+        vec3 L = -normalize(dirLight.mainDirection_id.xyz);
 
         vec3 origin = worldPos.xyz + bias * L;
 		// cullMask=shadow caster位：只被"材质CastShadow"的instance遮挡，与光栅CSM/点光阴影的语义对齐
@@ -60,12 +76,12 @@ float RtDirectionalShadow(vec4 worldPos, float bias)
 
 float RtPointShadow(uint lightID, vec4 worldPos)
 {
-    if(lightID == 0) return 0.0f;	// 0为无效ID
+    if(lightID == LIGHT_ID_INVALID) return 0.0f;	
 
 	LightStructGPU pointLight = LIGHTS.slot[lightID];
 
-    if(!LightCastShadow(pointLight)) return 1.0f;	// 灯布局刀②：castShadow位取代shadowID槽判断
-    float pointShadow = RayQueryVisibility(worldPos.xyz, pointLight.pos_range.xyz, 0, INSTANCE_MASK_SHADOW_CASTER) ? 0.0f : 1.0f;
+    if(!LightCastShadow(pointLight)) return 1.0f;	
+    float pointShadow = RayQueryVisibility(worldPos.xyz, pointLight.position_range.xyz, 0, INSTANCE_MASK_SHADOW_CASTER) ? 0.0f : 1.0f;
     return pointShadow;	     // 光追就不考虑点光源是否开启投射阴影了
 }
 
@@ -85,7 +101,7 @@ vec3 DirectionalLighting(
     {
         LightStructGPU dirLight = LIGHTS.slot[0];
 
-        vec3 L = -normalize(dirLight.dir_tan.xyz);    
+        vec3 L = -normalize(dirLight.mainDirection_id.xyz);    
         // 钳制为0.0到1.0
         float NoL = saturate(dot(N, L));
 
@@ -93,8 +109,7 @@ vec3 DirectionalLighting(
 		//float dirShadow = DirectionalShadow(worldPos);               
 
         vec3 radiance = dirShadow *           //辐射率 = 阴影值 * 光强 * 颜色
-                        dirLight.color_intencity.rgb * 
-                        dirLight.color_intencity.w;        
+                        dirLight.radiance_type.rgb;        
 
         BRDFData data = ResolveBRDF(albedo, roughness, metallic, N, V, L);
         vec3 f_r = data.diffuse + data.specular;
@@ -115,14 +130,13 @@ vec3 DirectionalLighting(
     {
         LightStructGPU dirLight = LIGHTS.slot[0];
 
-        vec3 L = -normalize(dirLight.dir_tan.xyz);
+        vec3 L = -normalize(dirLight.mainDirection_id.xyz);
         float NoL = saturate(dot(N, L));
 
         float dirShadow     = 1.0f;
 
         vec3 radiance = dirShadow *
-                        dirLight.color_intencity.rgb *
-                        dirLight.color_intencity.w;
+                        dirLight.radiance_type.rgb;
 
         BRDFData data = ResolveBRDF(diffuse, roughness, F0, specF, N, V, L);
         vec3 f_r = data.diffuse + data.specular;
@@ -141,15 +155,14 @@ vec3 DirectionalDiffuseLighting(
     {
         LightStructGPU dirLight = LIGHTS.slot[0];
 
-        vec3 L = -normalize(dirLight.dir_tan.xyz);    
+        vec3 L = -normalize(dirLight.mainDirection_id.xyz);    
         float NoL = saturate(dot(N, L));
 
         float dirShadow     = 1.0f;
 		//float dirShadow = DirectionalShadow(worldPos);               
 
         vec3 radiance = dirShadow *           //辐射率 = 阴影值 * 光强 * 颜色
-                        dirLight.color_intencity.rgb * 
-                        dirLight.color_intencity.w;        
+                        dirLight.radiance_type.rgb;        
 
         vec3 f_r = ResolveBRDF(albedo, roughness, metallic, N, V, L).diffuse;
 
@@ -163,22 +176,21 @@ vec3 PointLighting(
     vec3 albedo, float roughness, float metallic,
     vec4 worldPos, vec3 N, vec3 V, uint lightID)
 {
-	if(lightID == 0) return vec3(0.0f);	// 0为无效ID
+	if(lightID == LIGHT_ID_INVALID) return vec3(0.0f);	
 
     LightStructGPU pointLight = LIGHTS.slot[lightID];
 
-    float pointDistance = length(worldPos.xyz - pointLight.pos_range.xyz);
+    float pointDistance = length(worldPos.xyz - pointLight.position_range.xyz);
 
-    vec3 L = normalize(pointLight.pos_range.xyz - worldPos.xyz);
+    vec3 L = normalize(pointLight.position_range.xyz - worldPos.xyz);
     float NoL = saturate(dot(N, L));
 
     float pShadow = 1.0f;
     //float pShadow       = PointShadow(lightID, worldPos);  
-    float attenuation   = PointLightFalloff(pointDistance, pointLight.pos_range.w);
+    float attenuation   = PointLightFalloff(pointDistance, pointLight.position_range.w);
 
     vec3 radiance = pShadow *               //辐射率 = 阴影值 * 光强 * 颜色 * 衰减
-                    pointLight.color_intencity.rgb * 
-                    pointLight.color_intencity.w *
+                    pointLight.radiance_type.rgb *
                     attenuation;   
 
     BRDFData data = ResolveBRDF(albedo, roughness, metallic, N, V, L);
@@ -192,21 +204,20 @@ vec3 PointLighting(
     vec3 diffuse, float roughness, vec3 F0, float specF,
     vec4 worldPos, vec3 N, vec3 V, uint lightID)
 {
-	if(lightID == 0) return vec3(0.0f);	// 0为无效ID
+	if(lightID == LIGHT_ID_INVALID) return vec3(0.0f);
 
     LightStructGPU pointLight = LIGHTS.slot[lightID];
 
-    float pointDistance = length(worldPos.xyz - pointLight.pos_range.xyz);
+    float pointDistance = length(worldPos.xyz - pointLight.position_range.xyz);
 
-    vec3 L = normalize(pointLight.pos_range.xyz - worldPos.xyz);
+    vec3 L = normalize(pointLight.position_range.xyz - worldPos.xyz);
     float NoL = saturate(dot(N, L));
 
     float pShadow = 1.0f;
-    float attenuation   = PointLightFalloff(pointDistance, pointLight.pos_range.w);
+    float attenuation   = PointLightFalloff(pointDistance, pointLight.position_range.w);
 
     vec3 radiance = pShadow *
-                    pointLight.color_intencity.rgb *
-                    pointLight.color_intencity.w *
+                    pointLight.radiance_type.rgb *
                     attenuation;
 
     BRDFData data = ResolveBRDF(diffuse, roughness, F0, specF, N, V, L);
@@ -215,70 +226,25 @@ vec3 PointLighting(
     return max(vec3(0.0f), f_r * radiance * NoL);
 }
 
-#if(ENABLE_RAY_TRACING != 0)    // 阴影转换刀B：cluster循环版阴影依赖RtPointShadow，RT=0编译单元（gizmo/clipmap/shadow.geom）不实例化
-// F0直存版：cluster based
-vec3 PointLighting(
-    vec3 diffuse, float roughness, vec3 F0, float specF,
-    vec4 worldPos, vec3 N, vec3 V)
-{
-    vec3 pointColor = vec3(0.0f);
-    {
-        ivec3 clusterGrid   = FetchLightClusterGrid(WorldToNDC(worldPos).xyz);
-        uvec2 clusterIndex  = FetchLightClusterIndex(clusterGrid);
-
-        for(uint i = clusterIndex.x; i < clusterIndex.x + clusterIndex.y; i++)
-        {
-            uint lightID = LIGHT_CLUSTER_INDEX.slot[i].lightID;
-
-            pointColor  +=  PointLighting(diffuse, roughness, F0, specF, worldPos, N, V, lightID) *
-                            RtPointShadow(lightID, worldPos);    // 阴影转换刀B：cube VSM退役中（消费者=deferred_lighting/ReSTIR_DI）
-        }
-    }
-	return pointColor;
-}
-
-// 点光源光照计算, 使用cluster based lighting, 计算阴影
-vec3 PointLighting(
-    vec3 albedo, float roughness, float metallic,
-    vec4 worldPos, vec3 N, vec3 V)
-{
-    vec3 pointColor = vec3(0.0f);
-    {
-        ivec3 clusterGrid   = FetchLightClusterGrid(WorldToNDC(worldPos).xyz);
-        uvec2 clusterIndex  = FetchLightClusterIndex(clusterGrid);      //读取对应cluster的索引信息
-
-        for(uint i = clusterIndex.x; i < clusterIndex.x + clusterIndex.y; i++)
-        {
-            uint lightID = LIGHT_CLUSTER_INDEX.slot[i].lightID;
-
-            pointColor  +=  PointLighting(albedo, roughness, metallic, worldPos, N, V, lightID) *
-                            RtPointShadow(lightID, worldPos);    // 阴影转换刀B
-        }     
-    }
-	return pointColor;
-}
-
-#endif
 vec3 PointDiffuseLighting(
     vec3 albedo, float roughness, float metallic,
     vec4 worldPos, vec3 N, vec3 V, uint lightID)
 {
-	if(lightID == 0) return vec3(0.0f);	// 0为无效ID
+	if(lightID == LIGHT_ID_INVALID) return vec3(0.0f);	
 
     LightStructGPU pointLight = LIGHTS.slot[lightID];
 
-    float pointDistance = length(worldPos.xyz - pointLight.pos_range.xyz);
+    float pointDistance = length(worldPos.xyz - pointLight.position_range.xyz);
 
-    vec3 L = normalize(pointLight.pos_range.xyz - worldPos.xyz);
+    vec3 L = normalize(pointLight.position_range.xyz - worldPos.xyz);
     float NoL = saturate(dot(N, L));
 
     float pShadow = 1.0f;
     //float pShadow       = PointShadow(lightID, worldPos);  
-    float attenuation   = PointLightFalloff(pointDistance, pointLight.pos_range.w);
+    float attenuation   = PointLightFalloff(pointDistance, pointLight.position_range.w);
 
     vec3 radiance = pShadow *               //辐射率 = 阴影值 * 光强 * 颜色 * 衰减
-                    pointLight.color_intencity.rgb * 
-                    pointLight.color_intencity.w *
+                    pointLight.radiance_type.rgb *
                     attenuation;   
 
     vec3 f_r = ResolveBRDF(albedo, roughness, metallic, N, V, L).diffuse;
@@ -286,28 +252,6 @@ vec3 PointDiffuseLighting(
     return max(vec3(0.0f), f_r * radiance * NoL);	
 }
 
-#if(ENABLE_RAY_TRACING != 0)    
-vec3 PointDiffuseLighting(
-    vec3 albedo, float roughness, float metallic,
-    vec4 worldPos, vec3 N, vec3 V)
-{
-    vec3 pointColor = vec3(0.0f);
-    {
-        ivec3 clusterGrid   = FetchLightClusterGrid(WorldToNDC(worldPos).xyz);
-        uvec2 clusterIndex  = FetchLightClusterIndex(clusterGrid);      //读取对应cluster的索引信息 
-
-        for(uint i = clusterIndex.x; i < clusterIndex.x + clusterIndex.y; i++)
-        {
-            uint lightID = LIGHT_CLUSTER_INDEX.slot[i].lightID;
-
-            pointColor  +=  PointDiffuseLighting(albedo, roughness, metallic, worldPos, N, V, lightID) *
-                            RtPointShadow(lightID, worldPos);    // 阴影转换刀B（当前零外部调用者，随族换）
-        }     
-    }
-	return pointColor;
-}
-
-#endif
 
 // 间接光照////////////////////////////////////////////////////////////////////////////
 

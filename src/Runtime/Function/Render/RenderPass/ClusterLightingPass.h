@@ -17,10 +17,12 @@ public:
 	virtual PassType GetType() override final { return CLUSTER_LIGHTING_PASS; }
 
 private:
-    Shader computeShader;
+    Shader tileCullingShader;   
+    Shader binCullingShader;
 
     RHIRootSignatureRef rootSignature;
-    RHIComputePipelineRef computePipeline;
+    RHIComputePipelineRef tileCullingPipeline;
+    RHIComputePipelineRef binCullingPipeline;
 
 	EnablePassEditourUI()
 };

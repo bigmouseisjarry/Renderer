@@ -55,9 +55,9 @@ void main()
         // 直接光照计算，仅漫反射 //////////////////////////////////
 
         vec3 pointDiffuse = vec3(0.0f);
-        for(uint lightID = 1; lightID <= LIGHTS.lightSetting.pointLightCnt; lightID++)
+        for(uint lightID = LIGHTS.lightSetting.directionalLightCnt; lightID < LIGHTS.lightSetting.directionalLightCnt + LIGHTS.lightSetting.pointLightCnt; lightID++)    // 刀二2a₂：真紧凑局部灯块[D,D+L)
             pointDiffuse += PointDiffuseLighting(albedo, roughness, metallic, worldPos, N, V, lightID) *
-                            RtPointShadow(lightID, worldPos);    // 阴影转换刀C：probe×全表点光=放大器，盯帧率
+                            RtPointShadow(lightID, worldPos);    
 
         vec3 directLightColor =
             DirectionalDiffuseLighting(albedo, roughness, metallic, worldPos, N, V) * RtDirectionalShadow(worldPos, GLOBAL_SETTING.rayTracingOffset) +

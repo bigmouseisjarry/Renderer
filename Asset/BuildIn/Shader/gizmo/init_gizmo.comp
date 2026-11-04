@@ -16,19 +16,19 @@ void main()
     // 在这里添加组件的Gizmo
     if(gID < LIGHTS.lightSetting.pointLightCnt)
     {
-        uint lightID = LIGHTS.lightSetting.pointLightIDs[gID];
-		LightStructGPU pointLight = LIGHTS.slot[lightID];
+		LightStructGPU pointLight = LIGHTS.slot[gID + LIGHTS.lightSetting.directionalLightCnt];   // 
 
-        AddGizmoBillboard(pointLight.pos_range.xyz, vec2(0.5f), GLOBAL_SETTING.icons.pointLightIcon, vec4(pointLight.color_intencity.rgb, 1.0f));
-        //AddGizmoSphere(pointLight.pos_range.xyz, pointLight.pos_range.w, vec4(pointLight.color_intencity.rgb, 1.0f));
+
+        AddGizmoBillboard(pointLight.position_range.xyz, vec2(0.5f), GLOBAL_SETTING.icons.pointLightIcon, vec4(pointLight.radiance_type.rgb, 1.0f));
+        //AddGizmoSphere(pointLight.position_range.xyz, pointLight.position_range.w, vec4(pointLight.radiance_type.rgb, 1.0f));
     }
 
     if(gID == 0 && LIGHTS.lightSetting.directionalLightCnt != 0)    // 目前只支持一个
     {
         LightStructGPU dirLight = LIGHTS.slot[0];
         
-        // 灯布局刀②：方向光无位置字段，图标摆相机+朝太阳100m（原方案定案）
-        AddGizmoBillboard(CAMERA.pos.xyz + dirLight.dir_tan.xyz * 100.0f, vec2(0.5f), GLOBAL_SETTING.icons.directionalLightIcon, vec4(dirLight.color_intencity.rgb, 1.0f));
+        // 方向光无位置字段，图标摆相机+朝太阳100m（原方案定案）
+        AddGizmoBillboard(CAMERA.pos.xyz + dirLight.mainDirection_id.xyz * 100.0f, vec2(0.5f), GLOBAL_SETTING.icons.directionalLightIcon, vec4(dirLight.radiance_type.rgb, 1.0f));
     }
 }
 

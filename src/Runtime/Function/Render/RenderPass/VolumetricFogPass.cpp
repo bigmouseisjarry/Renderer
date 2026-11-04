@@ -72,8 +72,7 @@ void VolumetricFogPass::Build(RDGBuilder& builder)
         RDGComputePassHandle pass0 = builder.CreateComputePass(GetName() + " Light Injection")
             .RootSignature(rootSignature)
             .Shaders({computeShader[0].shader})          
-            .ReadWrite(2, SET2_BINDING_LIGHT_CLUSTER_GRID, 0, builder.GetTexture("Light Cluster Grid"), VIEW_TYPE_3D)
-            .ReadWrite(2, SET2_BINDING_LIGHT_CLUSTER_INDEX, 0, builder.GetBuffer("Light Cluster Index"))
+            .ReadWrite(2, SET2_BINDING_TILE_LIGHTS, 0, builder.GetBuffer("Tile Lights"))
             .ReadWrite(2, SET2_BINDING_FOG_VOXEL_CURRENT, 0, voxelRaw, VIEW_TYPE_3D)
             .Execute([&](RDGPassContext context) {       
 

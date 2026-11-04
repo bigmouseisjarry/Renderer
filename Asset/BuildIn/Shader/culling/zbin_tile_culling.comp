@@ -1,0 +1,94 @@
+#version 460
+#extension GL_GOOGLE_include_directive : enable
+
+#include "include/common.glsl"
+
+// TileCulling
+// 每workgroup=8 tile(4×2)×4 z-lane；z-lane按(i<<2)+gtid.z跨步分摊灯，局部列表+groupshared前缀和定位写回偏移
+// 输出entry=(灯槽号<<24)低24位清零（bin位由BinCulling子pass焊接）
+// 对HRP的三处修正之一：count头落盘前min(总数,每tile上限)——BinCulling按count遍历不会读到未写槽位
+
+#define ZBIN_LANE_NUM 4u
+
+layout (local_size_x = 4, local_size_y = 2, local_size_z = 4) in;
+
+shared uint bits[32];   // 8 tile × 4 lane 的排他前缀和暂存（与HRP同构：lanOffset=gtid.x*8+gtid.y*4）
+
+uint LaneScanExclude(uint laneNum, uint laneOffset, uint laneId, uint value)
+{
+    bits[laneOffset + laneId] = value;
+    memoryBarrierShared();
+    barrier();
+
+    uint res = 0;
+    if(laneId == 0u)
+    {
+        for(uint i = 0u; i < laneNum; i++)      // 4元素串行扫描——前缀和
+        {
+            uint res_ = res + bits[laneOffset + i];
+            bits[laneOffset + i] = res;          // 排他前缀（写回前不含自己）
+            res = res_;
+        }
+    }
+    memoryBarrierShared();
+    barrier();
+
+    return bits[laneOffset + laneId];
+}
+
+void main()
+{
+    uvec2 tileId = gl_GlobalInvocationID.xy;
+    if(tileId.x >= uint(LIGHT_CLUSTER_WIDTH) || tileId.y >= uint(LIGHT_CLUSTER_HEIGHT)) return;
+
+    uint cnt = min(LIGHTS.lightSetting.pointLightCnt, uint(MAX_ZBIN_LOCAL_LIGHTS));   // 255政策双保险（CPU已截断）
+    uint startOffset = (tileId.x + tileId.y * uint(LIGHT_CLUSTER_WIDTH)) * (ZBIN_LIGHTS_PER_TILE + 1u);
+
+    // tile四角射线（view空间，相机在原点）→锥参数：中轴cdir+最大半角正切max_tan
+    vec2 screenMin = (tileId * LIGHT_CLUSTER_GRID_SIZE) / vec2(WINDOW_WIDTH, WINDOW_HEIGHT);
+    vec2 screenMax = ((tileId + uvec2(1)) * LIGHT_CLUSTER_GRID_SIZE) / vec2(WINDOW_WIDTH, WINDOW_HEIGHT);
+    vec3 c0 = normalize(ScreenToView(vec2(screenMin.x, screenMin.y), 1.0f).xyz);
+    vec3 c1 = normalize(ScreenToView(vec2(screenMax.x, screenMin.y), 1.0f).xyz);
+    vec3 c2 = normalize(ScreenToView(vec2(screenMin.x, screenMax.y), 1.0f).xyz);
+    vec3 c3 = normalize(ScreenToView(vec2(screenMax.x, screenMax.y), 1.0f).xyz);
+
+    vec3 cdir = normalize(c0 + c3);              // 对角中点=tile中心射线
+    float minCos = min(min(dot(c0, cdir), dot(c1, cdir)), min(dot(c2, cdir), dot(c3, cdir)));
+    float maxTan = sqrt(1.0f - minCos * minCos) / minCos;
+
+    // 4条z-lane跨步分摊灯：0,4,8,12... 1,5,9,13...
+    uint D = LIGHTS.lightSetting.directionalLightCnt;
+    uint idxs[ZBIN_LIGHTS_PER_TILE];
+    uint count = 0u;
+    uint loopNum = (D + cnt) / ZBIN_LANE_NUM + ((D + cnt) % ZBIN_LANE_NUM != 0u ? 1u : 0u);
+    for(uint i = 0u; i < loopNum; i++)
+    {
+        uint lightID = (i << 2u) + gl_LocalInvocationID.z;
+        if(lightID >= D && lightID < D + cnt)
+        {
+            LightStructGPU pointLight = LIGHTS.slot[lightID];
+
+            // 锥测试（比球-盒更紧更便宜）：灯方向偏离tile中轴的垂距-半径 > 中轴上的锥半径张角 → 必在锥外
+            vec3 ldir = (CAMERA.view * vec4(pointLight.position_range.xyz, 1.0f)).xyz;   // view空间（相机=原点）
+            float ldis = length(ldir); ldir /= ldis;
+            float cosl = dot(ldir, cdir);
+            if(sqrt(1.0f - cosl * cosl) * ldis - pointLight.position_range.w - cosl * ldis * maxTan > 0.0f) continue;
+
+            if(count < uint(ZBIN_LIGHTS_PER_TILE)) idxs[count++] = lightID;   // lane内防溢出（tile级截断在写回处）
+        }
+    }
+
+    // 各lane在tile段内的写回起点（排他前缀和）
+    uint offset = LaneScanExclude(ZBIN_LANE_NUM, gl_LocalInvocationID.x * 8u + gl_LocalInvocationID.y * 4u,
+                                  gl_LocalInvocationID.z, count);
+
+    if(gl_LocalInvocationID.z == 3u)
+        TILE_LIGHTS.words[startOffset] = min(offset + count, uint(ZBIN_LIGHTS_PER_TILE));   // count头预截断
+    startOffset += 1u;
+
+    for(uint j = offset; j < offset + count; j++)
+    {
+        if(j < uint(ZBIN_LIGHTS_PER_TILE))    // 每tile截断=政策本体
+            TILE_LIGHTS.words[startOffset + j] = idxs[j - offset] << 24u;   // 低24位清零，bin位留给BinCulling
+    }
+}

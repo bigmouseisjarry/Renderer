@@ -58,7 +58,7 @@ void main()
 					DEPTH_PYRAMID[1], SAMPLER[3]); 
 			}
 
-			// 光源空间剔除分支已退役（阴影转换刀D：RT阴影后shadow pass不再发dispatch）
+			// 光源空间剔除分支已退役（RT阴影后shadow pass不再发dispatch）
 			
 			//TODO INDIRECT_COMMANDS可以放到这里来录制，不只是instanceCount
 

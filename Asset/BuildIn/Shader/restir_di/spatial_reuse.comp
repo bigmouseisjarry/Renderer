@@ -35,7 +35,7 @@ void main()
 
 	uint reservoirIndex = ReservoirIndex(pixel);
 	DIReservoir res = RESTIR_DI_RESERVOIRS[reservoirIndex];
-	Rand rand = SeedRand(GLOBAL_SETTING.totalTicks, pixel.y * GLOBAL_SETTING.totalTicks + pixel.x);
+	RANDSTATE(pixel.y * GLOBAL_SETTING.totalTicks + pixel.x);
 
 	ivec2 neighborPixel[NUM_NEIGHBORS];
 	vec3 neighborNormal[NUM_NEIGHBORS];
@@ -46,8 +46,8 @@ void main()
 	{
 		for(int j = 0; j < NUM_NEIGHBORS; j++)
 		{	
-			float angle = RandFloat(rand) * 2.0 * PI;								// 搜索圆范围内的随机临近像素
-			float radius = sqrt(RandFloat(rand)) * RESTIR_DI_SETTING.spatialRadius;
+			float angle = RAND * 2.0 * PI;								// 搜索圆范围内的随机临近像素
+			float radius = sqrt(RAND) * RESTIR_DI_SETTING.spatialRadius;
 
 			ivec2 randNeighborOffset = ivec2(floor(cos(angle) * radius), floor(sin(angle) * radius));
 			ivec2 randNeighborPixel  = ivec2(clamp(int(pixel.x) + randNeighborOffset.x, 0, int(WINDOW_WIDTH) - 1),
@@ -82,10 +82,10 @@ void main()
 			float newPHat = EvaluatePHat(
 					randRes.sampl.lightID, worldPos.xyz, normal,
 					diffuse, roughness, F0, specF);
-			CombineDIReservoirs(res, randRes, newPHat, rand);
+			CombineDIReservoirs(res, randRes, newPHat, randState);
 		}
 
-		if(RESTIR_DI_SETTING.unbias != 0)
+		if(RESTIR_DI_SETTING.unbias != 0 && res.sampl.lightID != LIGHT_ID_INVALID)
 		{
 			uint z = originNumStreamSamples;
 			for(int j = 0; j < NUM_NEIGHBORS; j++)
@@ -109,15 +109,15 @@ void main()
 				// if(newPHatNeighbor <= 0.0) continue;
 
 				LightStructGPU pointLight = LIGHTS.slot[res.sampl.lightID];
-				float neighborDistance 	= length(neighborWorldPos.xyz - pointLight.pos_range.xyz);
-				vec3 neighborL		 	= normalize(pointLight.pos_range.xyz - neighborWorldPos.xyz);
+				float neighborDistance 	= length(neighborWorldPos.xyz - pointLight.position_range.xyz);
+				vec3 neighborL		 	= normalize(pointLight.position_range.xyz - neighborWorldPos.xyz);
 				vec3 neighborN 			= normalize(neighborNormal[j]);
-				if(dot(neighborN, neighborL) <= 0.0f || neighborDistance >= pointLight.pos_range.w)	continue;
+				if(dot(neighborN, neighborL) <= 0.0f || neighborDistance >= pointLight.position_range.w)	continue;
 
 
 				if(RESTIR_DI_SETTING.visibilityReuse != 0)		// 可见性测试是最主要的性能开销
 				{
-					bool shadowed = RayQueryVisibility(neighborWorldPos.xyz, LIGHTS.slot[res.sampl.lightID].pos_range.xyz, GLOBAL_SETTING.rayTracingOffset);
+					bool shadowed = RayQueryVisibility(neighborWorldPos.xyz, LIGHTS.slot[res.sampl.lightID].position_range.xyz, GLOBAL_SETTING.rayTracingOffset);
 					if(shadowed) continue;
 				}
 						
@@ -126,7 +126,7 @@ void main()
 
 			if(RESTIR_DI_SETTING.visibilityReuse != 0)
 			{
-				bool shadowed = RayQueryVisibility(worldPos.xyz, LIGHTS.slot[res.sampl.lightID].pos_range.xyz, GLOBAL_SETTING.rayTracingOffset);
+				bool shadowed = RayQueryVisibility(worldPos.xyz, LIGHTS.slot[res.sampl.lightID].position_range.xyz, GLOBAL_SETTING.rayTracingOffset);
 				if(shadowed) 
 				{
 					CleanDIReservoir(res);			

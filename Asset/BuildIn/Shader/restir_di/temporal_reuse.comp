@@ -35,7 +35,7 @@ void main()
 
 	uint reservoirIndex = ReservoirIndex(pixel);
 	DIReservoir res = NewDIReservoir();
-	Rand rand = SeedRand(GLOBAL_SETTING.totalTicks, (pixel.y + WINDOW_HEIGHT) * GLOBAL_SETTING.totalTicks + (pixel.x + WINDOW_WIDTH));
+	RANDSTATE((pixel.y + WINDOW_HEIGHT) * GLOBAL_SETTING.totalTicks + (pixel.x + WINDOW_WIDTH));
 
 	if(depth == 1.0f)	// 无效的G-Buffer信息
 	{
@@ -43,16 +43,22 @@ void main()
 		return;
 	}
 
-	for (int i = 0; i < RESTIR_DI_SETTING.initialSampleCount; i++) 
-	{	
-		uint lightID = LIGHTS.lightSetting.pointLightIDs[uint(round(RandFloat(rand) * (LIGHTS.lightSetting.pointLightCnt - 1)))];	// 抽样选取点光源及其选择概率，直接用均匀分布了
-		float lightSampleProb = (1.0f / LIGHTS.lightSetting.pointLightCnt);	
+	if(LIGHTS.lightSetting.pointLightCnt == 0u)	
+	{
+		RESTIR_DI_RESERVOIRS[reservoirIndex] = res;
+		return;
+	}
+
+	for (int i = 0; i < RESTIR_DI_SETTING.initialSampleCount; i++)
+	{
+		uint lightID = LIGHTS.lightSetting.directionalLightCnt + uint(round(RAND * float(LIGHTS.lightSetting.pointLightCnt - 1u)));	// 抽样选取点光源及其选择概率，直接用均匀分布了
+		float lightSampleProb = (1.0f / LIGHTS.lightSetting.pointLightCnt);
 
 		float pHat = EvaluatePHat(
 			lightID, worldPos.xyz, normal,
 			diffuse, roughness, F0, specF);
 
-		AddSampleToDIReservoir(res, lightID, pHat, lightSampleProb, rand);
+		AddSampleToDIReservoir(res, lightID, pHat, lightSampleProb, randState);
 	}
 	
 	// 时域复用Reservoir //////////////////////////////////
@@ -65,19 +71,25 @@ void main()
 
 		if(valid)
 		{
-			DIReservoir prevRes = RESTIR_DI_PREV_RESERVOIRS[ReservoirIndex(prevPixel)];	
-			prevRes.numStreamSamples = min(prevRes.numStreamSamples, RESTIR_DI_SETTING.temporalSampleCountMultiplier * res.numStreamSamples);	// 需要设置一个累计采样数的上限
-			
-			float newPHat = EvaluatePHat(								// 时域复用下的可见性测试使用的是阴影贴图
-					prevRes.sampl.lightID, worldPos.xyz, normal,		// 空域用的光追
-					diffuse, roughness, F0, specF);
-			CombineDIReservoirs(res, prevRes, newPHat, rand);		
+			DIReservoir prevRes = RESTIR_DI_PREV_RESERVOIRS[ReservoirIndex(prevPixel)];
+
+			if(prevRes.sampl.lightID != LIGHT_ID_INVALID &&
+			   LIGHTS.lightSetting.prevLightListVersion == LIGHTS.lightSetting.lightListVersion)
+			{
+				prevRes.numStreamSamples = min(prevRes.numStreamSamples, RESTIR_DI_SETTING.temporalSampleCountMultiplier * res.numStreamSamples);	// 需要设置一个累计采样数的上限
+
+				float newPHat = EvaluatePHat(								// 时域复用下的可见性测试使用的是阴影贴图
+						prevRes.sampl.lightID, worldPos.xyz, normal,		// 空域用的光追
+						diffuse, roughness, F0, specF);
+				CombineDIReservoirs(res, prevRes, newPHat, randState);
+			}
 		}
 	}
 
-	if (RESTIR_DI_SETTING.visibilityReuse != 0) 
+	// 刀二2a₂：空reservoir（INVALID哨兵）不得直读slot——0xFFFFFFFF下标是越界读（旧约定lightID=0读slot[0]方向光位无害）
+	if (RESTIR_DI_SETTING.visibilityReuse != 0 && res.sampl.lightID != LIGHT_ID_INVALID)
 	{
-		bool shadowed = RayQueryVisibility(worldPos.xyz, LIGHTS.slot[res.sampl.lightID].pos_range.xyz, GLOBAL_SETTING.rayTracingOffset);
+		bool shadowed = RayQueryVisibility(worldPos.xyz, LIGHTS.slot[res.sampl.lightID].position_range.xyz, GLOBAL_SETTING.rayTracingOffset);
 		if (shadowed) 
 		{
 			CleanDIReservoir(res);		

@@ -29,8 +29,8 @@ void main()
 	vec2 inUV = pixel.xy / vec2(WINDOW_WIDTH, WINDOW_HEIGHT);
 	
 	// 本帧抖动////////////////////////////////////////////////////////////////////////////////////
-	Rand rand = SeedRand(GLOBAL_SETTING.totalTicks, (pixel.y + WINDOW_HEIGHT) * GLOBAL_SETTING.totalTicks + (pixel.x + WINDOW_WIDTH));
-	vec2 ditter = vec2(RandFloat(rand), RandFloat(rand));
+	RANDSTATE((pixel.y + WINDOW_HEIGHT) * GLOBAL_SETTING.totalTicks + (pixel.x + WINDOW_WIDTH));
+	vec2 ditter = vec2(RAND, RAND);
 	ditter = (ditter - 0.5) / vec2(VOLUMETRIC_FOG_SIZE_X, VOLUMETRIC_FOG_SIZE_Y); 
 
 	// 坐标////////////////////////////////////////////////////////////////////////////////////

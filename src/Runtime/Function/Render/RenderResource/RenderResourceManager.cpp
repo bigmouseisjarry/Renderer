@@ -85,25 +85,25 @@ void RenderResourceManager::SetObjectInfos(const std::vector<ObjectInfo>& object
 void RenderResourceManager::SetDirectionalLightInfo(const DirectionalLightInfo& info)
 {
     LightInfoGPU slot = {};
-    slot.pos_range      = Vec4(0.0f, 0.0f, 0.0f, 0.0f);
-    slot.color_intencity= Vec4(info.color.x(), info.color.y(), info.color.z(), info.intencity);
-    slot.dir_tan        = Vec4(info.dir.x(), info.dir.y(), info.dir.z(), 0.0f);
-    uint32_t flags = 0u /*DIRECTIONAL*/ | (info.castShadow != 0 ? 0x100u : 0u);
-    slot.flags_fog      = Vec4(info.fogScattering, LightFlagsF(flags), 0.0f, 0.0f);
+    slot.position_range = Vec4(0.0f, 0.0f, 0.0f, 0.0f);
+    slot.radiance_type  = Vec4(info.color.x() * info.intencity, info.color.y() * info.intencity,
+                               info.color.z() * info.intencity, LightFlagsF(0u /*DIRECTIONAL*/ | (info.castShadow != 0 ? 0x100u : 0u)));
+    slot.mainDirection_id = Vec4(info.dir.x(), info.dir.y(), info.dir.z(), float(info.lightID));
+    slot.geometry       = Vec4(0.0f /*tanHalfAngle*/, info.fogScattering, 0.0f, 0.0f);
     perFrameResources[EngineContext::ThreadPool()->ThreadFrameIndex()].lightBuffer.SetData(
         &slot, sizeof(LightInfoGPU), LIGHT_SLOT_OFFSET);
 }
 
-void RenderResourceManager::SetPointLightInfo(const PointLightInfo& info, uint32_t pointLightID)
+void RenderResourceManager::SetPointLightInfo(const PointLightInfo& info, uint32_t gpuSlot)
 {
     LightInfoGPU slot = {};
-    slot.pos_range      = Vec4(info.pos.x(), info.pos.y(), info.pos.z(), info.far);
-    slot.color_intencity= Vec4(info.color.x(), info.color.y(), info.color.z(), info.intencity);
-    slot.dir_tan        = Vec4(0.0f, 0.0f, 0.0f, 0.0f);
-    uint32_t flags = 1u /*POINT*/ | (info.castShadow != 0 ? 0x100u : 0u);
-    slot.flags_fog      = Vec4(info.fogScattering, LightFlagsF(flags), 0.0f, 0.0f);
+    slot.position_range = Vec4(info.pos.x(), info.pos.y(), info.pos.z(), info.far);
+    slot.radiance_type  = Vec4(info.color.x() * info.intencity, info.color.y() * info.intencity,
+                               info.color.z() * info.intencity, LightFlagsF(1u /*POINT*/ | (info.castShadow != 0 ? 0x100u : 0u)));
+    slot.mainDirection_id = Vec4(0.0f, 0.0f, 0.0f, float(info.lightID));
+    slot.geometry       = Vec4(0.0f /*tanHalfAngle*/, info.fogScattering, 0.0f, 0.0f);
     perFrameResources[EngineContext::ThreadPool()->ThreadFrameIndex()].lightBuffer.SetData(
-        &slot, sizeof(LightInfoGPU), LIGHT_SLOT_OFFSET + pointLightID * sizeof(LightInfoGPU));
+        &slot, sizeof(LightInfoGPU), LIGHT_SLOT_OFFSET + gpuSlot * sizeof(LightInfoGPU));
 }
 
 void RenderResourceManager::SetVolumeLightInfo(const VolumeLightInfo& volumeLightInfo, uint32_t volumeLightID)
@@ -204,10 +204,10 @@ RHIShaderRef RenderResourceManager::GetOrCreateRHIShader(const std::string& path
     return shader;
 }
 
-RHIBufferRef RenderResourceManager::GetLightClusterIndexBuffer()
-{ 
-    return perFrameResources[EngineContext::ThreadPool()->ThreadFrameIndex()].lightClusterIndexBuffer.buffer;
-} 
+RHIBufferRef RenderResourceManager::GetTileLightsBuffer()
+{
+    return perFrameResources[EngineContext::ThreadPool()->ThreadFrameIndex()].tileLightsBuffer.buffer;
+}
 
 RHIBufferRef RenderResourceManager::GetGizmoDataBuffer()
 {
@@ -309,10 +309,11 @@ void RenderResourceManager::InitGlobalResources()
                 .AddEntry({1, SET1_BINDING_BINDLESS_TEXTURE_2D_ARRAY, MAX_BINDLESS_RESOURCE_SIZE, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})
                 .AddEntry({1, SET1_BINDING_BINDLESS_TEXTURE_CUBE, MAX_BINDLESS_RESOURCE_SIZE, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})
                 .AddEntry({1, SET1_BINDING_BINDLESS_TEXTURE_3D, MAX_BINDLESS_RESOURCE_SIZE, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})
-                .AddEntry({1, SET1_BINDING_DDGI_SETTING,                 1,                          SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER});   
+                .AddEntry({1, SET1_BINDING_DDGI_SETTING, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})
+                .AddEntry({1, SET1_BINDING_SOBOL, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})
+                .AddEntry({1, SET1_BINDING_SCRAMBLING_TILE, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})
+                .AddEntry({1, SET1_BINDING_RANKING_TILE, 1, SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE});
 
-    // 静态采样器声明即绑定：六个全局采样器在set1创建期自动播种（每帧槽的poolDescriptorSet同享），
-    // 原UpdatePoolDescriptorSet里的手动sampler写入循环已删
     for (uint32_t i = 0; i < multiFrameResource.samplers.size(); i++)
         bindlessInfo.AddStaticSampler({1, SET1_BINDING_BINDLESS_SAMPLER, i, multiFrameResource.samplers[i]->sampler});
 
@@ -327,7 +328,7 @@ void RenderResourceManager::InitGlobalResources()
     set2Info
         // 共享域 0-13（跨pass语义槽）
         .AddEntry({2, SET2_BINDING_LIGHT_CLUSTER_GRID,          1,     SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})    
-        .AddEntry({2, SET2_BINDING_LIGHT_CLUSTER_INDEX,         1,     SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})      
+        .AddEntry({2, SET2_BINDING_LIGHT_CLUSTER_INDEX,         1,     SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})     
         .AddEntry({2, SET2_BINDING_HISTORY_DEPTH,               2,     SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})       
         .AddEntry({2, SET2_BINDING_HISTORY_DEPTH_PYRAMID,       2,     SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})       
         .AddEntry({2, SET2_BINDING_HISTORY_VELOCITY,            1,     SHADER_FREQUENCY_ALL, RESOURCE_TYPE_TEXTURE})       
@@ -437,23 +438,15 @@ void RenderResourceManager::InitGlobalResources()
         .AddEntry({2, SET2_BINDING_RESTIR_DI_GBUFFER_DIFFUSE,   1,  SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})
         .AddEntry({2, SET2_BINDING_RESTIR_DI_GBUFFER_NORMAL,     1,  SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})
         .AddEntry({2, SET2_BINDING_RESTIR_DI_GBUFFER_EMISSION,   1,  SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})
-        .AddEntry({2, SET2_BINDING_RESTIR_DI_GBUFFER_SPECF0,     1,  SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE});  
+        .AddEntry({2, SET2_BINDING_RESTIR_DI_GBUFFER_SPECF0,     1,  SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_TEXTURE})
+        .AddEntry({2, SET2_BINDING_TILE_LIGHTS,                  1,  SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER})
+        .AddEntry({2, SET2_BINDING_BIN_LIGHT_MASKS,              1,  SHADER_FREQUENCY_ALL, RESOURCE_TYPE_RW_BUFFER});   // 已退役空条目
 
     set2RootSignature = EngineContext::RHI()->CreateRootSignature(set2Info);
 
     // 初始化全局资源，部分直接在声明时就默认创建了
     // multiFrameResource
     {
-        // 六个全局采样器已上提至bindless RS构建前（静态采样器声明需要句柄）
-
-        multiFrameResource.lightClusterGridTexture = std::make_shared<Texture>(
-            TEXTURE_TYPE_3D,
-            FORMAT_R32G32_UINT,
-            Extent3D(LIGHT_CLUSTER_WIDTH, LIGHT_CLUSTER_HEIGHT, LIGHT_CLUSTER_DEPTH),
-            1, 1);
-
-        // 阴影转换刀D：CSM 4×4096² D32 + 点光filtered/depth cube 2族创建循环退役删除
-
         multiFrameResource.skyboxIBLTexuture[0] = std::make_shared<Texture>(
             TEXTURE_TYPE_CUBE, 
             EngineContext::Render()->GetHdrColorFormat(),
@@ -499,8 +492,17 @@ void RenderResourceManager::InitGlobalResources()
         for (uint32_t i = 0; i < 64; i++)
         {
             multiFrameResource.stbnTexture[i] = std::make_shared<Texture>(
-                "Asset/BuildIn/Texture/stbn/stbn_scalar_2Dx1Dx1D_128x128x64x1_" + std::to_string(i) + ".png");
+                "Asset/BuildIn/Texture/stbn/stbn_scalar_2Dx1Dx1D_128x128x64x1_" + std::to_string(i) + ".png",
+                FORMAT_R8G8B8A8_UNORM);
         }
+
+        // Sobol-BND组3：Heitz原版LUT的CSV无损转PNG；必须显式UNORM——单路径构造器默认SRGB，解码会毁整数
+        multiFrameResource.sobolTexture = std::make_shared<Texture>(
+            "Asset/BuildIn/Texture/SobolBND/sobol_256spp_256d.png", FORMAT_R8G8B8A8_UNORM);
+        multiFrameResource.scramblingTileTexture = std::make_shared<Texture>(
+            "Asset/BuildIn/Texture/SobolBND/scramblingTile.png", FORMAT_R8G8B8A8_UNORM);
+        multiFrameResource.rankingTileTexture = std::make_shared<Texture>(
+            "Asset/BuildIn/Texture/SobolBND/rankingTile.png", FORMAT_R8G8B8A8_UNORM);
 
         multiFrameResource.objectIDTexture[0] = std::make_shared<Texture>( 
             TEXTURE_TYPE_2D, 
@@ -526,13 +528,9 @@ void RenderResourceManager::InitGlobalResources()
             Extent3D(windowExtent.width, windowExtent.height, 1),
             1, 1);
 
-        multiFrameResource.gbufferIORTexture = std::make_shared<Texture>(
-            TEXTURE_TYPE_2D,
-            FORMAT_R8_UNORM,
-            Extent3D(windowExtent.width, windowExtent.height, 1),
-            1, 1);
+        // gbufferIORTexture已退役（2026-11-03）：IOR槽归GBufferThinPass瞬态创建（RDG名"G-Buffer IOR"）
 
-        multiFrameResource.stableHDRColorTexture[0] = std::make_shared<Texture>(      
+        multiFrameResource.stableHDRColorTexture[0] = std::make_shared<Texture>(
             TEXTURE_TYPE_2D,
             EngineContext::Render()->GetHdrColorFormat(),
             Extent3D(windowExtent.width, windowExtent.height, 1),
@@ -614,7 +612,7 @@ void RenderResourceManager::InitGlobalResources()
             .buffer = resource.lightBuffer.buffer});
 
         resource.poolDescriptorSet->UpdateDescriptor({
-            .binding = SET1_BINDING_DDGI_SETTING,      // 灯布局刀①：VL独立buffer绑set1 b26
+            .binding = SET1_BINDING_DDGI_SETTING,      
             .index = 0,
             .resourceType = RESOURCE_TYPE_RW_BUFFER,
             .buffer = resource.volumeLightSettingsBuffer.buffer});
@@ -646,16 +644,6 @@ void RenderResourceManager::InitGlobalResources()
             .resourceType = RESOURCE_TYPE_RW_BUFFER,
             .buffer = multiFrameResource.meshClusterGroupBuffer.buffer});
 
-
-
-
-
-
-
-
-
-
-
         for (uint32_t i = 0; i < 64; i++)
         {
             resource.poolDescriptorSet->UpdateDescriptor({
@@ -665,8 +653,23 @@ void RenderResourceManager::InitGlobalResources()
                 .textureView = multiFrameResource.stbnTexture[i]->textureView });
         }
 
+        // Sobol-BND组3：三张LUT常驻（texelFetch直读，采样器无关）
+        resource.poolDescriptorSet->UpdateDescriptor({
+            .binding = SET1_BINDING_SOBOL,
+            .index = 0,
+            .resourceType = RESOURCE_TYPE_TEXTURE,
+            .textureView = multiFrameResource.sobolTexture->textureView });
+        resource.poolDescriptorSet->UpdateDescriptor({
+            .binding = SET1_BINDING_SCRAMBLING_TILE,
+            .index = 0,
+            .resourceType = RESOURCE_TYPE_TEXTURE,
+            .textureView = multiFrameResource.scramblingTileTexture->textureView });
+        resource.poolDescriptorSet->UpdateDescriptor({
+            .binding = SET1_BINDING_RANKING_TILE,
+            .index = 0,
+            .resourceType = RESOURCE_TYPE_TEXTURE,
+            .textureView = multiFrameResource.rankingTileTexture->textureView });
 
-              
         resource.poolDescriptorSet->UpdateDescriptor({
             .binding = SET1_BINDING_VERTEX,
             .index = 0,

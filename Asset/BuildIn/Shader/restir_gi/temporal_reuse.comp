@@ -67,7 +67,7 @@ void main()
 
     uint reservoirIndex = ReservoirIndex(pixel);
     GIReservoir res = NewGIReservoir();
-    Rand rand = SeedRand(GLOBAL_SETTING.totalTicks, (pixel.y + WINDOW_HEIGHT / HEIGHT_DOWNSAMPLE_RATE) * GLOBAL_SETTING.totalTicks + (pixel.x + WINDOW_WIDTH / WIDTH_DOWNSAMPLE_RATE));
+    RANDSTATE((pixel.y + WINDOW_HEIGHT / HEIGHT_DOWNSAMPLE_RATE) * GLOBAL_SETTING.totalTicks + (pixel.x + WINDOW_WIDTH / WIDTH_DOWNSAMPLE_RATE));
 
     if(depth == 1.0f)    // 无效的G-Buffer信息
     {
@@ -77,20 +77,20 @@ void main()
 
 	for (int i = 0; i < RESTIR_GI_SETTING.initialSampleCount; i++) 
 	{	
-		vec4 newSample     = UniformSampleHemisphere(vec2(RandFloat(rand), RandFloat(rand)));     	// 半球均匀采样
+		vec4 newSample     = UniformSampleHemisphere(vec2(RAND, RAND));     	// 半球均匀采样
 		vec3 L             = normalize(TangentToWorld(newSample.xyz, normal));     
 		float pdf          = newSample.w;															// proposel PDF, 1 / (2 * PI)
 
 		// L = normal;		// 可以用这个法子可视化trace结果
 
-		// vec2 seed           	= vec2(RandFloat(rand), RandFloat(rand));
+		// vec2 seed           	= vec2(RAND, RAND);
 		// vec3 N              	= normalize(normal); 
 		// vec4 newSample          = CosineSampleHemisphere(seed);                   // 余弦采样
 		// vec3 L           		= normalize(TangentToWorld(newSample.xyz, N));     
 		// float pdf    			= newSample.w;
 
 		// float a2            = pow(roughness, 4) ; 
-		// vec2 seed           = vec2(RandFloat(rand), RandFloat(rand));
+		// vec2 seed           = vec2(RAND, RAND);
 		// vec4 newSample      = ImportanceSampleGGX(seed, a2);
 		// vec3 N              = normalize(normal); 
 		// vec3 V              = normalize(CAMERA.pos.xyz - worldPos.xyz);	
@@ -107,7 +107,7 @@ void main()
 		bool valid = RayTraceSurfaceCache(hitSample, worldPos.xyz, L); 
 		float pHat = EvaluatePHat(hitSample); 
 
-		if(valid) AddSampleToGIReservoir(res, hitSample, pHat, pdf, rand);
+		if(valid) AddSampleToGIReservoir(res, hitSample, pHat, pdf, randState);
 	}
 	
 	// 时域复用Reservoir //////////////////////////////////
@@ -131,7 +131,7 @@ void main()
 				prevRes.numStreamSamples = min(prevRes.numStreamSamples, RESTIR_GI_SETTING.temporalSampleCountMultiplier * res.numStreamSamples);	// 需要设置一个累计采样数的上限
 
 				float newPHat = EvaluatePHat(prevRes.sampl);
-				CombineGIReservoirs(res, prevRes, newPHat, rand);
+				CombineGIReservoirs(res, prevRes, newPHat, randState);
 			}
 		}
 	}
@@ -154,7 +154,7 @@ void main()
 	// vec3 lighting = vec3(0.0f);
 	// for (int i = 0; i < RESTIR_GI_SETTING.initialSampleCount; i++) 
 	// {	
-	// 	vec4 newSample     = UniformSampleHemisphere(vec2(RandFloat(rand), RandFloat(rand)));     	// 半球均匀采样
+	// 	vec4 newSample     = UniformSampleHemisphere(vec2(RAND, RAND));     	// 半球均匀采样
 	// 	vec3 L             = normalize(TangentToWorld(newSample.xyz, normal));     
 	// 	float pdf          = newSample.w;															// proposel PDF, 1 / (2 * PI)
 

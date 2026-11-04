@@ -40,9 +40,9 @@ TextureViewType TextureTypeToViewType(TextureType type)
     return viewType;
 }
 
-Texture::Texture(const std::string& path)
+Texture::Texture(const std::string& path, RHIFormat format)
 : textureType(TEXTURE_TYPE_2D)  // 默认
-, format(FORMAT_R8G8B8A8_SRGB)  
+, format(format)
 , arrayLayer(1)
 {
     this->paths.push_back(path);

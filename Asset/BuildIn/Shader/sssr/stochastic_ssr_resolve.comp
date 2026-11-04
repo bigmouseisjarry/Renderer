@@ -73,8 +73,8 @@ void main()
 
 	// 本帧结果////////////////////////////////////////////////////////////////////////////////////
 
-    Rand rand = SeedRand(GLOBAL_SETTING.totalTicks, pixel.y * GLOBAL_SETTING.totalTicks + pixel.x);
-    vec2 noise = vec2(RandFloat(rand), RandFloat(rand));
+    RANDSTATE(pixel.y * GLOBAL_SETTING.totalTicks + pixel.x);
+    vec2 noise = vec2(RAND, RAND);
     mat2 ditterRotation = mat2(noise.x, noise.y, -noise.x, -noise.y);
 
     vec4 accumulatedColor = vec4(0.0f);

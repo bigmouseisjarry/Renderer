@@ -26,7 +26,7 @@ layout(set = 1, binding = SET1_BINDING_MATERIAL) readonly buffer materials {
 
 layout(set = 1, binding = SET1_BINDING_LIGHT) buffer lights {
 
-    LightStructGPU slot[MAX_POINT_LIGHT_COUNT];     // 灯布局刀②：[0]=方向光 | [1..1+N]=局部灯
+    LightStructGPU slot[MAX_LIGHT_COUNT];     // [0,D)方向光 | [D,D+L)局部灯(点+聚光) | [D+L,D+L+A)面光预留
     LightSetting lightSetting;
 
 } LIGHTS;
@@ -46,23 +46,17 @@ layout(set = 1, binding = SET1_BINDING_MESH_CARD) readonly buffer mesh_cards {
 
 } MESH_CARDS;
 
-#ifndef MESH_CLUSTERS_DECLARED
-#define MESH_CLUSTERS_DECLARED
 layout(set = 1, binding = SET1_BINDING_MESH_CLUSTER) readonly buffer mesh_clusters {
 
     MeshCluster slot[MAX_PER_FRAME_CLUSTER_SIZE];
 
 } MESH_CLUSTERS;
-#endif
 
-#ifndef MESH_CLUSTER_GROUPS_DECLARED
-#define MESH_CLUSTER_GROUPS_DECLARED
 layout(set = 1, binding = SET1_BINDING_MESH_CLUSTER_GROUP) readonly buffer mesh_cluster_groups {
 
     MeshClusterGroup slot[MAX_PER_FRAME_CLUSTER_SIZE];
 
 } MESH_CLUSTER_GROUPS;
-#endif
 
 layout(set = 1, binding = SET1_BINDING_VERTEX) readonly buffer vertices {
 
@@ -560,3 +554,7 @@ vec4 FetchSpecular(in Material material, in vec2 coord) {
 #endif
 layout(set = 1, binding = SET1_BINDING_SKYBOX_IBL) uniform textureCube SKYBOX_IBL[2];    // diffuse, specular
 layout(set = 1, binding = SET1_BINDING_STBN) uniform texture2D STBN[64];
+// Sobol-BND组3（Heitz）：sampler.glsl的表；值域[0,255]整数，texelFetch直读，严禁SRGB采样
+layout(set = 1, binding = SET1_BINDING_SOBOL) uniform texture2D SOBOL;                // 256x256 (维度,样本号)
+layout(set = 1, binding = SET1_BINDING_SCRAMBLING_TILE) uniform texture2D SCRAMBLING_TILE;    // 128x1024，3D层按HRP扁平序平铺
+layout(set = 1, binding = SET1_BINDING_RANKING_TILE) uniform texture2D RANKING_TILE;          // 128x1024，同上

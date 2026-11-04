@@ -43,8 +43,8 @@ void main()
 
 	if(volumeLight.setting.randomOrientation)
 	{
-		Rand rand = SeedRand(GLOBAL_SETTING.totalTicks, GLOBAL_SETTING.totalTicks + probeIndex);	// 给一个随机旋转，每个探针内相同
-		vec3 rotation = vec3(RandFloat(rand), RandFloat(rand), RandFloat(rand)) * 2 * PI;			// 其实可以每探针只算一次，or在CPU算
+		RANDSTATE(GLOBAL_SETTING.totalTicks + probeIndex);	// 给一个随机旋转，每个探针内相同
+		vec3 rotation = vec3(RAND, RAND, RAND) * 2 * PI;			// 其实可以每探针只算一次，or在CPU算
 		// GLSL mat3 构造器是列主序填充的？
 		mat3 rotationMat = mat3(1.0, 0.0, 0.0, 
 								0.0, cos(rotation.x), -sin(rotation.x), 

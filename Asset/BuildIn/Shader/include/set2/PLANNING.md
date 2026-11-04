@@ -55,8 +55,8 @@
 ### 共享域 0-13（跨pass语义槽）
 | # | 宏 | 类型 | count | F/B契约 | 原号 | 使用者 |
 |---|----|----|-------|---------|------|--------|
-| 0 | SET2_BINDING_LIGHT_CLUSTER_GRID | RW_TEXTURE | 1 | 3D | b10 | Cluster/DDGI/DeferredLighting/VolumetricFog |
-| 1 | SET2_BINDING_LIGHT_CLUSTER_INDEX | RW_BUFFER | 1 | light_cluster_index{} | b11 | 同上 |
+| 0 | SET2_BINDING_LIGHT_CLUSTER_GRID | — | — | — | b10 | 已退役（ZBin刀④：3D cluster grid，槽号/RS空条目保留防移位） |
+| 1 | SET2_BINDING_LIGHT_CLUSTER_INDEX | — | — | — | b11 | 已退役（ZBin刀④：3D cluster index，同上） |
 | 2 | SET2_BINDING_HISTORY_DEPTH | TEXTURE | 2 | — | b12 | 8 pass（NRD经索引0读本帧深度） |
 | 3 | SET2_BINDING_HISTORY_DEPTH_PYRAMID | TEXTURE | 2 | — | b13 | GPUCulling/SSSR |
 | 4 | SET2_BINDING_HISTORY_VELOCITY | TEXTURE | 1 | — | b14 | Reprojection/SVGF/TAA |
@@ -162,6 +162,10 @@
 | 99 | SET2_BINDING_RESTIR_DI_GBUFFER_NORMAL | RW_TEXTURE | 1 | rgba8 | 原b1 |
 | 100 | SET2_BINDING_RESTIR_DI_GBUFFER_EMISSION | RW_TEXTURE | 1 | rgba8 | 原b2 |
 | 101 | SET2_BINDING_RESTIR_DI_GBUFFER_SPECF0 | RW_TEXTURE | 1 | rgba8 | 原b7 |
+
+### ZBin灯剔除域 102-103（刀⑤HRP式存储改造；写者=ClusterLightingPass两子pass，消费者=DeferredLighting/VolumetricFog）
+| 102 | SET2_BINDING_TILE_LIGHTS | RW_BUFFER | 1 | tile_lights{}（每tile段=[count\|entry×32]，entry=(idx<<24)\|binMask24） | 原102双掩码换芯 |
+| 103 | — | — | — | — | 已退役（刀⑤：entry内嵌bin掩码；槽号/RS空条目保留防移位） |
 
 ### 其余 pass 私有 79-97
 | 79 | SET2_BINDING_TAA_CURRENT_COLOR | TEXTURE | 1 | — | taa.comp b32 |

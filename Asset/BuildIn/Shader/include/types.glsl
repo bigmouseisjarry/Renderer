@@ -115,25 +115,21 @@ struct Material
     float dinc;               // 虹彩膜厚标度（OPD=dinc·cosθ2，2η2已折叠，Range约0-6，非物理nm）
 };
 
-struct LightClusterIndex
-{
-    uint lightID;             
-};
-
+// 颜色在写入端预乘进rgb
 struct LightStructGPU
 {
-    vec4 pos_range;          // .xyz=位置(方向光段=预留) .w=range(衰减远端)
-    vec4 color_intencity;    // .rgb=辐射度颜色 .w=强度
-    vec4 dir_tan;            // .xyz=主方向(方向光=太阳向;聚光=锥轴) .w=tanHalfAngle(聚光,余预留)
-    vec4 flags_fog;          // .x=fogScattering .y=floatBitsToUint位域{bit0-7类型,bit8=castShadow} .zw=预留(NRD/面光逃生门)
+    vec4 position_range;   // .xyz=位置(方向光段=预留) .w=range(衰减远端)
+    vec4 radiance_type;    // .rgb=颜色×强度(预乘) .w=floatBitsToUint位域{bit0-7类型,bit8=castShadow}
+    vec4 mainDirection_id; // .xyz=主方向(方向光=太阳向;聚光=锥轴) .w=CPU池id(暂无GPU读者,跨帧守卫走lightListVersion)
+    vec4 geometry;         // per-type联合体：.x=tanHalfAngle(聚光) .y=fogScattering(点/聚/方向) .zw=面光预留
 };
 
 #define LIGHT_TYPE_DIRECTIONAL 0u
 #define LIGHT_TYPE_POINT      1u
 #define LIGHT_TYPE_SPOT       2u
 
-uint LightType(LightStructGPU l)       { return floatBitsToUint(l.flags_fog.y) & 0xFFu; }
-bool LightCastShadow(LightStructGPU l) { return (floatBitsToUint(l.flags_fog.y) & 0x100u) != 0u; }
+uint LightType(LightStructGPU l)       { return floatBitsToUint(l.radiance_type.w) & 0xFFu; }
+bool LightCastShadow(LightStructGPU l) { return (floatBitsToUint(l.radiance_type.w) & 0x100u) != 0u; }
 
 struct DDGISetting
 {
@@ -169,16 +165,16 @@ struct VolumeLight
     DDGISetting setting;
 };
 
-struct LightSetting 
+struct LightSetting
 {
     uint directionalLightCnt;
     uint pointLightCnt;
 
-    uint globalIndexOffset;                          
-    uint _padding[3];
-
-    uint pointLightIDs[MAX_POINT_LIGHT_COUNT];
-
+    uint lightListVersion;                           // 本帧活跃点光序列哈希（密集槽语义章；2a₂起折入D+A布局）
+    uint prevLightListVersion;                       // 上一渲染帧哈希（ReSTIR时域守卫）
+    uint areaLightCnt;                               // 面光块宽（预留恒0，[D+L, D+L+A)）
+    uint sunSlot;                                    // 太阳槽号（D>0→0；无太阳→LIGHT_ID_INVALID；2b阶段③消费）
+    uint _padding[2];
 };
 
 struct GizmoBoxInfo 
@@ -434,5 +430,30 @@ struct SurfaceCacheLightingDispatch
     uint objectID;
     uvec2 tileOffset;
     uvec2 tileIndex;
+};
+
+// 表面着色参数全量结构体（对位HRP SurfaceInfo，2026-11-03 GBufferInfo升级并入）
+// 一个结构体两级填充深度：光栅/deferred档由DecodeGBuffer(纹理)或GetSurfaceInfo(材质采集)填子集，
+// RT档将来由材质直构路径填全量。命名按我们既有词汇：HRP.specular→F0 / HRP.smoothness→roughness反向 / HRP.index→ior。
+struct SurfaceInfo
+{
+    vec3 diffuse;        // 已预乘(1-m)（我们约定：不乘HRP的0.96，镜面损失由光照期k_diffuse=(1-F)记账）
+    float transparent;   // 透射率（1-albedo.a）
+    vec3 F0;             // 镜面反射率（金属混合，或虹彩=写入期烘焙薄膜色）
+    float roughness;     // 感知粗糙度直传（a2=Pow4(roughness)）
+    vec3 normal;         // 着色法线（含法线贴图）
+    vec3 tangent;        // 各向异性切向（预留，光栅档零填充）
+    vec3 gnormal;        // 几何法线（RT偏移/AO方向gating用）
+    vec3 emission;
+    float ao;
+    float aniso;         // 各向异性强度（预留，光栅档恒0）
+    float specF;         // 烘焙F0跳Schlick标志（虹彩写入期烘焙时=1）
+    float iridescence;   // 运行时薄膜求值标志（RT档预留；光栅档恒0——烘焙通道走specF）
+    float ior;           // 折射率（兼薄膜η2；G-Buffer薄透明槽R8中转）
+    float index2;        // 虹彩基底折射率η3（材质直构可得，G-Buffer不携带）
+    float dinc;          // 虹彩膜厚标度（OPD=dinc·cosθ2，2η2已折叠，Range约0-6）
+    float clearCoat;     // 清漆（预留，光栅档恒0）
+    float sheen;         // 织物光泽（预留，光栅档恒0）
+    float Ld;            // 次表面散射平均自由程（预留，配ImportanceSampleRd）
 };
 #endif

@@ -17,8 +17,8 @@ SkyboxComponent::SkyboxComponent()
 {
     objectID = EngineContext::RenderResource()->AllocateObjectID();
 
-    vertexShader = std::make_shared<Shader>(EngineContext::File()->ShaderPath() + "default/skybox.vert.spv", SHADER_FREQUENCY_VERTEX);
-    fragmentShader = std::make_shared<Shader>(EngineContext::File()->ShaderPath() + "default/skybox.frag.spv", SHADER_FREQUENCY_FRAGMENT);
+    vertexShader = std::make_shared<Shader>(EngineContext::File()->ShaderPath() + "forward/skybox.vert.spv", SHADER_FREQUENCY_VERTEX);
+    fragmentShader = std::make_shared<Shader>(EngineContext::File()->ShaderPath() + "forward/skybox.frag.spv", SHADER_FREQUENCY_FRAGMENT);
 
     material = std::make_shared<Material>();
     material->SetRenderQueue(10000);

@@ -1,0 +1,59 @@
+#version 460
+#extension GL_GOOGLE_include_directive : enable
+#extension GL_EXT_samplerless_texture_functions : enable
+#include "include/common.glsl"
+
+
+layout(push_constant) uniform DeferredLightSetting {
+    uint mode;
+    uint directOnly;
+} SETTING;
+
+#define THREAD_SIZE_X 16
+#define THREAD_SIZE_Y 16
+#define THREAD_SIZE_Z 1
+layout (local_size_x = THREAD_SIZE_X,
+		local_size_y = THREAD_SIZE_Y,
+		local_size_z = THREAD_SIZE_Z) in;
+
+void main()
+{
+    ivec2 pixel     = ivec2(gl_GlobalInvocationID.xy);
+    vec2 uv         = ScreenPixToUV(pixel);
+
+    if(FetchDepth(uv) == 1.0f) return;    // 天空早退不store（①已写黑）
+
+    SurfaceInfo gbuffer  = DecodeGBuffer(texelFetch(G_BUFFER_DIFFUSE_TRANSPARENT, pixel, 0),
+                                         texelFetch(G_BUFFER_NORMAL_SPECF, pixel, 0),
+                                         texelFetch(G_BUFFER_EMISSION, pixel, 0),
+                                         texelFetch(G_BUFFER_GEOMETRIC_NORMAL_AO, pixel, 0),
+                                         texelFetch(G_BUFFER_SPECULAR_F0_ROUGHNESS, pixel, 0),
+                                         texelFetch(G_BUFFER_IOR, pixel, 0).r);
+
+    vec4 worldPos   = DepthToWorld(uv);
+    vec3 V          = normalize((CAMERA.pos - worldPos).xyz);
+
+    vec3 res = vec3(0.0f);
+    for(uint i = 0u; i < LIGHTS.lightSetting.directionalLightCnt; i++)    // 方向灯块[0,D)
+    {
+        if(i == LIGHTS.lightSetting.sunSlot) continue;                    // 太阳归阶段③
+        LightStructGPU dirLight = LIGHTS.slot[i];
+
+        SolvedLight light = SolveDirectionalLight(dirLight, worldPos.xyz);
+        vec3 lres = PBS(PBS_FULLY, gbuffer, light.dir, light.radiance, V);
+        if(any(greaterThan(lres, vec3(0.0f))))
+        {
+            float shadow = 1.0f;
+            if(LightCastShadow(dirLight))    // bias沿光线方向（对位旧RtDirectionalShadow）
+                shadow = RayQueryVisibility(worldPos.xyz + light.dir * GLOBAL_SETTING.rayTracingOffset,
+                                            light.end, 0, INSTANCE_MASK_SHADOW_CASTER) ? 0.0f : 1.0f;
+            res += lres * shadow;
+        }
+    }
+
+    if(SETTING.mode == 0 || SETTING.mode == 17)    // 其余mode：直通不store
+    {
+        vec4 prev = imageLoad(FINAL_COLOR, pixel);
+        imageStore(FINAL_COLOR, pixel, vec4(prev.rgb + res, 1.0f));
+    }
+}

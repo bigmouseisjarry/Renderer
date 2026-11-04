@@ -23,7 +23,8 @@
 #define MAX_PER_FRAME_OBJECT_SIZE 102400		    //全局最大支持的物体数目
 
 
-#define MAX_POINT_LIGHT_COUNT 10240					//点光源最大数目
+#define MAX_LIGHT_COUNT 10240					//arena总容量（D方向+L局部+A面光 < MAX；ZBin的255政策独立管L）
+#define LIGHT_ID_INVALID 0xFFFFFFFFu			//无效灯槽哨兵（真紧凑arena下0是合法槽，旧"0=无效"约定退役）
 #define MAX_VOLUME_LIGHT_COUNT 100                   //体积光源最大数目
 
 #define CLUSTER_TRIANGLE_SIZE 128                   //每个cluster内的三角形数目，固定尺寸
@@ -33,12 +34,13 @@
 #define MAX_PER_PASS_PIPELINE_STATE_COUNT 64        //每个mesh pass支持的最大的不同管线状态数目
 #define MAX_SUPPORTED_MESH_PASS_COUNT 32            //全局支持的最大mesh pass数目
 
-#define MAX_LIGHTS_PER_CLUSTER 8                    //每个cluster最多支持存储的光源数目
-#define LIGHT_CLUSTER_GRID_SIZE 64                  //cluster based lighting裁剪时使用的tile像素尺寸
-#define LIGHT_CLUSTER_DEPTH 128                     //cluster based lighting裁剪时Z轴的划分数量
+#define MAX_LIGHTS_PER_CLUSTER 8                    //SC direct_lighting每tile共享列表上限
+#define LIGHT_CLUSTER_GRID_SIZE 64                  //ZBin tile像素尺寸
 #define LIGHT_CLUSTER_WIDTH (WINDOW_WIDTH / LIGHT_CLUSTER_GRID_SIZE)    // X轴
 #define LIGHT_CLUSTER_HEIGHT (WINDOW_HEIGHT / LIGHT_CLUSTER_GRID_SIZE)  // Y轴
-#define LIGHT_CLUSTER_NUM   (LIGHT_CLUSTER_WIDTH * LIGHT_CLUSTER_HEIGHT * LIGHT_CLUSTER_DEPTH)
+#define MAX_ZBIN_LOCAL_LIGHTS 255                   //局部灯硬顶（entry索引字段8位）
+#define ZBIN_LIGHTS_PER_TILE 32                     //每tile entry上限
+#define ZBIN_BIN_COUNT 24                           //bin数（entry内嵌掩码24位全用，对数分布）
 
 #define DIFFUSE_IBL_SIZE 32							//漫反射IBL尺寸
 #define SPECULAR_IBL_SIZE 128						//镜面反射IBL尺寸

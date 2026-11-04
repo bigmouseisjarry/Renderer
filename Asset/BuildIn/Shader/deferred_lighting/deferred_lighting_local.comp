@@ -1,0 +1,80 @@
+#version 460
+#extension GL_GOOGLE_include_directive : enable
+#extension GL_EXT_samplerless_texture_functions : enable
+#include "include/common.glsl"
+
+
+layout(push_constant) uniform DeferredLightSetting {
+    uint mode;
+    uint directOnly;
+} SETTING;
+
+#define THREAD_SIZE_X 16
+#define THREAD_SIZE_Y 16
+#define THREAD_SIZE_Z 1
+layout (local_size_x = THREAD_SIZE_X,
+		local_size_y = THREAD_SIZE_Y,
+		local_size_z = THREAD_SIZE_Z) in;
+
+void main()
+{
+    ivec2 pixel     = ivec2(gl_GlobalInvocationID.xy);
+    vec2 uv         = ScreenPixToUV(pixel);
+
+    if(FetchDepth(uv) == 1.0f)  // 天空早退（HRP同款raygen早退；forward后必覆写，SSSR miss背景=黑）
+    {
+        imageStore(FINAL_COLOR, pixel, vec4(0.0f));
+        return;
+    }
+
+    SurfaceInfo gbuffer  = DecodeGBuffer(texelFetch(G_BUFFER_DIFFUSE_TRANSPARENT, pixel, 0),
+                                         texelFetch(G_BUFFER_NORMAL_SPECF, pixel, 0),
+                                         texelFetch(G_BUFFER_EMISSION, pixel, 0),
+                                         texelFetch(G_BUFFER_GEOMETRIC_NORMAL_AO, pixel, 0),
+                                         texelFetch(G_BUFFER_SPECULAR_F0_ROUGHNESS, pixel, 0),
+                                         texelFetch(G_BUFFER_IOR, pixel, 0).r);
+
+    vec3 emission   = gbuffer.emission;
+    vec4 worldPos   = DepthToWorld(uv);
+    vec3 V          = normalize((CAMERA.pos - worldPos).xyz);
+
+    // 局部灯块遍历：ZBin entry列表+(entry&binBit)内联z剔除
+    uint lightCount, binBit;
+    uint entryStart = FetchLightTileEntries(WorldToNDC(worldPos).xyz, lightCount, binBit);
+
+    vec3 res = vec3(0.0f);
+    for(uint i = 0u; i < lightCount; i++)
+    {
+        uint entry = TILE_LIGHTS.words[entryStart + i];
+        if((entry & binBit) == 0u) continue;
+        uint lightID = entry >> 24;                             // 局部灯块[D,D+L)全局槽号（真紧凑arena）
+
+        SolvedLight light = SolveLight(LIGHTS.slot[lightID], worldPos.xyz);
+        vec3 lres = PBS(PBS_FULLY, gbuffer, light.dir, light.radiance, V);
+        if(any(greaterThan(lres, vec3(0.0f))))                  // HRP：BRDF非零才发阴影线
+            res += lres * RtPointShadow(lightID, worldPos);
+    }
+
+    // 输出（属主制） //////////////////////////////////
+    vec4 finalColor = vec4(0.0f);   // 非属主mode写0，后段接管
+    if(SETTING.mode == 0)   finalColor = vec4(res + emission, 1.0f);    // emission随首段（HRP raygen1同款）
+    if(SETTING.mode == 17)  finalColor = vec4(res, 1.0f);               // 17=直接光合(①局部+③太阳)，④直通
+    if(SETTING.mode == 16)  finalColor = vec4(emission, 1.0f);
+    if(SETTING.mode == 7)   
+    {
+        uint lightCnt = 0u;
+        for(uint i = 0u; i < lightCount; i++)
+            lightCnt += uint((TILE_LIGHTS.words[entryStart + i] & binBit) != 0u);
+
+        finalColor = vec4(vec3(float(lightCnt) / 8.0f), 1.0f);
+    }
+    if(SETTING.mode == 8)   // tile XY可视化
+    {
+        vec2 screenPixPos   = FetchScreenPixPos(WorldToNDC(worldPos).xy);
+        vec2 tileId         = floor(screenPixPos / float(LIGHT_CLUSTER_GRID_SIZE));
+        finalColor = vec4(tileId / vec2(float(LIGHT_CLUSTER_WIDTH), float(LIGHT_CLUSTER_HEIGHT)), 0.0f, 1.0f);
+    }
+    if(SETTING.mode == 9)   finalColor = vec4(vec3(float(findLSB(binBit)) / float(ZBIN_BIN_COUNT)), 1.0f);   // bin可视化
+
+    imageStore(FINAL_COLOR, pixel, finalColor);
+}

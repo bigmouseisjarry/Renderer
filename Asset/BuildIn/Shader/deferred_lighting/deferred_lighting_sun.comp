@@ -1,0 +1,90 @@
+#version 460
+#extension GL_GOOGLE_include_directive : enable
+#extension GL_EXT_samplerless_texture_functions : enable
+#include "include/common.glsl"
+
+
+layout(push_constant) uniform DeferredLightSetting {
+    uint mode;
+    uint directOnly;
+} SETTING;
+
+#define THREAD_SIZE_X 16
+#define THREAD_SIZE_Y 16
+#define THREAD_SIZE_Z 1
+layout (local_size_x = THREAD_SIZE_X,
+		local_size_y = THREAD_SIZE_Y,
+		local_size_z = THREAD_SIZE_Z) in;
+
+void main()
+{
+    ivec2 pixel     = ivec2(gl_GlobalInvocationID.xy);
+    vec2 uv         = ScreenPixToUV(pixel);
+
+    uint sunSlot = LIGHTS.lightSetting.sunSlot;
+    if(sunSlot == LIGHT_ID_INVALID) return;    // 无太阳：C++侧不声明本段，此处双保险
+
+    if(FetchDepth(uv) == 1.0f) return;         // 天空早退不store（①已写黑）
+
+    SurfaceInfo gbuffer  = DecodeGBuffer(texelFetch(G_BUFFER_DIFFUSE_TRANSPARENT, pixel, 0),
+                                         texelFetch(G_BUFFER_NORMAL_SPECF, pixel, 0),
+                                         texelFetch(G_BUFFER_EMISSION, pixel, 0),
+                                         texelFetch(G_BUFFER_GEOMETRIC_NORMAL_AO, pixel, 0),
+                                         texelFetch(G_BUFFER_SPECULAR_F0_ROUGHNESS, pixel, 0),
+                                         texelFetch(G_BUFFER_IOR, pixel, 0).r);
+
+    vec4 worldPos   = DepthToWorld(uv);
+    vec3 V          = normalize((CAMERA.pos - worldPos).xyz);
+
+    LightStructGPU sun = LIGHTS.slot[sunSlot];
+    vec3 sunDir     = -normalize(sun.mainDirection_id.xyz);
+    vec3 sunColor   = sun.radiance_type.rgb;           // ★atmo插拔点1
+    float sunAngle  = 0.008726647f;                    // ★atmo插拔点2（0.5°基准角，HRP同值）
+
+    // HRP日盘trick：着色法线朝半角向量H弯折→镜面高光张到日盘尺寸；漫反射用真法线。
+    // 占位角下弯折因子=1（不弯），trick随atmo真实角自动生效
+    vec3 res;
+    {
+        vec3 H  = normalize(V + sunDir);
+        vec3 N0 = gbuffer.normal;
+        gbuffer.normal = normalize(mix(H, N0, 1.0f - dot(H, N0) * 0.3f *
+                                       (pow(sunAngle, 0.2f) / pow(0.008726647f, 0.2f))));
+        res  = PBS(PBS_SPECULAR, gbuffer, sunDir, sunColor, V);
+        gbuffer.normal = N0;
+        res += PBS(PBS_DIFFUSE, gbuffer, sunDir, sunColor, V);
+    }
+
+    // 角度抖动软影
+    float shadow = 1.0f;
+    {
+        int sampleNum = max(1, int(sunAngle / 0.008726647f) * 2);    // 占位角下=2
+        if(LightCastShadow(sun))
+        {
+            BNDSTATE(pixel);    // Sobol-BND蓝噪声（sampler.glsl），维度随SAMPLE自增
+            vec3 origin = worldPos.xyz + sunDir * GLOBAL_SETTING.rayTracingOffset;   // bias沿光线方向（对位旧RtDirectionalShadow）
+
+            float lit = 0.0f;
+            for(int i = 0; i < sampleNum; i++)
+            {
+                vec3 dir = sunDir + UniformSampleSphere(vec2(SAMPLE, SAMPLE)).xyz * sunAngle;
+                lit += RayQueryVisibility(origin, origin + dir * MAX_RAY_TRACING_DISTANCE,0, INSTANCE_MASK_SHADOW_CASTER) ? 0.0f : 1.0f;
+            }
+            shadow = lit / float(sampleNum);
+        }
+
+        if(SETTING.mode == 4)    // mode4属主：太阳阴影可视化（软影0..1，旧版为二值）
+        {
+            imageStore(FINAL_COLOR, pixel, vec4(vec3(shadow), 1.0f));
+            return;
+        }
+    }
+
+    if(SETTING.mode == 0 || SETTING.mode == 17)    // 其余mode：直通不store
+    {
+        if(any(greaterThan(res, vec3(0.0f))) && shadow > 0.0f)
+        {
+            vec4 prev = imageLoad(FINAL_COLOR, pixel);
+            imageStore(FINAL_COLOR, pixel, vec4(prev.rgb + res * shadow, 1.0f));
+        }
+    }
+}

@@ -27,7 +27,7 @@ void PointLightComponent::OnUpdate(float deltaTime)
 	//UpdateLightInfo();
 }
 
-void PointLightComponent::UpdateLightInfo()
+void PointLightComponent::UpdateLightInfo(uint32_t gpuSlot)
 {
     {
         Vec3 pos = Vec3::Zero();
@@ -49,12 +49,13 @@ void PointLightComponent::UpdateLightInfo()
             info.intencity = intencity;
             info.fogScattering = fogScattering;
             info.far = far;
-            info.castShadow = CastShadow() ? 1 : 0;    
+            info.castShadow = CastShadow() ? 1 : 0;
+            info.lightID = pointLightID;    
         }
 
     }
 
-    EngineContext::RenderResource()->SetPointLightInfo(info, pointLightID);
+    EngineContext::RenderResource()->SetPointLightInfo(info, gpuSlot);
 }
 
 

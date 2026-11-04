@@ -2,14 +2,12 @@
 #define SET2_DEFINES_GLSL
 
 // ===== 共享域 0-13（跨pass语义槽）=====
-#define SET2_BINDING_LIGHT_CLUSTER_GRID                 0
-#define SET2_BINDING_LIGHT_CLUSTER_INDEX                1
 #define SET2_BINDING_HISTORY_DEPTH                      2
 #define SET2_BINDING_HISTORY_DEPTH_PYRAMID              3
 #define SET2_BINDING_HISTORY_VELOCITY                   4
 #define SET2_BINDING_HISTORY_OBJECT_ID                  5
-#define SET2_BINDING_DIRECTIONAL_SHADOW                 6   // 已退役（阴影转换刀D，槽号保留）
-#define SET2_BINDING_POINT_SHADOW                       7   // 已退役（阴影转换刀D，槽号保留）
+#define SET2_BINDING_DIRECTIONAL_SHADOW                 6   // 已退役
+#define SET2_BINDING_POINT_SHADOW                       7   // 已退役
 #define SET2_BINDING_SURFACE_CACHE                      8
 #define SET2_BINDING_VOLUME_LIGHT_IRRADIANCE            9
 #define SET2_BINDING_VOLUME_LIGHT_DEPTH                 10
@@ -130,5 +128,9 @@
 #define SET2_BINDING_RESTIR_DI_GBUFFER_NORMAL          99
 #define SET2_BINDING_RESTIR_DI_GBUFFER_EMISSION        100
 #define SET2_BINDING_RESTIR_DI_GBUFFER_SPECF0          101
+
+// ===== ZBin灯剔除域=====
+#define SET2_BINDING_TILE_LIGHTS                      102
+// 槽103（SET2_BINDING_BIN_LIGHT_MASKS）已退役
 
 #endif

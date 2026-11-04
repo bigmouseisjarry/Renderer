@@ -7,7 +7,7 @@ void ReprojectionPass::Init()
 {
     auto backend = EngineContext::RHI();
 
-    computeShader = Shader(EngineContext::File()->ShaderPath() + "default/reprojection.comp.spv", SHADER_FREQUENCY_COMPUTE);
+    computeShader = Shader(EngineContext::File()->ShaderPath() + "reprojection/reprojection.comp.spv", SHADER_FREQUENCY_COMPUTE);
 
     RHIRootSignatureInfo rootSignatureInfo = {};
     rootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetPerFrameRootSignature()->GetInfo())
@@ -20,6 +20,17 @@ void ReprojectionPass::Init()
     pipelineInfo.computeShader              = computeShader.shader;
     computePipeline   = backend->CreateComputePipeline(pipelineInfo);
 }   
+
+/*
+1.你说他的灯光buffer里面使用的是全局id，那他的灯光buffer不是紧凑的吗？
+2.
+
+
+
+*/
+
+
+
 
 void ReprojectionPass::Build(RDGBuilder& builder) 
 {

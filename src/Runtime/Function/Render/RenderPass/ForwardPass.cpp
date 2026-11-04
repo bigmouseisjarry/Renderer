@@ -54,9 +54,9 @@ void ForwardPass::Init()
 
     auto backend = EngineContext::RHI();
 
-    vertexShader        = Shader(EngineContext::File()->ShaderPath() + "default/default.vert.spv", SHADER_FREQUENCY_VERTEX);
-    clusterVertexShader = Shader(EngineContext::File()->ShaderPath() + "default/default_cluster.vert.spv", SHADER_FREQUENCY_VERTEX);
-    fragmentShader      = Shader(EngineContext::File()->ShaderPath() + "default/forward.frag.spv", SHADER_FREQUENCY_FRAGMENT);
+    vertexShader        = Shader(EngineContext::File()->ShaderPath() + "forward/default.vert.spv", SHADER_FREQUENCY_VERTEX);
+    clusterVertexShader = Shader(EngineContext::File()->ShaderPath() + "forward/default_cluster.vert.spv", SHADER_FREQUENCY_VERTEX);
+    fragmentShader      = Shader(EngineContext::File()->ShaderPath() + "forward/forward.frag.spv", SHADER_FREQUENCY_FRAGMENT);
 
     RHIRootSignatureInfo rootSignatureInfo = {};
     rootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetPerFrameRootSignature()->GetInfo())

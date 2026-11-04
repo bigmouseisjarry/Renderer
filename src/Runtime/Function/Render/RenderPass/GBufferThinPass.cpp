@@ -58,9 +58,9 @@ void GBufferThinPass::Init()
 
     auto backend = EngineContext::RHI();
 
-    vertexShader        = Shader(EngineContext::File()->ShaderPath() + "default/default.vert.spv", SHADER_FREQUENCY_VERTEX);
-    clusterVertexShader = Shader(EngineContext::File()->ShaderPath() + "default/default_cluster.vert.spv", SHADER_FREQUENCY_VERTEX);
-    fragmentShader      = Shader(EngineContext::File()->ShaderPath() + "default/deferred.frag.spv", SHADER_FREQUENCY_FRAGMENT);   
+    vertexShader        = Shader(EngineContext::File()->ShaderPath() + "gbuffer/default.vert.spv", SHADER_FREQUENCY_VERTEX);
+    clusterVertexShader = Shader(EngineContext::File()->ShaderPath() + "gbuffer/default_cluster.vert.spv", SHADER_FREQUENCY_VERTEX);
+    fragmentShader      = Shader(EngineContext::File()->ShaderPath() + "gbuffer/gbuffer_thin.frag.spv", SHADER_FREQUENCY_FRAGMENT);   
 
     RHIRootSignatureInfo rootSignatureInfo = {};
     rootSignatureInfo.AddEntry(EngineContext::RenderResource()->GetPerFrameRootSignature()->GetInfo())
@@ -103,7 +103,18 @@ void GBufferThinPass::Build(RDGBuilder& builder)
         RDGTextureHandle objectID       = builder.GetTexture("G-Buffer Object ID");
         RDGTextureHandle geometricNormal = builder.GetTexture("G-Buffer Geometric Normal/AO");
         RDGTextureHandle specularF0     = builder.GetTexture("G-Buffer Specular F0/Roughness");
-        RDGTextureHandle ior            = builder.GetTexture("G-Buffer IOR");   
+
+        Extent2D extent = EngineContext::Render()->GetWindowsExtent();
+        RDGTextureHandle ior = builder.CreateTexture("G-Buffer IOR")
+            .Exetent({extent.width, extent.height, 1})
+            .Format(FORMAT_R8_UNORM)
+            .ArrayLayers(1)
+            .MipLevels(1)
+            .MemoryUsage(MEMORY_USAGE_GPU_ONLY)
+            .AllowReadWrite()
+            .AllowRenderTarget()
+            .Finish();
+
         RDGTextureHandle depth          = builder.GetTexture("Depth");
 
         // 间接绘制命令buffer的虚拟依赖边（见GPUCullingPass的Import命名）
@@ -117,7 +128,7 @@ void GBufferThinPass::Build(RDGBuilder& builder)
             .Color(4, objectID, ATTACHMENT_LOAD_OP_LOAD, ATTACHMENT_STORE_OP_STORE, {0.0f, 0.0f, 0.0f, 0.0f})
             .Color(5, geometricNormal, ATTACHMENT_LOAD_OP_LOAD, ATTACHMENT_STORE_OP_STORE, {0.0f, 0.0f, 0.0f, 0.0f})
             .Color(6, specularF0, ATTACHMENT_LOAD_OP_LOAD, ATTACHMENT_STORE_OP_STORE, {0.04f, 0.04f, 0.04f, 1.0f})
-            .Color(7, ior, ATTACHMENT_LOAD_OP_LOAD, ATTACHMENT_STORE_OP_STORE, {0.0f, 0.0f, 0.0f, 0.0f})           // 不透明pass已CLEAR，这里LOAD保住并写真实值
+            .Color(7, ior, ATTACHMENT_LOAD_OP_CLEAR, ATTACHMENT_STORE_OP_STORE, {0.0f, 0.0f, 0.0f, 0.0f})          // 瞬态首用必CLEAR：0=η1兜底，薄覆盖处写真实值
             .DepthStencil(depth, ATTACHMENT_LOAD_OP_LOAD, ATTACHMENT_STORE_OP_STORE, 1.0f, 0)                       // depthWrite=false由管线保证
             .ReadIndirect(builder.GetBuffer("Mesh Draw Commands" + cmdIndex))
             .ReadIndirect(builder.GetBuffer("Clusrter Draw Commands" + cmdIndex))

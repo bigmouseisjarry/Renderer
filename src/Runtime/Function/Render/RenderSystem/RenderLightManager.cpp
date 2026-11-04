@@ -32,7 +32,6 @@ void RenderLightManager::PrepareLights()
     LightSetting setting = {};
     setting.directionalLightCnt = 0;
     setting.pointLightCnt = 0;
-    setting.globalIndexOffset = 0;
 
     auto& lights = perframeLights[EngineContext::ThreadPool()->ThreadFrameIndex()];
 
@@ -43,25 +42,43 @@ void RenderLightManager::PrepareLights()
     // TODO 场景的CPU端剔除
 
     lights.directionalLight = EngineContext::World()->GetActiveScene()->GetDirectionalLight();
-    if(lights.directionalLight && lights.directionalLight->Enable()) 
+    if(lights.directionalLight && lights.directionalLight->Enable())
     {
         lights.directionalLight->UpdateLightInfo();
         setting.directionalLightCnt = 1;
     }
 
+    setting.areaLightCnt = 0;                                                    // 面光块预留恒0
+    setting.sunSlot = setting.directionalLightCnt > 0 ? 0u : 0xFFFFFFFFu;        // 太阳=方向灯块首槽
+
     auto pointLightComponents = EngineContext::World()->GetActiveScene()->GetPointLights();
-    for(auto& pointLight : pointLightComponents) 
+    uint32_t denseIndex = setting.directionalLightCnt;   // 局部灯块起点=D
+    uint32_t lightListVersion = 2166136261u;   // FNV-1a：活跃持久ID序列哈希，成员或顺序一变哈希即变
+    lightListVersion = (lightListVersion ^ setting.directionalLightCnt) * 16777619u;
+    lightListVersion = (lightListVersion ^ setting.areaLightCnt) * 16777619u;
+    for(auto& pointLight : pointLightComponents)
     {
-        if(pointLight) 
+        if(pointLight && pointLight->Enable())
         {
-            if(pointLight->Enable())
+            if(denseIndex - setting.directionalLightCnt >= MAX_ZBIN_LOCAL_LIGHTS || denseIndex >= 256u)
             {
-                setting.pointLightIDs[setting.pointLightCnt] = pointLight->pointLightID;  
-                setting.pointLightCnt++;        
+                if(!zbinLightCapWarned)
+                {
+                    ENGINE_LOG_WARN("ZBin: active point lights exceed {} (entry index field), surplus dropped this frame", MAX_ZBIN_LOCAL_LIGHTS);
+                    zbinLightCapWarned = true;
+                }
+                break;
             }
-            pointLight->UpdateLightInfo();
+
+            pointLight->UpdateLightInfo(denseIndex++);
+            setting.pointLightCnt++;
+
+            lightListVersion = (lightListVersion ^ pointLight->pointLightID) * 16777619u;
         }
     }
+    setting.lightListVersion     = lightListVersion;
+    setting.prevLightListVersion = lastLightListVersion;    // ReSTIR时域守卫：上一渲染帧的灯集语义
+    lastLightListVersion         = lightListVersion;
 
     uint32_t volumeLightIDs[MAX_VOLUME_LIGHT_COUNT] = { 0 };        
     uint32_t volumeLightCnt = 0;

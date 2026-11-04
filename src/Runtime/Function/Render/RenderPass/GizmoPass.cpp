@@ -153,7 +153,7 @@ void GizmoPass::Build(RDGBuilder& builder)
                 command->BindDescriptorSet(EngineContext::RenderResource()->GetPerFrameDescriptorSet(), 0);
                 command->BindDescriptorSet(EngineContext::RenderResource()->GetPoolDescriptorSet(), 1);
                 command->BindDescriptorSet(context.descriptors[2], 2);
-                command->Dispatch(  std::max(MAX_PER_FRAME_CLUSTER_SIZE, MAX_POINT_LIGHT_COUNT) / 256, 
+                command->Dispatch(  std::max(MAX_PER_FRAME_CLUSTER_SIZE, MAX_LIGHT_COUNT) / 256,
                                     1, 
                                     1);
             })

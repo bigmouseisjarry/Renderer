@@ -19,6 +19,9 @@ public:
 private:
     void PrepareLights();
 
+    uint32_t lastLightListVersion = 0;     // 
+    bool zbinLightCapWarned = false;       // 
+
     struct PerFrameLights
     {
         std::shared_ptr<DirectionalLightComponent> directionalLight;

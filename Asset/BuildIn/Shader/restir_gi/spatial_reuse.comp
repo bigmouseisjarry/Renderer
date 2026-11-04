@@ -64,7 +64,7 @@ void main()
 	uint reservoirIndex = ReservoirIndex(pixel);
 	GIReservoir res = RESTIR_GI_RESERVOIRS[reservoirIndex];
 	if (!IsGIReservoirValid(res)) res = NewGIReservoir();	// 防护：毒化/垃圾数据视作空reservoir
-	Rand rand = SeedRand(GLOBAL_SETTING.totalTicks, pixel.y * GLOBAL_SETTING.totalTicks + pixel.x);
+	RANDSTATE(pixel.y * GLOBAL_SETTING.totalTicks + pixel.x);
 
 	vec3 neighborNormal[NUM_NEIGHBORS];
     vec4 neighborWorldPos[NUM_NEIGHBORS];
@@ -75,8 +75,8 @@ void main()
 	{
 		for(int j = 0; j < NUM_NEIGHBORS; j++)
 		{	
-			float angle = RandFloat(rand) * 2.0 * PI;								// 搜索圆范围内的随机临近像素
-			float radius = sqrt(RandFloat(rand)) * RESTIR_GI_SETTING.spatialRadius;
+			float angle = RAND * 2.0 * PI;								// 搜索圆范围内的随机临近像素
+			float radius = sqrt(RAND) * RESTIR_GI_SETTING.spatialRadius;
 
 			ivec2 randNeighborOffset = ivec2(floor(cos(angle) * radius), floor(sin(angle) * radius));
 			ivec2 randNeighborPixel  = ivec2(clamp(int(pixel.x) + randNeighborOffset.x, 0, int(WINDOW_WIDTH) / WIDTH_DOWNSAMPLE_RATE - 1),
@@ -111,7 +111,7 @@ void main()
 			GIReservoir randRes = RESTIR_GI_RESERVOIRS[randIndex];
 			if (!IsGIReservoirValid(randRes)) continue;	// 防护：坏邻居视作无邻居
 			float newPHat = EvaluatePHat(randRes.sampl) * CalculateJacobian(worldPos.xyz, neighborWorldPos[j].xyz, randRes.sampl);
-			CombineGIReservoirs(res, randRes, newPHat, rand);
+			CombineGIReservoirs(res, randRes, newPHat, randState);
 		}
 
 		if(RESTIR_GI_SETTING.unbias != 0)

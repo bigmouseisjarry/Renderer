@@ -23,7 +23,7 @@ void main()
 	ivec2 pixel     = ivec2(gl_LaunchIDEXT.xy);
 	vec2 uv         = ScreenPixToUV(pixel); 
 
-	RAY_PAYLOAD.rand = SeedRand(GLOBAL_SETTING.totalTicks, pixel.y * GLOBAL_SETTING.totalTicks + pixel.x);
+	RAY_PAYLOAD.rand = SEED_RAND(pixel.y * GLOBAL_SETTING.totalTicks + pixel.x);
 
 	vec3 outColor = vec3(0.0f);
 	for(uint s = 0; s < SETTING.numSamples; s++)

@@ -236,8 +236,8 @@ void main() {
     // 计算射线 ////////////////////////////////////////////////////////////////////////////////////
 
     // vec2 seed           = Hammersley(totalTicks, 16);  
-    Rand rand           = SeedRand(GLOBAL_SETTING.totalTicks, pixel.y * GLOBAL_SETTING.totalTicks + pixel.x);
-    vec2 seed           = vec2(RandFloat(rand), RandFloat(rand));       // (方向角, 极角)
+    RANDSTATE(pixel.y * GLOBAL_SETTING.totalTicks + pixel.x);
+    vec2 seed           = vec2(RAND, RAND);       // (方向角, 极角)
     // 被 lerp 之后，实际采样分布已经不是 GGX 了（真实密度需要变换和截断区间的修正）。resolve 阶段拿名义 pdf 当 MC 权重去除，能量会系统性向镜向倾斜
     seed.y              = Lerp(seed.y, 0.0f, SETTING.importanceSampleBias); //BRDF的拖尾会产生大量噪声，对重要性采样的方向做些偏移限制来减小（也会导致反射比真实粗糙度偏锐利）
 

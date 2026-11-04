@@ -233,7 +233,6 @@ void PassWidget::DeferredLightingPassUI(std::shared_ptr<DeferredLightingPass> pa
     ImGui::Checkbox("Direct lighting only", &directOnly);
     pass->setting.directOnly = directOnly ? 1 : 0;
 
-    ImGui::DragFloat("maxRadius", &pass->setting.maxRadius, 0.1f, 1.0f, 5.0f);
 
 	if (ImGui::RadioButton("Color", pass->setting.mode == 0))
 		pass->setting.mode = 0;

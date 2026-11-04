@@ -5,14 +5,14 @@
 #include "../set1/set1.glsl"
 
 // ===== 共享域 0-13（跨pass语义槽）=================================================================
+// 照明域：ZBin灯剔除entry列表
+// 每tile段=[count(已截断) | entry×ZBIN_LIGHTS_PER_TILE]；entry=(灯槽号<<24)|bin掩码(低24位,bit b=bin b)
+// 消费端单bit测试(entry&binBit)内联z剔除；写者=ClusterLightingPass两子pass(TileCulling→BinCulling)
+layout(set = 2, binding = SET2_BINDING_TILE_LIGHTS) buffer tile_lights {
 
-// 照明域：cluster剔除结构（uimage3D/imageLoad消费=STORAGE描述符，消费者用ReadWrite边）
-layout(set = 2, binding = SET2_BINDING_LIGHT_CLUSTER_GRID, rg32ui) uniform uimage3D LIGHT_CLUSTER_GRID;
-layout(set = 2, binding = SET2_BINDING_LIGHT_CLUSTER_INDEX) buffer light_cluster_index {
+    uint words[LIGHT_CLUSTER_WIDTH * LIGHT_CLUSTER_HEIGHT * (ZBIN_LIGHTS_PER_TILE + 1)];
 
-    LightClusterIndex slot[MAX_LIGHTS_PER_CLUSTER * LIGHT_CLUSTER_NUM];
-
-} LIGHT_CLUSTER_INDEX;
+} TILE_LIGHTS;
 
 // 历史域：屏幕空间历史/跨帧纹理。DEPTH[0]="Depth" DEPTH[1]="Previous Depth"
 // PYRAMID[0/1]="Depth Min"/"Depth Max" VELOCITY="G-Buffer Velocity"
@@ -21,8 +21,6 @@ layout(set = 2, binding = SET2_BINDING_HISTORY_DEPTH)          uniform texture2D
 layout(set = 2, binding = SET2_BINDING_HISTORY_DEPTH_PYRAMID)  uniform texture2D DEPTH_PYRAMID[2];
 layout(set = 2, binding = SET2_BINDING_HISTORY_VELOCITY)       uniform texture2D VELOCITY;
 layout(set = 2, binding = SET2_BINDING_HISTORY_OBJECT_ID)      uniform utexture2D OBJECT_ID[2];
-
-// 阴影域已退役（阴影转换刀D：光栅CSM/cube VSM全转TLAS ray query，b6/b7声明删除，槽号保留防移位）
 
 // SC域：atlas
 layout(set = 2, binding = SET2_BINDING_SURFACE_CACHE)          uniform texture2D SURFACE_CACHE[5];

@@ -135,7 +135,7 @@ void main()
     // NEE
     vec3 lightColor = vec3(0.0f);
     {
-        float lightSamplePdf = 1.0f / (LIGHTS.lightSetting.pointLightCnt + 1);  // 点光源 + 平行光源总计数目, 直接均匀采样吧
+        float lightSamplePdf = 1.0f / (LIGHTS.lightSetting.pointLightCnt + LIGHTS.lightSetting.directionalLightCnt);  // 局部灯块+方向灯块总计数目(L+D), 直接均匀采样吧；
 
         if(RandFloat(RAY_PAYLOAD.rand) <= lightSamplePdf)
         {
@@ -145,7 +145,7 @@ void main()
         }
         else
         {
-            uint lightID = LIGHTS.lightSetting.pointLightIDs[uint(round(RandFloat(RAY_PAYLOAD.rand) * (LIGHTS.lightSetting.pointLightCnt - 1)))];	// 抽样选取点光源及其选择概率，直接用均匀分布了
+            uint lightID = LIGHTS.lightSetting.directionalLightCnt + uint(round(RandFloat(RAY_PAYLOAD.rand) * float(LIGHTS.lightSetting.pointLightCnt - 1u)));	// 真紧凑局部灯块[D,D+L)密集抽样（L==0时pdf=1恒走方向光分支，此处不可达）
             lightColor +=   PointLighting(albedo.xyz, roughness, metallic, worldPos, N, V, lightID) *
                             RtPointShadow(lightID, worldPos) /
                             lightSamplePdf;                       // 需要考虑pdf

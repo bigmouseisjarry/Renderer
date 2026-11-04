@@ -51,10 +51,8 @@ void main()
         if (RESTIR_DI_SETTING.bruteLighting != 0)  // 暴力遍历光源的测试，算是基线吧
         {
             finalColor = vec4(0.0f);
-            for(int i = 0; i < LIGHTS.lightSetting.pointLightCnt; i++)
+            for(uint lightID = LIGHTS.lightSetting.directionalLightCnt; lightID < LIGHTS.lightSetting.directionalLightCnt + LIGHTS.lightSetting.pointLightCnt; lightID++)   // 真紧凑局部灯块[D,D+L)密集直访
             {
-                uint lightID = LIGHTS.lightSetting.pointLightIDs[i];
-
                 vec3 pHat = EvaluatePHatFull(
                 lightID, worldPos.xyz, normal,
                 diffuse, roughness, F0, specF);
@@ -84,7 +82,8 @@ void main()
     else if (RESTIR_DI_SETTING.showLightID != 0)
     {
         finalColor = vec4(0.0f);
-        finalColor.x += float(res.sampl.lightID) / LIGHTS.lightSetting.pointLightCnt;
+        finalColor.x += res.sampl.lightID != LIGHT_ID_INVALID ?
+            float(res.sampl.lightID - LIGHTS.lightSetting.directionalLightCnt) / float(LIGHTS.lightSetting.pointLightCnt) : 0.0f;    //槽号去块基归一（D偏移扣除+INVALID哨兵）
 
         imageStore(FINAL_COLOR, pixel, finalColor);
     }

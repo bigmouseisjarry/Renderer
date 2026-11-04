@@ -1,0 +1,51 @@
+#version 460
+#extension GL_GOOGLE_include_directive : enable
+#extension GL_KHR_shader_subgroup_basic : require        // subgroupElect
+#extension GL_KHR_shader_subgroup_arithmetic : require   // subgroupAdd
+
+#include "include/common.glsl"
+
+layout (local_size_x = 1, local_size_y = 1, local_size_z = 32) in;
+
+// 与消费端FetchLightTileEntries完全同式的对数bin边界（k/N段的近侧z）
+float BinNearZ(uint binIdx)
+{
+    return CAMERA.near * pow(CAMERA.far / CAMERA.near, float(binIdx) / float(ZBIN_BIN_COUNT));
+}
+
+void main()
+{
+    uvec2 tileId = gl_GlobalInvocationID.xy;
+    if(tileId.x >= uint(LIGHT_CLUSTER_WIDTH) || tileId.y >= uint(LIGHT_CLUSTER_HEIGHT)) return;
+
+    uint binIdx = gl_GlobalInvocationID.z;
+    bool binActive = binIdx < uint(ZBIN_BIN_COUNT);     // 越界lane不退场，贡献0
+
+    uint startOffset = (tileId.x + tileId.y * uint(LIGHT_CLUSTER_WIDTH)) * (ZBIN_LIGHTS_PER_TILE + 1u);
+    uint lightCount = TILE_LIGHTS.words[startOffset];   // TileCulling已预截断，无需再min
+    startOffset += 1u;
+
+    float z0 = BinNearZ(binIdx);
+    float z1 = BinNearZ(binIdx + 1u);
+
+    for(uint j = 0u; j < lightCount; j++)
+    {
+        uint entry = TILE_LIGHTS.words[startOffset + j];
+        uint maskActive = 0u;
+
+        if(binActive)
+        {
+            LightStructGPU pointLight = LIGHTS.slot[entry >> 24];
+
+            float viewZ = -(CAMERA.view * vec4(pointLight.position_range.xyz, 1.0f)).z;    // 前向距离（与消费端LinearEyeDepth同号）
+            float r = pointLight.position_range.w;
+            if(viewZ + r > z0 && viewZ - r < z1)         // 球与本bin的z-slab相交
+                maskActive = 1u << binIdx;
+        }
+
+        // 32个lane各持互不重叠的单bit → subgroupAdd等价按位OR
+        uint mask = subgroupAdd(maskActive);
+        if(subgroupElect())
+            TILE_LIGHTS.words[startOffset + j] = (entry & 0xFF000000u) | mask;   // 高8位灯槽号不动，低24位焊接bin位
+    }
+}

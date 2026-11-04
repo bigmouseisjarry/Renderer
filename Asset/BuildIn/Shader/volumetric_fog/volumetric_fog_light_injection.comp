@@ -38,8 +38,6 @@ float isotropicScattering()
     return 1.0f / (4 * PI);
 }
 
-// 阴影转换刀C：LowPointShadow（depth cube直读，含POINT_SHADOW[shadowID+4]越界隐患）删除，调用点改RtPointShadow
-
 #define THREAD_SIZE_X VOLUMETRIC_FOG_SIZE_X / 10	
 #define THREAD_SIZE_Y VOLUMETRIC_FOG_SIZE_Y / 10	
 #define THREAD_SIZE_Z 1	
@@ -54,8 +52,8 @@ void main()
 	if(pixel.x >= VOLUMETRIC_FOG_SIZE_X || pixel.y >= VOLUMETRIC_FOG_SIZE_Y || pixel.z >= VOLUMETRIC_FOG_SIZE_Z) return;
 
 
-	Rand rand = SeedRand(GLOBAL_SETTING.totalTicks, (pixel.y + WINDOW_HEIGHT) * GLOBAL_SETTING.totalTicks + (pixel.x + WINDOW_WIDTH) + pixel.z);
-	vec3 ditter = vec3(RandFloat(rand), RandFloat(rand), RandFloat(rand));
+	RANDSTATE((pixel.y + WINDOW_HEIGHT) * GLOBAL_SETTING.totalTicks + (pixel.x + WINDOW_WIDTH) + pixel.z);
+	vec3 ditter = vec3(RAND, RAND, RAND);
 
 
 	vec4 worldPos 			= FetchVolumetricClusterPos(pixel + ditter);
@@ -67,55 +65,55 @@ void main()
 	vec3 accumulateColor = vec3(0.0f);
 	float transmittance = transmittance(worldPosNoDitter.xyz, worldNearPos.xyz, SETTING.attenuationFactor);	//计算穿透率就不加抖动了
 
-	// 点光源
 	{
-		ivec3 clusterGrid   = FetchLightClusterGrid(WorldToNDC(worldPos).xyz);
-        uvec2 clusterIndex  = FetchLightClusterIndex(clusterGrid);      //读取对应cluster的索引信息 
+		uint lightCount, binBit;
+		uint entryStart	= FetchLightTileEntries(WorldToNDC(worldPos).xyz, lightCount, binBit);
 
-		for(uint i = clusterIndex.x; i < clusterIndex.x + clusterIndex.y; i++)
+		for(uint i = 0u; i < lightCount; i++)
 		{
-			uint lightID = LIGHT_CLUSTER_INDEX.slot[i].lightID;
+			uint entry = TILE_LIGHTS.words[entryStart + i];
+			if((entry & binBit) == 0u)	continue;
+			uint lightID = entry >> 24;
+
 			LightStructGPU pointLight = LIGHTS.slot[lightID];
 
-			vec3 L 											= normalize(pointLight.pos_range.xyz - worldPos.xyz);
+			vec3 L 											= normalize(pointLight.position_range.xyz - worldPos.xyz);
 			float VoL 										= dot(V, L);
 			float scattering								= isotropicScattering();
 			if(SETTING.isotropic == 0) scattering 	= henyeyGreensteinPhase(SETTING.henyeyGreensteinG, VoL);
-			scattering *= pointLight.flags_fog.x;
+			scattering *= pointLight.geometry.y;
 
-			float pointDistance = length(worldPos.xyz - pointLight.pos_range.xyz.xyz);
-			float pShadow = RtPointShadow(lightID, worldPos);    // 阴影转换刀C
+			float pointDistance = length(worldPos.xyz - pointLight.position_range.xyz.xyz);
+			float pShadow = RtPointShadow(lightID, worldPos);    
 			//float pShadow = 1.0f;
 
-			float attenuation   = PointLightFalloff(pointDistance, pointLight.pos_range.w);
+			float attenuation   = PointLightFalloff(pointDistance, pointLight.position_range.w);
 
     		vec3 radiance = pShadow *               //辐射率 = 阴影值 * 光强 * 颜色 * 衰减
-							pointLight.color_intencity.rgb * 
-							pointLight.color_intencity.w *
+							pointLight.radiance_type.rgb *
 							attenuation;  
 
 			accumulateColor += radiance * scattering * SETTING.scatteringIntencity;
 			//accumulateColor += pointShadow * attenuation;
 			//accumulateColor += pointShadow;
+			}
 		}
-	}
 
 	// 平行光源
 	if(LIGHTS.lightSetting.directionalLightCnt != 0)
 	{
 		LightStructGPU dirLight = LIGHTS.slot[0];
 
-		vec3 L 											= -normalize(dirLight.dir_tan.xyz);
+		vec3 L 											= -normalize(dirLight.mainDirection_id.xyz);
 		float VoL 										= dot(V, L);
 		float scattering								= isotropicScattering();
 		if(SETTING.isotropic == 0) scattering 	= henyeyGreensteinPhase(SETTING.henyeyGreensteinG, VoL);
-		scattering *= dirLight.flags_fog.x;
+		scattering *= dirLight.geometry.y;
 
-		float dirShadow = RtDirectionalShadow(worldPos, GLOBAL_SETTING.rayTracingOffset);    // 阴影转换刀C
+		float dirShadow = RtDirectionalShadow(worldPos, GLOBAL_SETTING.rayTracingOffset);    
 
         vec3 radiance = dirShadow *           //辐射率 = 阴影值 * 光强 * 颜色
-                        dirLight.color_intencity.rgb * 
-                        dirLight.color_intencity.w;     
+                        dirLight.radiance_type.rgb;     
 
 		accumulateColor += radiance * scattering * SETTING.scatteringIntencity;
 	}

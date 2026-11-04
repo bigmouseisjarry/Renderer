@@ -1,4 +1,3 @@
-#include "../../include/rand.glsl"
 #include "../../include/set2/set2.glsl"
 #include "../../include/set0/set0.glsl"
 #include "../../include/sky.glsl"
@@ -6,9 +5,9 @@
 #include "../../include/screen.glsl"
 #include "../../include/ray_query.glsl"
 #include "../../include/ddgi.glsl"
-#include "../../include/brdf.glsl"
-#include "../../include/samples.glsl"
-#include "../../include/noise.glsl"
+#include "../../include/sampler.glsl"
+#include "../../include/pbs.glsl"
+#include "../../include/gbuffer.glsl"
 #include "../../include/light.glsl"
 #include "../../include/reprojection.glsl"
 #include "../../include/gizmo.glsl"
@@ -39,10 +38,10 @@ float EvaluatePHat(
 
 float HitDistance(uint lightID, vec3 worldPos)
 {
-	if(lightID == 0) return 0.0f;	// 0为无效ID
+	if(lightID == LIGHT_ID_INVALID) return 0.0f;	
 
     LightStructGPU pointLight = LIGHTS.slot[lightID];
 
-    float pointDistance = length(worldPos.xyz - pointLight.pos_range.xyz);
+    float pointDistance = length(worldPos.xyz - pointLight.position_range.xyz);
 	return pointDistance;
 }

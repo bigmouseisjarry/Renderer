@@ -146,15 +146,9 @@ struct MaterialInfo
     float dinc = 0.0f;                      // 虹彩膜厚标度（OPD=dinc·cosθ2，2η2已折叠，Range约0-6，非物理nm）
 };
 
-static_assert(sizeof(MaterialInfo) == 352, "MaterialInfo stride must match GLSL std430 ArrayStride 352 (see deferred.frag.spv)"); // TEMP DEBUG
+static_assert(sizeof(MaterialInfo) == 352, "MaterialInfo stride must match GLSL std430 ArrayStride 352 (see gbuffer.frag.spv)"); // TEMP DEBUG
 
-struct LightClusterIndex
-{
-    uint32_t lightID;  
-               
-};
-
-struct DirectionalLightInfo    // 灯布局刀②b：瘦身为翻译层输入（CSM矩阵/分割/PCSS参数退役）
+struct DirectionalLightInfo
 {
     Vec3 dir;
     float _padding0;
@@ -162,9 +156,10 @@ struct DirectionalLightInfo    // 灯布局刀②b：瘦身为翻译层输入（
     float intencity;
     float fogScattering;
     uint32_t castShadow;
+    uint32_t lightID = 0;     
 };
 
-struct PointLightInfo          // 灯布局刀②b：瘦身为翻译层输入（cube矩阵/VSM参数/视锥退役）
+struct PointLightInfo
 {
     Vec3 pos;
     float _padding0;
@@ -173,6 +168,7 @@ struct PointLightInfo          // 灯布局刀②b：瘦身为翻译层输入（
     float far;
     float fogScattering;
     uint32_t castShadow;
+    uint32_t lightID = 0;      
 };
 
 struct DDGISetting
@@ -212,41 +208,38 @@ struct VolumeLightInfo
     DDGISetting setting;
 };
 
-struct LightSetting 
+struct LightSetting
 {
     uint32_t directionalLightCnt = 0;
     uint32_t pointLightCnt = 0;
 
-    uint32_t globalIndexOffset = 0;                                     // 创建cluster light时使用，标记全局index缓冲的已分配偏移
-    uint32_t _padding[3];
-
-    uint32_t pointLightIDs[MAX_POINT_LIGHT_COUNT] = { 0 };          // 等待分簇光照处理的当前帧的全部点光源索引
-    
-
+    uint32_t lightListVersion = 0;                                      // 活跃点光持久ID序列的FNV哈希；起折入D+A布局（D变则槽号全体平移，哈希必须跟变）
+    uint32_t prevLightListVersion = 0;                                  // 上一渲染帧的哈希（ReSTIR时域守卫：不等=灯集/序/布局变过，旧采样作废）
+    uint32_t areaLightCnt = 0;                                          // 面光块宽（预留恒0，arena [D+L, D+L+A)）
+    uint32_t sunSlot = 0xFFFFFFFFu;                                     // 太阳槽号（D>0→0，无太阳→0xFFFFFFFF；2b阶段③消费）
+    uint32_t _padding[2];
 };
 
-// 灯布局刀②：统一64B槽布局（与GPU侧LightStructGPU/LIGHTS严格同构）
 struct LightInfoGPU
 {
-    Vec4 pos_range;          // .xyz=位置(方向光=预留) .w=range
-    Vec4 color_intencity;    // .rgb=颜色 .w=强度
-    Vec4 dir_tan;            // .xyz=主方向 .w=tanHalfAngle
-    Vec4 flags_fog;          // .x=fogScattering .y=位域float{bit0-7类型,bit8=castShadow} .zw=预留
+    Vec4 position_range;   // .xyz=位置(方向光=预留) .w=range
+    Vec4 radiance_type;    // .rgb=颜色×强度(预乘) .w=位域float{bit0-7类型,bit8=castShadow}
+    Vec4 mainDirection_id; // .xyz=主方向 .w=CPU池id(暂无GPU读者,跨帧守卫走lightListVersion)
+    Vec4 geometry;         // per-type联合体：.x=tanHalfAngle(聚光) .y=fogScattering(点/聚/方向) .zw=面光预留
 };
 
 inline float LightFlagsF(uint32_t flags) { float f; memcpy(&f, &flags, sizeof(float)); return f; }
 
 #define LIGHT_SLOT_OFFSET       (0)
-#define LIGHT_SETTING_OFFSET    (LIGHT_SLOT_OFFSET + MAX_POINT_LIGHT_COUNT * sizeof(LightInfoGPU))
+#define LIGHT_SETTING_OFFSET    (LIGHT_SLOT_OFFSET + MAX_LIGHT_COUNT * sizeof(LightInfoGPU))
 #define LIGHT_OFFSET_MAX        (LIGHT_SETTING_OFFSET + sizeof(LightSetting))
 
 struct LightInfo
 {
-    LightInfoGPU slot[MAX_POINT_LIGHT_COUNT];     // [0]=方向光 | [1..]=局部灯（按pointLightID直索引，保留洞；紧凑化待ZBin刀）
+    LightInfoGPU slot[MAX_LIGHT_COUNT];    
     LightSetting lightSetting;
 };
 
-// 灯布局刀①：VOLUME_LIGHT_SETTINGS独立buffer——头部{cnt,pad3,IDs}=416B（VolumeLight[100]随后自然16B对齐），
 // 与GPU侧set1 b26的volume_light_settings声明严格同构
 struct VolumeLightSettingsHeader
 {

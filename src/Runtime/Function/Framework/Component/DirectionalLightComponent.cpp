@@ -51,6 +51,7 @@ void DirectionalLightComponent::UpdateLightInfo()
     lightInfo.fogScattering = fogScattering;
     lightInfo.castShadow = castShadow;
     lightInfo.dir = front.normalized();
+    lightInfo.lightID = 0;    // ：方向光暂无id池，恒0（mainDirection_id.w占位）
 
     EngineContext::RenderResource()->SetDirectionalLightInfo(lightInfo);
 }
